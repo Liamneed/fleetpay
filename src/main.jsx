@@ -1,4 +1,5 @@
 import { Capacitor } from '@capacitor/core';
+import { App } from '@capacitor/app';
 import React,{useEffect,useMemo,useState}from'react';
 import{createRoot}from'react-dom/client';
 import{Activity,AlertTriangle,ArrowRight,ArrowUpRight,BadgePoundSterling,Banknote,CalendarDays,CheckCircle2,ChevronRight,Clock3,CreditCard,Database,FileClock,Hash,KeyRound,LayoutDashboard,LogIn,LogOut,Mail,Menu,Phone,PlayCircle,RefreshCw,Search,Send,Settings,ShieldCheck,Smartphone,Users,UserCheck,WalletCards,X}from'lucide-react';
@@ -148,12 +149,71 @@ function DriverApp(){
 
  const api=(u,o={})=>call(u,o,token);
 
+ useEffect(()=>{
+  if(!Capacitor.isNativePlatform()) return;
+
+  let listener;
+
+  App.addListener('appUrlOpen',({url})=>{
+    try{
+      const parsed=new URL(url);
+      const payment =
+        parsed.hostname==='payment'
+          ? parsed.pathname.replace('/','')
+          : parsed.searchParams.get('payment');
+
+      if(payment==='success'){
+        setPaymentBusy(false);
+        setNotice('Payment received successfully.');
+        setTimeout(load,500);
+      }
+
+      if(payment==='cancelled'){
+        setPaymentBusy(false);
+        setNotice('Payment cancelled. Your amount due is still available to pay.');
+        setTimeout(load,500);
+      }
+    }catch{}
+  }).then(handle=>{
+    listener=handle;
+  });
+
+  return()=>{
+    listener?.remove();
+  };
+},[token]);
+
  async function load(){if(!token)return;try{setMe(await api('/api/driver/me'))}catch{localStorage.removeItem('fleetpay_driver');setToken('');setMe(null)}}
 
  async function checkPush(){if(!token||!('serviceWorker'in navigator)||!('PushManager'in window)){setPushAvailable(false);return}try{const cfg=await api('/api/driver/push-config');setPushAvailable(Boolean(cfg.enabled));if(!cfg.enabled)return;const reg=await navigator.serviceWorker.register('/fleetpay-sw.js');const sub=await reg.pushManager.getSubscription();setPushReady(Boolean(sub)&&Notification.permission==='granted')}catch{setPushAvailable(false)}}
 
- useEffect(()=>{if(token){load();checkPush();const params=new URLSearchParams(window.location.search);const payment=params.get('payment');if(payment==='success'){setNotice('Payment submitted securely. FleetPay will update as soon as Stripe confirms it.');window.history.replaceState({},'',window.location.pathname);setTimeout(load,900)}else if(payment==='cancelled'){setNotice('Payment cancelled. Your amount due is still available to pay in FleetPay.');window.history.replaceState({},'',window.location.pathname)}}},[token]);
+useEffect(()=>{
+  const params=new URLSearchParams(window.location.search);
+  const payment=params.get('payment');
 
+  // Stripe has returned into Safari/Chrome.
+  // Hand the result back to the installed FleetPay app.
+  if(!Capacitor.isNativePlatform() && (payment==='success' || payment==='cancelled')){
+    window.location.href=`fleetpay://payment/${payment}`;
+    return;
+  }
+
+  if(token){
+    load();
+    checkPush();
+
+    if(payment==='success'){
+      setPaymentBusy(false);
+      setNotice('Payment received successfully.');
+      window.history.replaceState({},'',window.location.pathname);
+      setTimeout(load,900);
+    }else if(payment==='cancelled'){
+      setPaymentBusy(false);
+      setNotice('Payment cancelled. Your amount due is still available to pay in FleetPay.');
+      window.history.replaceState({},'',window.location.pathname);
+    }
+  }
+},[token]);
  async function login(e){e.preventDefault();setErr('');try{const j=await call('/api/driver/login',{method:'POST',body:JSON.stringify({email:f.email,password:f.password})});localStorage.setItem('fleetpay_driver',j.token);setToken(j.token)}catch(x){setErr(x.message)}}
 
  async function startRegister(e){e.preventDefault();setErr('');try{const j=await call('/api/driver/register/start',{method:'POST',body:JSON.stringify(f)});setChallenge(j.challengeId);setDev(j.devCode||'');setStep(2)}catch(x){setErr(x.message)}}

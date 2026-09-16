@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">FleetPay</string>
+    <string name="title_activity_main">FleetPay</string>
+    <string name="package_name">com.nxt.fleetpay</string>
+    <string name="custom_url_scheme">com.nxt.fleetpay</string>
+</resources>
