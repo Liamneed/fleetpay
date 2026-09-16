@@ -2,6 +2,7 @@ import { Capacitor } from '@capacitor/core';
 import { App } from '@capacitor/app';
 import React,{useEffect,useMemo,useState}from'react';
 import{createRoot}from'react-dom/client';
+import { QRCodeSVG } from 'qrcode.react';
 import{Activity,AlertTriangle,ArrowRight,ArrowUpRight,BadgePoundSterling,Banknote,CalendarDays,CheckCircle2,ChevronRight,Clock3,CreditCard,Database,FileClock,Hash,KeyRound,LayoutDashboard,LogIn,LogOut,Mail,Menu,Phone,PlayCircle,RefreshCw,Search,Send,Settings,ShieldCheck,Smartphone,Users,UserCheck,WalletCards,X}from'lucide-react';
 import'./styles.css';
 const money=v=>v==null?'—':new Intl.NumberFormat('en-GB',{style:'currency',currency:'GBP'}).format(v);
@@ -72,6 +73,15 @@ function AdminApp(){
  const loadUsers=async()=>setUsers(await call('/api/admin/users',{},token));
 
  useEffect(()=>{if(token){loadDrivers();loadSettings();loadSett();loadUsers();loadIntegrations()}},[token]);
+ useEffect(()=>{
+  if(!token || !me?.customerPayments?.some(x=>x.status==='open')) return;
+
+  const timer=setInterval(()=>{
+    load();
+  },3000);
+
+  return()=>clearInterval(timer);
+},[token,me?.customerPayments]);
 
  function logout(){localStorage.removeItem('fleetpay_admin');setToken('')}
 
@@ -146,6 +156,10 @@ function DriverApp(){
  const[pushReady,setPushReady]=useState(false);
  const[pushAvailable,setPushAvailable]=useState(false);
  const[paymentBusy,setPaymentBusy]=useState(false);
+ const[customerFare,setCustomerFare]=useState('');
+ const[customerBooking,setCustomerBooking]=useState('');
+ const[customerPayment,setCustomerPayment]=useState(null);
+ const[customerPaymentBusy,setCustomerPaymentBusy]=useState(false);
 
  const api=(u,o={})=>call(u,o,token);
 
@@ -230,6 +244,37 @@ useEffect(()=>{
 
  async function payRequest(request){setErr('');setPaymentBusy(true);try{const j=await api(`/api/driver/payment-requests/${request.id}/checkout`,{method:'POST'});window.location.assign(j.paymentUrl)}catch(e){setErr(e.message);setPaymentBusy(false)}}
 
+ async function createCustomerPayment(){
+  setErr('');
+  setNotice('');
+
+  const amount=Number(customerFare);
+
+  if(!Number.isFinite(amount) || amount<=0){
+    setErr('Enter a valid fare amount.');
+    return;
+  }
+
+  setCustomerPaymentBusy(true);
+
+  try{
+    const j=await api('/api/driver/customer-payment',{
+      method:'POST',
+      body:JSON.stringify({
+        amount,
+        bookingId:customerBooking.trim()
+      })
+    });
+
+    setCustomerPayment(j);
+
+  }catch(e){
+    setErr(e.message);
+  }finally{
+    setCustomerPaymentBusy(false);
+  }
+}
+
  function logout(){
   localStorage.removeItem('fleetpay_driver');
   setToken('');
@@ -253,7 +298,244 @@ useEffect(()=>{
 
  const d=me.driver,totalDue=(me.paymentRequests||[]).reduce((sum,x)=>sum+Number(x.amount||0),0);
 
- return <div className="driverApp"><header className="driverHeader"><Logo/><button type="button" className="driverSignOut" onClick={logout}><LogOut/><span>Sign out</span></button></header><main><div className="driverHello"><span>CALLSIGN {d.callsign}</span><h1>Hi {d.fullName.split(' ')[0]}</h1><p>Your FleetPay account</p></div>{notice&&<div className="driverNotice"><CheckCircle2/><span>{notice}</span></div>}<section className={`mobileBalance ${(d.currentBalance??0)<0?'negative':''}`}><span>Current FleetPay balance</span><strong>{money(d.currentBalance)}</strong><small>Autocab processed {dt(d.lastProcessed)} · FleetPay synced {dt(d.syncedAt)}</small>{(d.currentBalance??0)>0&&<div className="balanceFoot"><div><span>Available now</span><b>{money(me.availableForEarlyPayout)}</b></div>{me.reservedForEarlyPayout>0&&<div><span>Reserved for payout</span><b>{money(me.reservedForEarlyPayout)}</b></div>}</div>}</section>{pushAvailable&&!pushReady&&<section className="driverCard compactCard"><div className="cardTop"><div><span className="eyebrow">OPTIONAL</span><h2>Payment alerts</h2></div><Smartphone/></div><p>Get an alert when a payment is due, a payout is approved or money is sent.</p><button className="outline full" onClick={enablePush}>Enable notifications</button></section>}{me.paymentRequests?.length>0&&<section className="driverCard paymentDueCard"><div className="paymentDueHeader"><div><span className="eyebrow">MONDAY SETTLEMENT</span><h2>Payment due</h2></div><Pill tone="warn">Action needed</Pill></div><div className="dueAmount">{money(totalDue)}</div><p>Pay securely from FleetPay. Each payment is matched automatically to callsign {d.callsign} and recorded when Stripe confirms it.</p>{me.paymentRequests.map((r,i)=><div className="dueRequestRow" key={r.id}><div><b>{money(r.amount)}</b><span>{dt(r.createdAt)}{me.paymentRequests.length>1?` · Request ${i+1}`:''}</span></div><button className="mini goodBtn" disabled={paymentBusy||!me.stripeConfigured} onClick={()=>payRequest(r)}>{paymentBusy?'Opening…':'Pay now'}</button></div>)}{!me.stripeConfigured&&<small className="paymentUnavailable">Card payment is not configured. Please contact the office.</small>}</section>}{me.notifications?.length>0&&<section className="driverCard"><div className="cardTop"><h2>Updates</h2><Activity/></div>{me.notifications.slice(0,3).map(n=><div className={`noticeItem ${n.type}`} key={n.id}><b>{n.title}</b><p>{n.message}</p><small>{dt(n.createdAt)}</small></div>)}</section>}<section className="driverCard"><div className="cardTop"><div><span className="eyebrow">EARLY PAYOUT</span><h2>Request a payout</h2></div><div className="iconBubble"><ArrowUpRight/></div></div><p>Request from your positive FleetPay balance Tuesday to Friday. Requests after {me.settings.earlyPayoutCutoffTime} are accepted and automatically move to the next business-day payment run.</p><div className="availableRow"><span>Available to request</span><strong>{money(me.availableForEarlyPayout)}</strong></div>{me.reservedForEarlyPayout>0&&<div className="reservedLine"><span>Already reserved in pending payouts</span><b>{money(me.reservedForEarlyPayout)}</b></div>}{me.earlyPayoutAllowed&&<div className={`cutoffNotice ${me.earlyPayoutTiming?.afterCutoff?'afterCutoff':''}`}><Clock3/><span>{me.earlyPayoutWindowMessage}</span></div>}{me.earlyPayoutAllowed&&me.availableForEarlyPayout>me.settings.earlyPayoutFee?<><div className="moneyInput"><span>£</span><input type="number" step="0.01" placeholder="0.00" value={amt} onChange={e=>setAmt(e.target.value)}/></div>{amt&&Number(amt)>0&&<div className="netPreview"><span>You receive after {money(me.settings.earlyPayoutFee)} fee</span><b>{money(Math.max(0,Number(amt)-me.settings.earlyPayoutFee))}</b></div>}<button className="primary full" onClick={payout}>Request payout</button></>:!me.earlyPayoutAllowed?<div className="closed"><Clock3/><span>{me.earlyPayoutWindowMessage}</span></div>:null}{err&&<div className="inlineError"><AlertTriangle/>{err}</div>}</section><section className="driverCard"><div className="cardTop"><div><span className="eyebrow">ACCOUNT ACTIVITY</span><h2>Payments & fees</h2></div><Activity/></div>{me.ledger?.length===0?<div className="emptyState">No account activity recorded yet.</div>:me.ledger?.slice(0,10).map(x=><div className="historyRow" key={x.id}><div><b>{x.description}</b><span>{dt(x.createdAt)}{x.feeAmount>0?` · Fee ${money(x.feeAmount)}`:''}</span></div><div className={x.direction==='credit'?'pos':'neg'}><b>{x.direction==='credit'?'+':'-'}{money(x.amount)}</b><small>{x.status}</small></div></div>)}</section>{me.earlyPayoutRequests.length>0&&<section className="driverCard"><div className="cardTop"><div><span className="eyebrow">REQUEST HISTORY</span><h2>Early payouts</h2></div><ArrowUpRight/></div>{me.earlyPayoutRequests.slice(0,6).map(x=><div className="historyRow" key={x.id}><div><b>{money(x.netAmount)}</b><span>{dt(x.createdAt)}{x.eligibleRunDate?` · Run ${new Date(`${x.eligibleRunDate}T12:00:00`).toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'})}`:''}{x.declineReason?` · ${x.declineReason}`:''}</span></div><Pill tone={x.status==='approved'||x.status==='paid'?'good':x.status==='declined'?'warn':'neutral'}>{x.status}</Pill></div>)}</section>}<div className="driverFooter">Weekly FleetPay fee {money(me.settings.weeklyAppFee)} · Early payout fee {money(me.settings.earlyPayoutFee)}</div></main></div>
+ return <div className="driverApp"><header className="driverHeader"><Logo/><button type="button" className="driverSignOut" onClick={logout}><LogOut/><span>Sign out</span></button></header><main><div className="driverHello"><span>CALLSIGN {d.callsign}</span><h1>Hi {d.fullName.split(' ')[0]}</h1><p>Your FleetPay account</p></div>{notice&&<div className="driverNotice"><CheckCircle2/><span>{notice}</span></div>}<section className={`mobileBalance ${(d.currentBalance??0)<0?'negative':''}`}><span>Current FleetPay balance</span><strong>{money(d.currentBalance)}</strong><small>Autocab processed {dt(d.lastProcessed)} · FleetPay synced {dt(d.syncedAt)}</small>{(d.currentBalance??0)>0&&<div className="balanceFoot"><div><span>Available now</span><b>{money(me.availableForEarlyPayout)}</b></div>{me.reservedForEarlyPayout>0&&<div><span>Reserved for payout</span><b>{money(me.reservedForEarlyPayout)}</b></div>}</div>}</section>{pushAvailable&&!pushReady&&<section className="driverCard compactCard"><div className="cardTop"><div><span className="eyebrow">OPTIONAL</span><h2>Payment alerts</h2></div><Smartphone/></div><p>Get an alert when a payment is due, a payout is approved or money is sent.</p><button className="outline full" onClick={enablePush}>Enable notifications</button></section>}{me.paymentRequests?.length>0&&<section className="driverCard paymentDueCard"><div className="paymentDueHeader"><div><span className="eyebrow">MONDAY SETTLEMENT</span><h2>Payment due</h2></div><Pill tone="warn">Action needed</Pill></div><div className="dueAmount">{money(totalDue)}</div><p>Pay securely from FleetPay. Each payment is matched automatically to callsign {d.callsign} and recorded when Stripe confirms it.</p>{me.paymentRequests.map((r,i)=><div className="dueRequestRow" key={r.id}><div><b>{money(r.amount)}</b><span>{dt(r.createdAt)}{me.paymentRequests.length>1?` · Request ${i+1}`:''}</span></div><button className="mini goodBtn" disabled={paymentBusy||!me.stripeConfigured} onClick={()=>payRequest(r)}>{paymentBusy?'Opening…':'Pay now'}</button></div>)}{!me.stripeConfigured&&<small className="paymentUnavailable">Card payment is not configured. Please contact the office.</small>}</section>}
+{me.customerPayments?.length>0&&
+<section className="driverCard">
+  <div className="cardTop">
+    <div>
+      <span className="eyebrow">CUSTOMER PAYMENTS</span>
+      <h2>Payment history</h2>
+    </div>
+    <CreditCard/>
+  </div>
+
+  {me.customerPayments.slice(0,10).map(x=>
+    <div className="historyRow" key={x.id}>
+      <div>
+        <b>{money(x.fareAmount)} fare</b>
+        <span>
+          {x.bookingId?`Booking ${x.bookingId} · `:''}
+          Fee {money(x.feeAmount)} ·
+          Total {money(x.totalAmount)} ·
+          {dt(x.createdAt)}
+        </span>
+
+        {x.status==='open'&&x.paymentUrl&&
+          <div className="actionRow" style={{marginTop:'8px'}}>
+            <button
+              className="mini"
+              type="button"
+              onClick={()=>window.open(x.paymentUrl,'_blank')}
+            >
+              Open
+            </button>
+
+            <button
+              className="mini"
+              type="button"
+              onClick={async()=>{
+                try{
+                  if(navigator.share){
+                    await navigator.share({
+                      title:'FleetPay payment',
+                      text:`Taxi fare ${money(x.fareAmount)} · Total ${money(x.totalAmount)}`,
+                      url:x.paymentUrl
+                    });
+                  }else{
+                    await navigator.clipboard.writeText(x.paymentUrl);
+                    setNotice('Payment link copied.');
+                  }
+                }catch{}
+              }}
+            >
+              Share
+            </button>
+          </div>
+        }
+      </div>
+
+      <Pill tone={x.status==='paid'?'good':'warn'}>
+        {x.status}
+      </Pill>
+    </div>
+  )}
+</section>
+}
+
+<section className="driverCard">
+  <div className="cardTop">
+    <div>
+      <span className="eyebrow">CUSTOMER PAYMENT</span>
+      <h2>Take a payment</h2>
+    </div>
+    <CreditCard/>
+  </div>
+
+  <p>
+    Enter the taxi fare and optional booking ID. FleetPay adds the configured
+    service fee and creates a secure Stripe payment link for the customer.
+  </p>
+
+  <label>
+    Fare amount
+    <div className="moneyInput">
+      <span>£</span>
+      <input
+        type="number"
+        step="0.01"
+        min="0.01"
+        placeholder="0.00"
+        value={customerFare}
+        onChange={e=>{
+          setCustomerFare(e.target.value);
+          setCustomerPayment(null);
+        }}
+      />
+    </div>
+  </label>
+
+  <label>
+    Booking ID
+    <input
+      type="text"
+      placeholder="Optional"
+      value={customerBooking}
+      onChange={e=>{
+        setCustomerBooking(e.target.value);
+        setCustomerPayment(null);
+      }}
+    />
+  </label>
+
+  {customerFare && Number(customerFare)>0 && (
+    <div className="netPreview">
+      <div>
+        <span>Taxi fare</span>
+        <b>{money(Number(customerFare))}</b>
+      </div>
+
+      <div>
+        <span>FleetPay service fee</span>
+        <b>
+          {money(
+            me.settings.customerPaymentFeeType==='percentage'
+              ? Number(customerFare) *
+                (Number(me.settings.customerPaymentFeeValue||0)/100)
+              : Number(me.settings.customerPaymentFeeValue||0)
+          )}
+        </b>
+      </div>
+
+      <div>
+        <span>Customer pays</span>
+        <b>
+          {money(
+            Number(customerFare) +
+            (
+              me.settings.customerPaymentFeeType==='percentage'
+                ? Number(customerFare) *
+                  (Number(me.settings.customerPaymentFeeValue||0)/100)
+                : Number(me.settings.customerPaymentFeeValue||0)
+            )
+          )}
+        </b>
+      </div>
+    </div>
+  )}
+
+  {!customerPayment && (
+    <button
+      className="primary full"
+      disabled={
+        customerPaymentBusy ||
+        !me.stripeConfigured ||
+        !(Number(customerFare)>0)
+      }
+      onClick={createCustomerPayment}
+    >
+      {customerPaymentBusy ? 'Creating payment…' : 'Create customer payment'}
+    </button>
+  )}
+
+  {customerPayment && (
+    <div className="noticeItem success">
+      <b>Payment ready</b>
+
+      <p>
+        Fare {money(customerPayment.fareAmount)}
+        {' · '}
+        FleetPay fee {money(customerPayment.feeAmount)}
+        {' · '}
+        Customer pays {money(customerPayment.totalAmount)}
+      </p>
+
+      {customerPayment.bookingId && (
+        <small>Booking {customerPayment.bookingId}</small>
+      )}
+      <div style={{
+  display:'flex',
+  flexDirection:'column',
+  alignItems:'center',
+  gap:'12px',
+  padding:'16px',
+  marginTop:'12px',
+  marginBottom:'12px',
+  background:'#fff',
+  borderRadius:'14px'
+}}>
+  <QRCodeSVG
+    value={customerPayment.paymentUrl}
+    size={220}
+    level="M"
+    includeMargin
+  />
+
+  <div style={{textAlign:'center'}}>
+    <b>Scan to pay</b>
+    <p style={{margin:'4px 0 0'}}>
+      Customer pays {money(customerPayment.totalAmount)}
+    </p>
+  </div>
+</div>
+
+      <button
+        className="primary full"
+        type="button"
+        onClick={()=>window.open(customerPayment.paymentUrl,'_blank')}
+      >
+        Open payment link
+      </button>
+      <button
+  className="outline full"
+  type="button"
+  onClick={async()=>{
+    try{
+      if(navigator.share){
+        await navigator.share({
+          title:'FleetPay payment',
+          text:`Taxi fare ${money(customerPayment.fareAmount)} · Total ${money(customerPayment.totalAmount)}`,
+          url:customerPayment.paymentUrl
+        });
+      }else{
+        await navigator.clipboard.writeText(customerPayment.paymentUrl);
+        setNotice('Payment link copied.');
+      }
+    }catch{}
+  }}
+>
+  Share payment link
+</button>
+    </div>
+  )}
+
+  {!me.stripeConfigured && (
+    <small className="paymentUnavailable">
+      Customer card payments are not configured.
+    </small>
+  )}
+</section>
+
+{me.notifications?.length>0&&<section className="driverCard"><div className="cardTop"><h2>Updates</h2><Activity/></div>{me.notifications.slice(0,3).map(n=><div className={`noticeItem ${n.type}`} key={n.id}><b>{n.title}</b><p>{n.message}</p><small>{dt(n.createdAt)}</small></div>)}</section>}<section className="driverCard"><div className="cardTop"><div><span className="eyebrow">EARLY PAYOUT</span><h2>Request a payout</h2></div><div className="iconBubble"><ArrowUpRight/></div></div><p>Request from your positive FleetPay balance Tuesday to Friday. Requests after {me.settings.earlyPayoutCutoffTime} are accepted and automatically move to the next business-day payment run.</p><div className="availableRow"><span>Available to request</span><strong>{money(me.availableForEarlyPayout)}</strong></div>{me.reservedForEarlyPayout>0&&<div className="reservedLine"><span>Already reserved in pending payouts</span><b>{money(me.reservedForEarlyPayout)}</b></div>}{me.earlyPayoutAllowed&&<div className={`cutoffNotice ${me.earlyPayoutTiming?.afterCutoff?'afterCutoff':''}`}><Clock3/><span>{me.earlyPayoutWindowMessage}</span></div>}{me.earlyPayoutAllowed&&me.availableForEarlyPayout>me.settings.earlyPayoutFee?<><div className="moneyInput"><span>£</span><input type="number" step="0.01" placeholder="0.00" value={amt} onChange={e=>setAmt(e.target.value)}/></div>{amt&&Number(amt)>0&&<div className="netPreview"><span>You receive after {money(me.settings.earlyPayoutFee)} fee</span><b>{money(Math.max(0,Number(amt)-me.settings.earlyPayoutFee))}</b></div>}<button className="primary full" onClick={payout}>Request payout</button></>:!me.earlyPayoutAllowed?<div className="closed"><Clock3/><span>{me.earlyPayoutWindowMessage}</span></div>:null}{err&&<div className="inlineError"><AlertTriangle/>{err}</div>}</section><section className="driverCard"><div className="cardTop"><div><span className="eyebrow">ACCOUNT ACTIVITY</span><h2>Payments & fees</h2></div><Activity/></div>{me.ledger?.length===0?<div className="emptyState">No account activity recorded yet.</div>:me.ledger?.slice(0,10).map(x=><div className="historyRow" key={x.id}><div><b>{x.description}</b><span>{dt(x.createdAt)}{x.feeAmount>0?` · Fee ${money(x.feeAmount)}`:''}</span></div><div className={x.direction==='credit'?'pos':'neg'}><b>{x.direction==='credit'?'+':'-'}{money(x.amount)}</b><small>{x.status}</small></div></div>)}</section>{me.earlyPayoutRequests.length>0&&<section className="driverCard"><div className="cardTop"><div><span className="eyebrow">REQUEST HISTORY</span><h2>Early payouts</h2></div><ArrowUpRight/></div>{me.earlyPayoutRequests.slice(0,6).map(x=><div className="historyRow" key={x.id}><div><b>{money(x.netAmount)}</b><span>{dt(x.createdAt)}{x.eligibleRunDate?` · Run ${new Date(`${x.eligibleRunDate}T12:00:00`).toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'})}`:''}{x.declineReason?` · ${x.declineReason}`:''}</span></div><Pill tone={x.status==='approved'||x.status==='paid'?'good':x.status==='declined'?'warn':'neutral'}>{x.status}</Pill></div>)}</section>}<div className="driverFooter">Weekly FleetPay fee {money(me.settings.weeklyAppFee)} · Early payout fee {money(me.settings.earlyPayoutFee)}</div></main></div>
 }
 
 const isNativeApp = Capacitor.isNativePlatform();

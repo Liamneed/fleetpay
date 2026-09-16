@@ -64,6 +64,33 @@ CREATE TABLE IF NOT EXISTS payment_requests (
  balance REAL, weekly_fee REAL DEFAULT 0, carried_charges REAL DEFAULT 0, amount REAL NOT NULL,
  status TEXT NOT NULL, payment_url TEXT, created_at TEXT NOT NULL, updated_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS customer_payments (
+ id TEXT PRIMARY KEY,
+ driver_id INTEGER NOT NULL,
+ callsign TEXT NOT NULL,
+ driver_name TEXT,
+ booking_id TEXT,
+ fare_amount REAL NOT NULL,
+ fee_amount REAL NOT NULL DEFAULT 0,
+ total_amount REAL NOT NULL,
+ status TEXT NOT NULL DEFAULT 'open',
+ provider TEXT,
+ provider_session_id TEXT,
+ payment_url TEXT,
+ stripe_payment_intent_id TEXT,
+ payment_method TEXT,
+ created_at TEXT NOT NULL,
+ updated_at TEXT,
+ paid_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_customer_payments_driver
+ON customer_payments(driver_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_customer_payments_booking
+ON customer_payments(booking_id);
+
 CREATE TABLE IF NOT EXISTS carried_charges (driver_id INTEGER PRIMARY KEY, amount REAL NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS audit_logs (
  id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, actor_type TEXT NOT NULL, actor_id TEXT,
@@ -121,8 +148,20 @@ for (const sql of [
 ]) { try { db.exec(sql); } catch {} }
 
 const defaultSettings = {
- negativeThreshold: 20, weeklyAppFee: 2.5, earlyPayoutFee: 1.5, earlyPayoutCutoffTime: '11:00', earlyPayoutCutoffHour: 11,
- syncMinutes: 10, requireAdminApproval: false, companyName: 'Need-A-Cab', productName: 'FleetPay'
+ negativeThreshold: 20,
+ weeklyAppFee: 2.5,
+ earlyPayoutFee: 1.5,
+
+ customerPaymentFeeType: 'fixed',
+ customerPaymentFeeValue: 0.50,
+
+ earlyPayoutCutoffTime: '11:00',
+ earlyPayoutCutoffHour: 11,
+
+ syncMinutes: 10,
+ requireAdminApproval: false,
+ companyName: 'Need-A-Cab',
+ productName: 'FleetPay'
 };
 for (const [k,v] of Object.entries(defaultSettings)) {
  db.prepare('INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)').run(k, JSON.stringify(v));
@@ -130,29 +169,197 @@ for (const [k,v] of Object.entries(defaultSettings)) {
 
 app.use(cors());
 app.post('/api/stripe/webhook', express.raw({type:'application/json'}), async (req,res)=>{
-  if(!stripe || !STRIPE_WEBHOOK_SECRET) return res.status(503).send('Stripe webhook not configured');
+  if(!stripe || !STRIPE_WEBHOOK_SECRET){
+    return res.status(503).send('Stripe webhook not configured');
+  }
+
   let event;
-  try { event = stripe.webhooks.constructEvent(req.body, req.headers['stripe-signature'], STRIPE_WEBHOOK_SECRET); }
-  catch(e){ return res.status(400).send(`Webhook Error: ${e.message}`); }
-  try {
-    if(event.type==='checkout.session.completed' || event.type==='checkout.session.async_payment_succeeded'){
-      const session=event.data.object, requestId=session.metadata?.fleetpay_request_id || session.client_reference_id;
-      if(requestId){
-        const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(requestId);
+
+  try{
+    event=stripe.webhooks.constructEvent(
+      req.body,
+      req.headers['stripe-signature'],
+      STRIPE_WEBHOOK_SECRET
+    );
+  }catch(e){
+    return res.status(400).send(`Webhook Error: ${e.message}`);
+  }
+
+  try{
+    if(
+      event.type==='checkout.session.completed' ||
+      event.type==='checkout.session.async_payment_succeeded'
+    ){
+      const session=event.data.object;
+
+      /*
+       * CUSTOMER PAYMENT
+       */
+      const customerPaymentId=
+        session.metadata?.fleetpay_customer_payment_id;
+
+      if(customerPaymentId){
+        const item=db.prepare(
+          'SELECT * FROM customer_payments WHERE id=?'
+        ).get(customerPaymentId);
+
         if(item && item.status!=='paid'){
           const now=new Date().toISOString();
-          db.prepare('UPDATE payment_requests SET status=?,provider=?,provider_session_id=?,provider_payment_intent_id=?,paid_at=?,updated_at=? WHERE id=?').run('paid','stripe',session.id,String(session.payment_intent||''),now,now,item.id);
-          ledger(item.driver_id,'payment_received','debit',Number(item.amount||0),0,'Payment received by Stripe',item.id,'paid');
-          notify(item.driver_id,'Payment received',`We have received your payment of £${Number(item.amount||0).toFixed(2)}.`,'success',item.id);
-          try{await settlePaymentRequestInAutocab(item);audit(null,'system','stripe','autocab_payment_adjusted','payment_request',item.id,{callsign:item.callsign,amount:item.amount});}catch(e){audit(null,'system','stripe','autocab_adjustment_failed','payment_request',item.id,{callsign:item.callsign,error:e.message});}
-          audit(null,'system','stripe','stripe_payment_received','payment_request',item.id,{callsign:item.callsign,amount:item.amount,sessionId:session.id});
+
+          db.prepare(`
+            UPDATE customer_payments
+            SET status=?,
+                provider=?,
+                provider_session_id=?,
+                stripe_payment_intent_id=?,
+                paid_at=?,
+                updated_at=?
+            WHERE id=?
+          `).run(
+            'paid',
+            'stripe',
+            session.id,
+            String(session.payment_intent||''),
+            now,
+            now,
+            item.id
+          );
+
+          notify(
+            item.driver_id,
+            'Customer payment received',
+            `Customer payment received. Fare £${Number(item.fare_amount).toFixed(2)} plus £${Number(item.fee_amount).toFixed(2)} FleetPay service fee.`,
+            'success',
+            item.id
+          );
+
+          audit(
+            null,
+            'system',
+            'stripe',
+            'customer_payment_received',
+            'customer_payment',
+            item.id,
+            {
+              callsign:item.callsign,
+              bookingId:item.booking_id||null,
+              fareAmount:Number(item.fare_amount),
+              feeAmount:Number(item.fee_amount),
+              totalAmount:Number(item.total_amount),
+              sessionId:session.id,
+              paymentIntentId:String(session.payment_intent||'')
+            }
+          );
+        }
+      }
+
+      /*
+       * EXISTING DRIVER BALANCE PAYMENT
+       */
+      const requestId=
+        session.metadata?.fleetpay_request_id;
+
+      if(requestId){
+        const item=db.prepare(
+          'SELECT * FROM payment_requests WHERE id=?'
+        ).get(requestId);
+
+        if(item && item.status!=='paid'){
+          const now=new Date().toISOString();
+
+          db.prepare(`
+            UPDATE payment_requests
+            SET status=?,
+                provider=?,
+                provider_session_id=?,
+                provider_payment_intent_id=?,
+                paid_at=?,
+                updated_at=?
+            WHERE id=?
+          `).run(
+            'paid',
+            'stripe',
+            session.id,
+            String(session.payment_intent||''),
+            now,
+            now,
+            item.id
+          );
+
+          ledger(
+            item.driver_id,
+            'payment_received',
+            'debit',
+            Number(item.amount||0),
+            0,
+            'Payment received by Stripe',
+            item.id,
+            'paid'
+          );
+
+          notify(
+            item.driver_id,
+            'Payment received',
+            `We have received your payment of £${Number(item.amount||0).toFixed(2)}.`,
+            'success',
+            item.id
+          );
+
+          try{
+            await settlePaymentRequestInAutocab(item);
+
+            audit(
+              null,
+              'system',
+              'stripe',
+              'autocab_payment_adjusted',
+              'payment_request',
+              item.id,
+              {
+                callsign:item.callsign,
+                amount:item.amount
+              }
+            );
+          }catch(e){
+            audit(
+              null,
+              'system',
+              'stripe',
+              'autocab_adjustment_failed',
+              'payment_request',
+              item.id,
+              {
+                callsign:item.callsign,
+                error:e.message
+              }
+            );
+          }
+
+          audit(
+            null,
+            'system',
+            'stripe',
+            'stripe_payment_received',
+            'payment_request',
+            item.id,
+            {
+              callsign:item.callsign,
+              amount:item.amount,
+              sessionId:session.id
+            }
+          );
         }
       }
     }
+
     res.json({received:true});
-  } catch(e){ res.status(500).json({error:e.message}); }
+
+  }catch(e){
+    res.status(500).json({error:e.message});
+  }
 });
-app.use(express.json());
+
+app.use(express.json());app.use(express.json());
 
 function getSettings(){
  const rows=db.prepare('SELECT key,value FROM settings').all(); const out={...defaultSettings};
@@ -232,22 +439,170 @@ async function testWiseConnection(){
  throw lastErr||new Error('Wise connection failed');
 }
 
-function ledger(driverId,entryType,direction,amount,feeAmount,description,referenceId,status='completed'){db.prepare('INSERT INTO driver_ledger(id,driver_id,entry_type,direction,amount,fee_amount,description,reference_id,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id('ledger'),driverId,entryType,direction,Number(amount||0),Number(feeAmount||0),description,referenceId,status,new Date().toISOString())}
+function ledger(driverId,entryType,direction,amount,feeAmount,description,referenceId,status='completed'){
+ db.prepare(
+   'INSERT INTO driver_ledger(id,driver_id,entry_type,direction,amount,fee_amount,description,reference_id,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)'
+ ).run(
+   id('ledger'),
+   driverId,
+   entryType,
+   direction,
+   Number(amount||0),
+   Number(feeAmount||0),
+   description,
+   referenceId,
+   status,
+   new Date().toISOString()
+ );
+}
+
 async function createStripePaymentRequest(item){
  if(!stripe) return null;
- if(item.payment_url&&item.provider_session_id)return {id:item.provider_session_id,url:item.payment_url,reused:true};
+
+ if(item.payment_url && item.provider_session_id){
+   return {
+     id:item.provider_session_id,
+     url:item.payment_url,
+     reused:true
+   };
+ }
+
  const d=cachedDriver(item.driver_id);
+
  const session=await stripe.checkout.sessions.create({
    mode:'payment',
    client_reference_id:item.id,
    customer_email:d?.email||undefined,
+
    success_url:`${PUBLIC_BASE_URL}/driver?payment=success`,
    cancel_url:`${PUBLIC_BASE_URL}/driver?payment=cancelled`,
-   metadata:{fleetpay_request_id:item.id,callsign:String(item.callsign||'')},
-   payment_intent_data:{metadata:{fleetpay_request_id:item.id,callsign:String(item.callsign||'')}},
-   line_items:[{quantity:1,price_data:{currency:'gbp',unit_amount:Math.round(Number(item.amount)*100),product_data:{name:`FleetPay balance payment – Callsign ${item.callsign}`,description:'FleetPay weekly driver account payment request'}}}]
+
+   metadata:{
+     fleetpay_request_id:item.id,
+     callsign:String(item.callsign||'')
+   },
+
+   payment_intent_data:{
+     metadata:{
+       fleetpay_request_id:item.id,
+       callsign:String(item.callsign||'')
+     }
+   },
+
+   line_items:[
+     {
+       quantity:1,
+       price_data:{
+         currency:'gbp',
+         unit_amount:Math.round(Number(item.amount)*100),
+         product_data:{
+           name:`FleetPay balance payment – Callsign ${item.callsign}`,
+           description:'FleetPay weekly driver account payment request'
+         }
+       }
+     }
+   ]
  });
- db.prepare('UPDATE payment_requests SET payment_url=?,provider=?,provider_session_id=?,updated_at=? WHERE id=?').run(session.url,'stripe',session.id,new Date().toISOString(),item.id);
+
+ db.prepare(`
+   UPDATE payment_requests
+   SET payment_url=?,
+       provider=?,
+       provider_session_id=?,
+       updated_at=?
+   WHERE id=?
+ `).run(
+   session.url,
+   'stripe',
+   session.id,
+   new Date().toISOString(),
+   item.id
+ );
+
+ return session;
+}
+
+async function createStripeCustomerPayment(item){
+ if(!stripe) return null;
+
+ if(item.payment_url && item.provider_session_id){
+   return {
+     id:item.provider_session_id,
+     url:item.payment_url,
+     reused:true
+   };
+ }
+
+ const lineItems=[
+   {
+     quantity:1,
+     price_data:{
+       currency:'gbp',
+       unit_amount:Math.round(Number(item.fare_amount)*100),
+       product_data:{
+         name:'Taxi fare',
+         description:item.booking_id
+           ? `Booking ${item.booking_id}`
+           : `FleetPay taxi fare – Callsign ${item.callsign}`
+       }
+     }
+   }
+ ];
+
+ if(Number(item.fee_amount)>0){
+   lineItems.push({
+     quantity:1,
+     price_data:{
+       currency:'gbp',
+       unit_amount:Math.round(Number(item.fee_amount)*100),
+       product_data:{
+         name:'FleetPay service fee'
+       }
+     }
+   });
+ }
+
+ const session=await stripe.checkout.sessions.create({
+  mode:'payment',
+  client_reference_id:item.id,
+
+  success_url:`${PUBLIC_BASE_URL}/payment-success`,
+  cancel_url:`${PUBLIC_BASE_URL}/payment-cancelled`,
+
+   metadata:{
+     fleetpay_customer_payment_id:item.id,
+     callsign:String(item.callsign||''),
+     booking_id:String(item.booking_id||''),
+     fare_amount:String(item.fare_amount),
+     service_fee:String(item.fee_amount)
+   },
+
+   payment_intent_data:{
+     metadata:{
+       fleetpay_customer_payment_id:item.id,
+       callsign:String(item.callsign||''),
+       booking_id:String(item.booking_id||'')
+     }
+   },
+
+   line_items:lineItems
+ });
+
+ db.prepare(`
+   UPDATE customer_payments
+   SET payment_url=?,
+       provider=?,
+       provider_session_id=?,
+       updated_at=?
+   WHERE id=?
+ `).run(
+   session.url,
+   'stripe',
+   session.id,
+   new Date().toISOString(),
+   item.id
+ );
+
  return session;
 }
 function serializePayoutRun(r){return {id:r.id,runType:r.run_type,status:r.status,createdAt:r.created_at,createdBy:r.created_by,scheduledFor:r.scheduled_for,totalAmount:r.total_amount,itemCount:r.item_count,provider:r.provider,providerRef:r.provider_ref,notes:r.notes,paidAt:r.paid_at}}
@@ -332,9 +687,250 @@ app.get('/api/driver/push-config',driverAuth,(req,res)=>res.json({enabled:Boolea
 app.post('/api/driver/push-subscription',driverAuth,(req,res)=>{try{const sub=req.body.subscription;if(!sub?.endpoint)return res.status(400).json({error:'Invalid push subscription'});const now=new Date().toISOString();db.prepare('INSERT INTO push_subscriptions(id,driver_id,endpoint,subscription_json,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET driver_id=excluded.driver_id,subscription_json=excluded.subscription_json,updated_at=excluded.updated_at').run(id('push'),req.auth.driverId,sub.endpoint,JSON.stringify(sub),now,now);audit(req,'driver',req.auth.driverId,'push_notifications_enabled','driver',req.auth.driverId);res.json({ok:true})}catch(e){res.status(500).json({error:e.message})}});
 app.post('/api/driver/push-test',driverAuth,async(req,res)=>{const d=cachedDriver(req.auth.driverId);await sendPush(req.auth.driverId,'FleetPay test notification',`Push notifications are working for callsign ${d?.callsign||''}.`);res.json({ok:true})});
 app.post('/api/driver/payment-requests/:id/checkout',driverAuth,async(req,res)=>{try{if(!stripe)return res.status(400).json({error:'Card payments are not currently available. Please contact the office.'});const item=db.prepare('SELECT * FROM payment_requests WHERE id=? AND driver_id=?').get(req.params.id,req.auth.driverId);if(!item)return res.status(404).json({error:'Payment request not found'});if(item.status==='paid')return res.status(400).json({error:'This payment has already been received'});const session=await createStripePaymentRequest(item);audit(req,'driver',req.auth.driverId,'stripe_checkout_started','payment_request',item.id,{callsign:item.callsign,amount:item.amount,sessionId:session.id});res.json({ok:true,paymentUrl:session.url})}catch(e){res.status(500).json({error:e.message})}});
-app.get('/api/driver/me',driverAuth,(req,res)=>{try{const d=cachedDriver(req.auth.driverId);if(!d)return res.status(404).json({error:'Driver record is not yet available. Please try again after the next FleetPay sync.'});const settings=getSettings();const paymentRequests=db.prepare("SELECT id,amount,status,provider,created_at createdAt FROM payment_requests WHERE driver_id=? AND status IN ('open','pending') ORDER BY created_at DESC").all(d.driverId);const early=db.prepare("SELECT id,gross_amount grossAmount,fee,net_amount netAmount,status,decline_reason declineReason,decision_at decisionAt,eligible_run_date eligibleRunDate,submitted_after_cutoff submittedAfterCutoff,created_at createdAt FROM payouts WHERE driver_id=? AND type='early' ORDER BY created_at DESC").all(d.driverId);const reserved=early.filter(x=>['requested','approved','batched'].includes(x.status)).reduce((s,x)=>s+Number(x.grossAmount||0),0),available=Math.max(0,Number(d.currentBalance||0)-reserved);const ledgerRows=db.prepare('SELECT id,entry_type entryType,direction,amount,fee_amount feeAmount,description,reference_id referenceId,status,created_at createdAt FROM driver_ledger WHERE driver_id=? ORDER BY created_at DESC LIMIT 100').all(d.driverId);const notifications=db.prepare('SELECT id,title,message,type,read_at readAt,created_at createdAt FROM driver_notifications WHERE driver_id=? ORDER BY created_at DESC LIMIT 20').all(d.driverId);res.json({driver:{driverId:d.driverId,callsign:d.callsign,fullName:d.fullName,email:d.email,mobile:d.mobile,currentBalance:d.currentBalance,previousBalance:d.previousBalance,lastProcessed:d.lastProcessed,syncedAt:d.syncedAt},settings:{weeklyAppFee:settings.weeklyAppFee,earlyPayoutFee:settings.earlyPayoutFee,earlyPayoutCutoffTime:cutoffParts(settings).label},paymentRequests,earlyPayoutRequests:early,ledger:ledgerRows,notifications,stripeConfigured:Boolean(stripe),reservedForEarlyPayout:reserved,earlyPayoutAllowed:earlyPayoutTiming(settings).requestDayAllowed,earlyPayoutTiming:earlyPayoutTiming(settings),earlyPayoutWindowMessage:earlyPayoutWindowMessage(settings),availableForEarlyPayout:available})}catch(e){res.status(500).json({error:e.message})}});
-app.post('/api/driver/early-payout',driverAuth,(req,res)=>{try{const settings=getSettings(),timing=earlyPayoutTiming(settings);if(!timing.requestDayAllowed)return res.status(400).json({error:earlyPayoutWindowMessage(settings)});const d=cachedDriver(req.auth.driverId);if(!d)return res.status(404).json({error:'Driver not found in FleetPay cache'});const early=db.prepare("SELECT gross_amount,status FROM payouts WHERE driver_id=? AND type='early'").all(d.driverId);const reserved=early.filter(x=>['requested','approved','batched'].includes(x.status)).reduce((s,x)=>s+Number(x.gross_amount||0),0),available=Math.max(0,Number(d.currentBalance||0)-reserved),gross=Number(req.body.amount||0),fee=Number(settings.earlyPayoutFee||0);if(gross<=fee)return res.status(400).json({error:`Requested amount must be greater than the £${fee.toFixed(2)} fee`});if(gross>available+0.00001)return res.status(400).json({error:'Requested amount exceeds your available current balance'});const itemId=id('early'),now=new Date().toISOString();db.prepare('INSERT INTO payouts(id,driver_id,callsign,driver_name,gross_amount,fee,net_amount,amount,type,status,created_at,eligible_run_date,submitted_after_cutoff) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)').run(itemId,d.driverId,d.callsign,d.fullName,gross,fee,gross-fee,gross-fee,'early','requested',now,timing.runDate,timing.afterCutoff?1:0);const timingText=timing.beforeCutoff?'It is eligible for today\'s payment run if approved.':`Today's ${timing.cutoff} cutoff has passed, so it is queued for the ${timing.runLabel} payment run if approved.`;notify(d.driverId,'Payout request received',`Your request for £${(gross-fee).toFixed(2)} after the £${fee.toFixed(2)} fee is awaiting approval. ${timingText}`,'info',itemId);audit(req,'driver',d.driverId,'early_payout_requested','payout',itemId,{gross,fee,net:gross-fee,eligibleRunDate:timing.runDate,submittedAfterCutoff:timing.afterCutoff});res.json({id:itemId,grossAmount:gross,fee,netAmount:gross-fee,status:'requested',createdAt:now,eligibleRunDate:timing.runDate,submittedAfterCutoff:timing.afterCutoff,message:timingText})}catch(e){res.status(500).json({error:e.message})}});
+app.post('/api/driver/customer-payment',driverAuth,async(req,res)=>{
+  try{
+    if(!stripe){
+      return res.status(400).json({
+        error:'Customer card payments are not currently available.'
+      });
+    }
+
+    const d=cachedDriver(req.auth.driverId);
+
+    if(!d){
+      return res.status(404).json({
+        error:'Driver not found in FleetPay cache'
+      });
+    }
+
+    const fareAmount=Number(req.body.amount||0);
+    const bookingId=String(req.body.bookingId||'').trim();
+
+    if(!Number.isFinite(fareAmount) || fareAmount<=0){
+      return res.status(400).json({
+        error:'Enter a valid fare amount'
+      });
+    }
+
+    const settings=getSettings();
+
+    let feeAmount=0;
+
+    if(settings.customerPaymentFeeType==='percentage'){
+      feeAmount=fareAmount*(Number(settings.customerPaymentFeeValue||0)/100);
+    }else{
+      feeAmount=Number(settings.customerPaymentFeeValue||0);
+    }
+
+    feeAmount=Math.round(feeAmount*100)/100;
+
+    const totalAmount=Math.round((fareAmount+feeAmount)*100)/100;
+    const paymentId=id('customerpay');
+    const now=new Date().toISOString();
+
+    db.prepare(`
+      INSERT INTO customer_payments(
+        id,
+        driver_id,
+        callsign,
+        driver_name,
+        booking_id,
+        fare_amount,
+        fee_amount,
+        total_amount,
+        status,
+        created_at,
+        updated_at
+      )
+      VALUES(?,?,?,?,?,?,?,?,?,?,?)
+    `).run(
+      paymentId,
+      d.driverId,
+      d.callsign,
+      d.fullName,
+      bookingId||null,
+      fareAmount,
+      feeAmount,
+      totalAmount,
+      'open',
+      now,
+      now
+    );
+
+    const item=db.prepare(
+      'SELECT * FROM customer_payments WHERE id=?'
+    ).get(paymentId);
+
+    const session=await createStripeCustomerPayment(item);
+
+    audit(
+      req,
+      'driver',
+      d.driverId,
+      'customer_payment_created',
+      'customer_payment',
+      paymentId,
+      {
+        callsign:d.callsign,
+        bookingId:bookingId||null,
+        fareAmount,
+        feeAmount,
+        totalAmount,
+        sessionId:session.id
+      }
+    );
+
+    res.json({
+      ok:true,
+      id:paymentId,
+      bookingId:bookingId||null,
+      fareAmount,
+      feeAmount,
+      totalAmount,
+      paymentUrl:session.url
+    });
+
+  }catch(e){
+    res.status(500).json({
+      error:e.message
+    });
+  }
+});
+app.get('/api/driver/me',driverAuth,(req,res)=>{
+  try{
+    const d=cachedDriver(req.auth.driverId);
+
+    if(!d){
+      return res.status(404).json({
+        error:'Driver record is not yet available. Please try again after the next FleetPay sync.'
+      });
+    }
+
+    const settings=getSettings();
+
+    const paymentRequests=db.prepare(
+      "SELECT id,amount,status,provider,created_at createdAt FROM payment_requests WHERE driver_id=? AND status IN ('open','pending') ORDER BY created_at DESC"
+    ).all(d.driverId);
+    const customerPayments=db.prepare(`
+  SELECT
+    id,
+    booking_id bookingId,
+    fare_amount fareAmount,
+    fee_amount feeAmount,
+    total_amount totalAmount,
+    status,
+    provider,
+    payment_url paymentUrl,
+    created_at createdAt,
+    paid_at paidAt
+  FROM customer_payments
+  WHERE driver_id=?
+  ORDER BY created_at DESC
+  LIMIT 20
+`).all(d.driverId);
+
+    const early=db.prepare(
+      "SELECT id,gross_amount grossAmount,fee,net_amount netAmount,status,decline_reason declineReason,decision_at decisionAt,eligible_run_date eligibleRunDate,submitted_after_cutoff submittedAfterCutoff,created_at createdAt FROM payouts WHERE driver_id=? AND type='early' ORDER BY created_at DESC"
+    ).all(d.driverId);
+
+    const reserved=early
+      .filter(x=>['requested','approved','batched'].includes(x.status))
+      .reduce((s,x)=>s+Number(x.grossAmount||0),0);
+
+    const available=Math.max(
+      0,
+      Number(d.currentBalance||0)-reserved
+    );
+
+    const ledgerRows=db.prepare(
+      'SELECT id,entry_type entryType,direction,amount,fee_amount feeAmount,description,reference_id referenceId,status,created_at createdAt FROM driver_ledger WHERE driver_id=? ORDER BY created_at DESC LIMIT 100'
+    ).all(d.driverId);
+
+    const notifications=db.prepare(
+      'SELECT id,title,message,type,read_at readAt,created_at createdAt FROM driver_notifications WHERE driver_id=? ORDER BY created_at DESC LIMIT 20'
+    ).all(d.driverId);
+
+    res.json({
+      driver:{
+        driverId:d.driverId,
+        callsign:d.callsign,
+        fullName:d.fullName,
+        email:d.email,
+        mobile:d.mobile,
+        currentBalance:d.currentBalance,
+        previousBalance:d.previousBalance,
+        lastProcessed:d.lastProcessed,
+        syncedAt:d.syncedAt
+      },
+
+      settings:{
+        weeklyAppFee:settings.weeklyAppFee,
+        earlyPayoutFee:settings.earlyPayoutFee,
+        earlyPayoutCutoffTime:cutoffParts(settings).label,
+        customerPaymentFeeType:settings.customerPaymentFeeType,
+        customerPaymentFeeValue:settings.customerPaymentFeeValue
+      },
+
+      paymentRequests,
+      customerPayments,
+      earlyPayoutRequests:early,
+      ledger:ledgerRows,  
+      notifications,
+      stripeConfigured:Boolean(stripe),
+      reservedForEarlyPayout:reserved,
+      earlyPayoutAllowed:earlyPayoutTiming(settings).requestDayAllowed,
+      earlyPayoutTiming:earlyPayoutTiming(settings),
+      earlyPayoutWindowMessage:earlyPayoutWindowMessage(settings),
+      availableForEarlyPayout:available
+    });
+
+  }catch(e){
+    res.status(500).json({
+      error:e.message
+    });
+  }
+});app.post('/api/driver/early-payout',driverAuth,(req,res)=>{try{const settings=getSettings(),timing=earlyPayoutTiming(settings);if(!timing.requestDayAllowed)return res.status(400).json({error:earlyPayoutWindowMessage(settings)});const d=cachedDriver(req.auth.driverId);if(!d)return res.status(404).json({error:'Driver not found in FleetPay cache'});const early=db.prepare("SELECT gross_amount,status FROM payouts WHERE driver_id=? AND type='early'").all(d.driverId);const reserved=early.filter(x=>['requested','approved','batched'].includes(x.status)).reduce((s,x)=>s+Number(x.gross_amount||0),0),available=Math.max(0,Number(d.currentBalance||0)-reserved),gross=Number(req.body.amount||0),fee=Number(settings.earlyPayoutFee||0);if(gross<=fee)return res.status(400).json({error:`Requested amount must be greater than the £${fee.toFixed(2)} fee`});if(gross>available+0.00001)return res.status(400).json({error:'Requested amount exceeds your available current balance'});const itemId=id('early'),now=new Date().toISOString();db.prepare('INSERT INTO payouts(id,driver_id,callsign,driver_name,gross_amount,fee,net_amount,amount,type,status,created_at,eligible_run_date,submitted_after_cutoff) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)').run(itemId,d.driverId,d.callsign,d.fullName,gross,fee,gross-fee,gross-fee,'early','requested',now,timing.runDate,timing.afterCutoff?1:0);const timingText=timing.beforeCutoff?'It is eligible for today\'s payment run if approved.':`Today's ${timing.cutoff} cutoff has passed, so it is queued for the ${timing.runLabel} payment run if approved.`;notify(d.driverId,'Payout request received',`Your request for £${(gross-fee).toFixed(2)} after the £${fee.toFixed(2)} fee is awaiting approval. ${timingText}`,'info',itemId);audit(req,'driver',d.driverId,'early_payout_requested','payout',itemId,{gross,fee,net:gross-fee,eligibleRunDate:timing.runDate,submittedAfterCutoff:timing.afterCutoff});res.json({id:itemId,grossAmount:gross,fee,netAmount:gross-fee,status:'requested',createdAt:now,eligibleRunDate:timing.runDate,submittedAfterCutoff:timing.afterCutoff,message:timingText})}catch(e){res.status(500).json({error:e.message})}});
 app.post('/api/driver/notifications/read',driverAuth,(req,res)=>{db.prepare('UPDATE driver_notifications SET read_at=? WHERE driver_id=? AND read_at IS NULL').run(new Date().toISOString(),req.auth.driverId);res.json({ok:true})});
+
+app.get('/payment-success',(_req,res)=>{
+  res.send(`
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1">
+        <title>Payment successful</title>
+      </head>
+      <body style="font-family:Arial,sans-serif;background:#f4f7fb;margin:0;padding:24px;">
+        <div style="max-width:520px;margin:80px auto;background:white;padding:32px;border-radius:16px;text-align:center;box-shadow:0 8px 30px rgba(0,0,0,.08);">
+          <h1 style="margin-top:0;">Payment successful</h1>
+          <p>Your payment has been received successfully.</p>
+          <p>You can now close this page.</p>
+        </div>
+      </body>
+    </html>
+  `);
+});
+
+app.get('/payment-cancelled',(_req,res)=>{
+  res.send(`
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1">
+        <title>Payment cancelled</title>
+      </head>
+      <body style="font-family:Arial,sans-serif;background:#f4f7fb;margin:0;padding:24px;">
+        <div style="max-width:520px;margin:80px auto;background:white;padding:32px;border-radius:16px;text-align:center;box-shadow:0 8px 30px rgba(0,0,0,.08);">
+          <h1 style="margin-top:0;">Payment cancelled</h1>
+          <p>No payment has been taken.</p>
+          <p>You can close this page and ask the driver to try again.</p>
+        </div>
+      </body>
+    </html>
+  `);
+});
 
 const __filename=fileURLToPath(import.meta.url),__dirname=path.dirname(__filename),dist=path.resolve(__dirname,'../dist');app.use(express.static(dist));app.get('*',(req,res,next)=>{if(req.path.startsWith('/api'))return next();res.sendFile(path.join(dist,'index.html'),e=>e&&next())});
 function scheduleSync(){if(!API_KEY)return;const minutes=Math.max(2,Number(getSettings().syncMinutes||10));setTimeout(async()=>{try{const r=await syncAutocab();console.log(`FleetPay scheduled sync: ${r.drivers.length} drivers`)}catch(e){console.error('Scheduled Autocab sync failed:',e.message)}finally{scheduleSync()}},minutes*60000)}
