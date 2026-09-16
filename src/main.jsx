@@ -232,6 +232,19 @@ useEffect(()=>{
   return()=>clearInterval(timer);
 },[token,me?.customerPayments]);
 
+useEffect(()=>{
+  if(!customerPayment || !me?.customerPayments?.length) return;
+
+  const matched=me.customerPayments.find(x=>x.id===customerPayment.id);
+
+  if(matched?.status==='paid'){
+    setNotice(`Customer payment of ${money(matched.totalAmount)} received successfully.`);
+    setCustomerPayment(null);
+    setCustomerFare('');
+    setCustomerBooking('');
+  }
+},[customerPayment,me?.customerPayments]);
+
  async function load(){if(!token)return;try{setMe(await api('/api/driver/me'))}catch{localStorage.removeItem('fleetpay_driver');setToken('');setMe(null)}}
 
  async function checkPush(){if(!token||!('serviceWorker'in navigator)||!('PushManager'in window)){setPushAvailable(false);return}try{const cfg=await api('/api/driver/push-config');setPushAvailable(Boolean(cfg.enabled));if(!cfg.enabled)return;const reg=await navigator.serviceWorker.register('/fleetpay-sw.js');const sub=await reg.pushManager.getSubscription();setPushReady(Boolean(sub)&&Notification.permission==='granted')}catch{setPushAvailable(false)}}
