@@ -73,16 +73,6 @@ function AdminApp(){
  const loadUsers=async()=>setUsers(await call('/api/admin/users',{},token));
 
  useEffect(()=>{if(token){loadDrivers();loadSettings();loadSett();loadUsers();loadIntegrations()}},[token]);
- useEffect(()=>{
-  if(!token || !me?.customerPayments?.some(x=>x.status==='open')) return;
-
-  const timer=setInterval(()=>{
-    load();
-  },3000);
-
-  return()=>clearInterval(timer);
-},[token,me?.customerPayments]);
-
  function logout(){localStorage.removeItem('fleetpay_admin');setToken('')}
 
  const filtered=useMemo(()=>drivers.filter(d=>{const h=`${d.callsign} ${d.fullName} ${d.mobile} ${d.email} ${d.driverId}`.toLowerCase();if(!h.includes(q.toLowerCase()))return false;if(filter==='negative')return(d.currentBalance??0)<0;if(filter==='positive')return(d.currentBalance??0)>0;if(filter==='unmatched')return d.currentBalance==null;return true}).sort((a,b)=>String(a.callsign??'').localeCompare(String(b.callsign??''),'en-GB',{numeric:true})),[drivers,q,filter]);
@@ -196,6 +186,51 @@ function DriverApp(){
     listener?.remove();
   };
 },[token]);
+
+useEffect(()=>{
+  if(!token) return;
+
+  let appListener;
+
+  const refresh=()=>{
+    load();
+  };
+
+  if(Capacitor.isNativePlatform()){
+    App.addListener('appStateChange',({isActive})=>{
+      if(isActive){
+        refresh();
+      }
+    }).then(handle=>{
+      appListener=handle;
+    });
+  }
+
+  const onVisibility=()=>{
+    if(document.visibilityState==='visible'){
+      refresh();
+    }
+  };
+
+  window.addEventListener('focus',refresh);
+  document.addEventListener('visibilitychange',onVisibility);
+
+  return()=>{
+    appListener?.remove();
+    window.removeEventListener('focus',refresh);
+    document.removeEventListener('visibilitychange',onVisibility);
+  };
+},[token]);
+
+useEffect(()=>{
+  if(!token || !me?.customerPayments?.some(x=>x.status==='open')) return;
+
+  const timer=setInterval(()=>{
+    load();
+  },3000);
+
+  return()=>clearInterval(timer);
+},[token,me?.customerPayments]);
 
  async function load(){if(!token)return;try{setMe(await api('/api/driver/me'))}catch{localStorage.removeItem('fleetpay_driver');setToken('');setMe(null)}}
 
