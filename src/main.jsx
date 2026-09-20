@@ -194,6 +194,91 @@ function AdminApp(){
   })();
   return()=>{alive=false};
  },[token]);
+
+ async function silentOfficeRefresh(){
+  if(!token)return;
+
+  const jobs=[
+   api('/api/admin/office-overview').then(setOverview),
+   api('/api/drivers').then(j=>{
+    const nextDrivers=j.drivers||[];
+    setDrivers(nextDrivers);
+    setMeta(j);
+
+    setSelected(prev=>{
+     if(!prev?.driverId)return prev;
+     return nextDrivers.find(d=>String(d.driverId)===String(prev.driverId))||prev;
+    });
+   })
+  ];
+
+  if(view==='monday'){
+   jobs.push(
+    api('/api/admin/monday-runs').then(j=>setMondayRuns(j.runs||[])),
+    api('/api/admin/settlements').then(setSett)
+   );
+  }
+
+  if(view==='early'){
+   jobs.push(
+    api('/api/admin/early-summary').then(setEarlySummary),
+    api('/api/admin/settlements').then(setSett)
+   );
+  }
+
+  if(view==='outstanding'){
+   jobs.push(
+    api('/api/admin/outstanding-payments').then(j=>setOutstanding(j.payments||[]))
+   );
+  }
+
+  if(view==='fees'){
+   jobs.push(api('/api/admin/fees').then(setFees));
+  }
+
+  if(view==='transactions'){
+   const p=new URLSearchParams({
+    limit:'500',
+    q:txQ,
+    type:txType,
+    status:txStatus
+   });
+   jobs.push(
+    api('/api/admin/transactions?'+p.toString()).then(j=>setTransactions(j.transactions||[]))
+   );
+  }
+
+  await Promise.allSettled(jobs);
+ }
+
+ useEffect(()=>{
+  if(!token)return;
+
+  let stopped=false;
+
+  const refresh=()=>{
+   if(stopped)return;
+   if(document.visibilityState!=='visible')return;
+   silentOfficeRefresh();
+  };
+
+  const timer=setInterval(refresh,10000);
+
+  const onVisibility=()=>{
+   if(document.visibilityState==='visible')refresh();
+  };
+
+  window.addEventListener('focus',refresh);
+  document.addEventListener('visibilitychange',onVisibility);
+
+  return()=>{
+   stopped=true;
+   clearInterval(timer);
+   window.removeEventListener('focus',refresh);
+   document.removeEventListener('visibilitychange',onVisibility);
+  };
+ },[token,view,txQ,txType,txStatus]);
+
  useEffect(()=>{if(token&&view==='transactions')loadTransactions()},[txType,txStatus]);
  const isAdmin=me?.role==='administrator',canMoney=['administrator','finance'].includes(me?.role),canOffice=['administrator','finance','office'].includes(me?.role);
  const nav=[
