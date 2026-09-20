@@ -132,6 +132,20 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 CREATE INDEX IF NOT EXISTS idx_adjustments_driver ON autocab_adjustments(driver_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_push_driver ON push_subscriptions(driver_id);
 
+CREATE TABLE IF NOT EXISTS driver_bank_accounts (
+ driver_id INTEGER PRIMARY KEY,
+ account_holder_enc TEXT NOT NULL,
+ sort_code_enc TEXT NOT NULL,
+ account_number_enc TEXT NOT NULL,
+ sort_code_last2 TEXT NOT NULL,
+ account_number_last4 TEXT NOT NULL,
+ status TEXT NOT NULL DEFAULT 'saved',
+ provider_recipient_id TEXT,
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_driver_bank_status ON driver_bank_accounts(status);
+
 CREATE TABLE IF NOT EXISTS staff_users (
  id TEXT PRIMARY KEY,
  email TEXT NOT NULL UNIQUE,
@@ -871,7 +885,7 @@ app.post('/api/admin/integrations/wise/test',adminAuth,requireStaffRole('adminis
 app.post('/api/admin/autocab/test-adjustment',adminAuth,requireStaffRole('administrator'),async(req,res)=>{try{const callsign=String(req.body.callsign||'').trim();const d=cacheRows().find(x=>String(x.callsign)===callsign);if(!d)return res.status(404).json({error:'Callsign not found in FleetPay cache'});const amount=Number(req.body.amount||0);if(!(amount>0))return res.status(400).json({error:'Amount must be greater than zero'});const result=await postAutocabAdjustment({driverId:d.driverId,callsign:d.callsign,amount,isCredit:Boolean(req.body.isCredit),description:String(req.body.description||'FleetPay test adjustment'),adjustmentReason:String(req.body.adjustmentReason||'FleetPay Test'),eventKey:`test:${Date.now()}:${d.driverId}`,force:true});audit(req,'admin',req.auth.email,'autocab_test_adjustment','driver',d.callsign,{callsign:d.callsign,amount,isCredit:Boolean(req.body.isCredit)});setTimeout(()=>syncAutocab().catch(()=>{}),500);res.json({ok:true,driver:{driverId:d.driverId,callsign:d.callsign,fullName:d.fullName},result})}catch(e){res.status(500).json({error:e.message})}});
 app.get('/api/admin/autocab/adjustments',adminAuth,(req,res)=>{const rows=db.prepare('SELECT id,event_key eventKey,driver_id driverId,callsign,amount,is_credit isCredit,description,adjustment_reason adjustmentReason,status,created_at createdAt,completed_at completedAt,error FROM autocab_adjustments ORDER BY created_at DESC LIMIT 250').all().map(x=>({...x,isCredit:Boolean(x.isCredit)}));res.json({adjustments:rows})});
 app.get('/api/admin/dashboard',adminAuth,(req,res)=>{const drivers=cacheRows();const matched=drivers.filter(d=>d.currentBalance!==null).length;const owedOut=drivers.reduce((s,d)=>s+Math.max(0,Number(d.currentBalance||0)),0),owedIn=drivers.reduce((s,d)=>s+Math.max(0,-Number(d.currentBalance||0)),0);const stats={count:drivers.length,matched,unmatched:drivers.length-matched,owedOut,owedIn,openPaymentRequests:Number(db.prepare("SELECT COUNT(*) c FROM payment_requests WHERE status='open'").get().c),queuedPayouts:Number(db.prepare("SELECT COUNT(*) c FROM payouts WHERE status IN ('queued','requested','approved','batched')").get().c),pendingUsers:Number(db.prepare('SELECT COUNT(*) c FROM driver_users WHERE approved=0').get().c)};const lastSync=db.prepare('SELECT MAX(synced_at) lastSync FROM driver_cache').get()?.lastSync||null;res.json({fetchedAt:new Date().toISOString(),lastSync,stats,drivers})});
-app.get('/api/drivers',adminAuth,(req,res)=>{const drivers=cacheRows();const matched=drivers.filter(d=>d.currentBalance!==null).length;const lastSync=db.prepare('SELECT MAX(synced_at) lastSync FROM driver_cache').get()?.lastSync||null;res.json({fetchedAt:new Date().toISOString(),lastSync,count:drivers.length,matched,unmatched:drivers.length-matched,drivers})});
+app.get('/api/drivers',adminAuth,(req,res)=>{const drivers=cacheRows().map(d=>({...d,bankAccount:adminBankAccountInfo(d.driverId)}));const matched=drivers.filter(d=>d.currentBalance!==null).length;const lastSync=db.prepare('SELECT MAX(synced_at) lastSync FROM driver_cache').get()?.lastSync||null;const bankReady=drivers.filter(d=>d.bankAccount?.ready).length,bankMissing=drivers.length-bankReady,bankRecentlyChanged=drivers.filter(d=>d.bankAccount?.changedRecently).length;res.json({fetchedAt:new Date().toISOString(),lastSync,count:drivers.length,matched,unmatched:drivers.length-matched,bankReady,bankMissing,bankRecentlyChanged,drivers})});
 app.post('/api/admin/sync',adminAuth,requireStaffRole('administrator','finance','office'),async(req,res)=>{try{const out=await syncAutocab();audit(req,'admin',req.auth.email,'autocab_sync','driver_cache','all',{count:out.drivers.length});res.json({ok:true,count:out.drivers.length,syncedAt:out.syncedAt})}catch(e){res.status(500).json({error:e.message})}});
 app.get('/api/settings',adminAuth,(req,res)=>res.json(getSettings()));
 app.put('/api/settings',adminAuth,requireStaffRole('administrator'),(req,res)=>{const cur=getSettings(),s=req.body||{};let cutoff=String(s.earlyPayoutCutoffTime??cur.earlyPayoutCutoffTime??`${String(cur.earlyPayoutCutoffHour??11).padStart(2,'0')}:00`);if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(cutoff))cutoff='11:00';const next={negativeThreshold:Math.max(0,Number(s.negativeThreshold??cur.negativeThreshold)),weeklyAppFee:Math.max(0,Number(s.weeklyAppFee??cur.weeklyAppFee)),earlyPayoutFee:Math.max(0,Number(s.earlyPayoutFee??cur.earlyPayoutFee)),customerPaymentFeeType:['fixed','percentage'].includes(String(s.customerPaymentFeeType||cur.customerPaymentFeeType))?String(s.customerPaymentFeeType||cur.customerPaymentFeeType):'fixed',customerPaymentFeeValue:Math.max(0,Number(s.customerPaymentFeeValue??cur.customerPaymentFeeValue)),earlyPayoutCutoffTime:cutoff,earlyPayoutCutoffHour:Number(cutoff.split(':')[0]),syncMinutes:Math.min(60,Math.max(2,Number(s.syncMinutes??cur.syncMinutes))),requireAdminApproval:Boolean(s.requireAdminApproval),companyName:String(s.companyName||cur.companyName),productName:'FleetPay'};setSettings(next);audit(req,'admin',req.auth.email,'settings_updated','settings','global',next);res.json(next)});
@@ -946,6 +960,9 @@ app.post('/api/admin/payout-runs/:id/wise-sandbox',adminAuth,requireStaffRole('a
  if(WISE_ENV!=='sandbox')return res.status(400).json({error:'WISE_ENV must be sandbox for demo submission'});
  const run=db.prepare('SELECT * FROM payout_runs WHERE id=?').get(req.params.id);if(!run)return res.status(404).json({error:'Payout run not found'});
  if(run.status!=='funded')return res.status(400).json({error:'FleetPay will not release this run until cleared funds have been confirmed.'});
+ const payoutItems=db.prepare('SELECT * FROM payouts WHERE payout_run_id=?').all(run.id);
+ const bankIssues=payoutBankIssues(payoutItems);
+ if(bankIssues.length)return res.status(400).json({error:`Payout release blocked: ${bankIssues.length} driver${bankIssues.length===1?' is':'s are'} missing payout bank details (${bankIssues.map(x=>x.item.callsign).join(', ')}).`});
  const wise=await testWiseConnection();const ref=`wise_sandbox_${Date.now()}`,releasedAt=new Date().toISOString();
  db.prepare('UPDATE payout_runs SET status=?,provider=?,provider_ref=?,released_at=? WHERE id=?').run('submitted_sandbox','wise_sandbox',ref,releasedAt,run.id);
  audit(req,'admin',req.auth.email,'wise_sandbox_run_submitted','payout_run',run.id,{runType:run.run_type,itemCount:run.item_count,totalAmount:run.total_amount,providerRef:ref});
@@ -1219,6 +1236,63 @@ app.post('/api/driver/customer-payment',driverAuth,async(req,res)=>{
     });
   }
 });
+function maskedBankAccount(driverId){
+ const row=db.prepare('SELECT driver_id,status,sort_code_last2,account_number_last4,created_at,updated_at FROM driver_bank_accounts WHERE driver_id=?').get(driverId);
+ if(!row)return {configured:false,status:'missing'};
+ return {
+  configured:true,
+  status:row.status||'saved',
+  sortCodeMasked:`••-••-${row.sort_code_last2}`,
+  accountNumberMasked:`••••${row.account_number_last4}`,
+  createdAt:row.created_at,
+  updatedAt:row.updated_at
+ };
+}
+function adminBankAccountInfo(driverId){
+ const row=db.prepare('SELECT account_holder_enc,status,provider_recipient_id,sort_code_last2,account_number_last4,created_at,updated_at FROM driver_bank_accounts WHERE driver_id=?').get(driverId);
+ if(!row)return {configured:false,ready:false,status:'missing',label:'Bank details missing',changedRecently:false};
+ let accountHolder='Saved securely';
+ try{accountHolder=decryptSecret(row.account_holder_enc)||accountHolder}catch{}
+ const changed=Boolean(row.updated_at&&row.created_at&&row.updated_at!==row.created_at);
+ const changedRecently=changed&&(Date.now()-new Date(row.updated_at).getTime())<(7*24*60*60*1000);
+ const providerVerified=Boolean(row.provider_recipient_id)&&String(row.status||'').toLowerCase()==='verified';
+ return {
+  configured:true,ready:true,status:providerVerified?'verified':changedRecently?'recently_changed':'saved',
+  label:providerVerified?'Provider verified':changedRecently?'Changed recently':'Bank ready',
+  accountHolder,sortCodeMasked:`••-••-${row.sort_code_last2}`,accountNumberMasked:`••••${row.account_number_last4}`,
+  changedRecently,providerVerified,createdAt:row.created_at,updatedAt:row.updated_at
+ };
+}
+function payoutBankIssues(items){
+ return (items||[]).map(x=>({item:x,bank:adminBankAccountInfo(x.driver_id)})).filter(x=>!x.bank.ready);
+}
+
+app.put('/api/driver/bank-account',driverAuth,async(req,res)=>{
+ try{
+  const accountHolder=String(req.body.accountHolder||'').trim().replace(/\s+/g,' ');
+  const sortCode=String(req.body.sortCode||'').replace(/\D/g,'');
+  const accountNumber=String(req.body.accountNumber||'').replace(/\D/g,'');
+  const password=String(req.body.password||'');
+  if(accountHolder.length<2||accountHolder.length>100)return res.status(400).json({error:'Enter the account holder name exactly as shown on the bank account.'});
+  if(sortCode.length!==6)return res.status(400).json({error:'Enter a valid 6-digit UK sort code.'});
+  if(accountNumber.length!==8)return res.status(400).json({error:'Enter a valid 8-digit UK account number.'});
+  const user=db.prepare('SELECT id,email,password_hash,password_salt FROM driver_users WHERE driver_id=?').get(req.auth.driverId);
+  if(!user||!verifyPassword(password,user.password_salt,user.password_hash))return res.status(401).json({error:'Your FleetPay password is required to change payout bank details.'});
+  const existing=db.prepare('SELECT driver_id FROM driver_bank_accounts WHERE driver_id=?').get(req.auth.driverId);
+  const now=new Date().toISOString();
+  db.prepare(`INSERT INTO driver_bank_accounts(driver_id,account_holder_enc,sort_code_enc,account_number_enc,sort_code_last2,account_number_last4,status,provider_recipient_id,created_at,updated_at)
+   VALUES(?,?,?,?,?,?,?,NULL,?,?)
+   ON CONFLICT(driver_id) DO UPDATE SET account_holder_enc=excluded.account_holder_enc,sort_code_enc=excluded.sort_code_enc,account_number_enc=excluded.account_number_enc,sort_code_last2=excluded.sort_code_last2,account_number_last4=excluded.account_number_last4,status='saved',provider_recipient_id=NULL,updated_at=excluded.updated_at`)
+   .run(req.auth.driverId,encryptSecret(accountHolder),encryptSecret(sortCode),encryptSecret(accountNumber),sortCode.slice(-2),accountNumber.slice(-4),'saved',now,now);
+  audit(req,'driver',req.auth.driverId,existing?'bank_account_changed':'bank_account_added','driver_bank_account',String(req.auth.driverId),{maskedAccount:`••••${accountNumber.slice(-4)}`,maskedSortCode:`••-••-${sortCode.slice(-2)}`});
+  notify(req.auth.driverId,existing?'Payout bank account changed':'Payout bank account added',existing?'Your payout bank details were changed. Future FleetPay payouts will use the new account.':'Your payout bank details were saved securely.','info',String(req.auth.driverId));
+  const d=cachedDriver(req.auth.driverId);
+  const email=safeEmail(d?.email||user.email);
+  if(email){sendEmail(email,existing?'FleetPay payout bank details changed':'FleetPay payout bank details added',`<p>Your FleetPay payout bank details ${existing?'were changed':'have been added'}.</p><p>Account ending <strong>${accountNumber.slice(-4)}</strong> · Sort code ending <strong>${sortCode.slice(-2)}</strong>.</p><p>If you did not make this change, contact the FleetPay office immediately.</p>`).catch(()=>{});}
+  res.json({ok:true,bankAccount:maskedBankAccount(req.auth.driverId)});
+ }catch(e){res.status(500).json({error:e.message})}
+});
+
 app.get('/api/driver/me',driverAuth,(req,res)=>{
   try{
     const d=cachedDriver(req.auth.driverId);
@@ -1232,7 +1306,7 @@ app.get('/api/driver/me',driverAuth,(req,res)=>{
     const settings=getSettings();
 
     const paymentRequests=db.prepare(
-      "SELECT id,amount,status,provider,created_at createdAt FROM payment_requests WHERE driver_id=? AND status IN ('open','pending') ORDER BY created_at DESC"
+      "SELECT id,amount,status,provider,due_at dueAt,created_at createdAt FROM payment_requests WHERE driver_id=? AND status IN ('open','pending') ORDER BY created_at DESC"
     ).all(d.driverId);
     const customerPayments=db.prepare(`
   SELECT
@@ -1285,6 +1359,8 @@ app.get('/api/driver/me',driverAuth,(req,res)=>{
         lastProcessed:d.lastProcessed,
         syncedAt:d.syncedAt
       },
+
+      bankAccount:maskedBankAccount(d.driverId),
 
       settings:{
         weeklyAppFee:settings.weeklyAppFee,

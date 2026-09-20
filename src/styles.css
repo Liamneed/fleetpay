@@ -3091,3 +3091,530 @@ body {
 
 /* FleetPay Office V2.6 — live payment workflow parity */
 .liveRunStack{display:grid;gap:18px}.liveWorkflowCard{border:1px solid #dce5ef;border-radius:18px;background:#fff;padding:20px;box-shadow:0 8px 30px rgba(15,23,42,.06)}.liveWorkflowHead{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:16px}.liveWorkflowHead span{font-size:13px;font-weight:800;letter-spacing:.06em;color:#64748b}.liveWorkflowHead h3{font-size:28px;margin:5px 0}.liveWorkflowHead p{margin:0;color:#64748b}.liveSteps{display:grid;grid-template-columns:repeat(8,minmax(92px,1fr));gap:8px;margin:16px 0 18px}.liveSteps>div{padding:10px 8px;border-radius:12px;background:#f8fafc;border:1px solid #e2e8f0;text-align:center;color:#64748b}.liveSteps>div span{width:28px;height:28px;border-radius:999px;background:#e2e8f0;display:grid;place-items:center;margin:0 auto 6px;font-weight:800}.liveSteps>div b{display:block;font-size:12px}.liveSteps>div.done{background:#eefbf4;border-color:#bbf7d0;color:#166534}.liveSteps>div.done span{background:#16a34a;color:#fff}.liveSteps>div.current{box-shadow:0 0 0 2px #2563eb33;border-color:#60a5fa}.liveRunActions{margin-top:16px;display:flex;gap:10px;flex-wrap:wrap}.liveWorkflowCard.cancelled{opacity:.72}.cancelledRunNote{display:flex;gap:9px;align-items:center;margin-top:12px;color:#991b1b;font-weight:700}.cancelledRunNote svg{width:18px}.operatorWarning.green{background:#ecfdf5;border-color:#a7f3d0;color:#166534}.operatorWarning.blue{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8}@media(max-width:1100px){.liveSteps{grid-template-columns:repeat(4,1fr)}}@media(max-width:700px){.liveWorkflowHead{flex-direction:column}.liveSteps{grid-template-columns:repeat(2,1fr)}}
+
+/* =========================================================
+   FLEETPAY DRIVER VNEXT — CALM NATIVE UI
+   ========================================================= */
+.driverVNext {
+  --fp-bg: #101b30;
+  --fp-card: #1b2942;
+  --fp-card-2: #22324f;
+  --fp-ink: #f7f9fc;
+  --fp-muted: #9aa8bc;
+  --fp-line: rgba(255,255,255,.08);
+  --fp-blue: #42b8f5;
+  --fp-blue-soft: rgba(66,184,245,.14);
+  --fp-green: #49c787;
+  --fp-red: #ff6b78;
+  --fp-amber: #f5b84b;
+  --fp-shadow: 0 16px 38px rgba(0,0,0,.18);
+  background: #101b30 !important;
+  color: var(--fp-ink);
+}
+
+.driverVNext .modernDriverMain {
+  max-width: 620px;
+  padding-top: 14px !important;
+}
+
+.driverVNextHeader {
+  min-height: 76px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:14px;
+  background: rgba(16,27,48,.96);
+  border-bottom: 1px solid rgba(255,255,255,.055);
+}
+
+.driverIdentity { display:flex;align-items:center;gap:11px;min-width:0; }
+.driverIdentity > div:last-child { min-width:0; }
+.driverIdentity span,.driverIdentity b { display:block; }
+.driverIdentity span { color:#7f91aa;font-size:9px;font-weight:850;letter-spacing:.1em;text-transform:uppercase; }
+.driverIdentity b { margin-top:2px;color:#fff;font-size:20px;line-height:1.1;letter-spacing:-.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.driverAvatar { width:38px;height:38px;flex:0 0 38px;display:grid;place-items:center;border-radius:50%;background:linear-gradient(145deg,#2f456b,#47628c);color:#fff;font-size:12px;font-weight:900;border:2px solid rgba(255,255,255,.12); }
+.driverHeaderActions { display:flex;align-items:center;gap:8px; }
+.driverVNext .headerRefresh,.driverVNext .headerBell { position:relative;width:38px!important;height:38px;display:grid;place-items:center;padding:0;border:0;border-radius:50%;background:rgba(255,255,255,.07);color:#9edcff; }
+.driverVNext .headerRefresh svg,.driverVNext .headerBell svg { width:18px;height:18px; }
+.driverVNext .headerBell i { position:absolute;right:6px;top:5px;width:8px;height:8px;border-radius:50%;background:#ff5e6d;border:2px solid #101b30; }
+
+.driverVNext .driverPageView { color:var(--fp-ink); }
+.driverVNext .pageTitle { padding:6px 3px 2px; }
+.driverVNext .pageTitle > span,.driverVNext .eyebrow,.driverVNext .homeSectionTitle span { color:#67c6f6; }
+.driverVNext .pageTitle h1 { color:#fff;font-size:28px; }
+.driverVNext .pageTitle p { color:var(--fp-muted);font-size:13px; }
+
+.driverHeroBalance { margin-top:6px;padding:20px;border-radius:22px;background:linear-gradient(145deg,#1b2942,#263856);border:1px solid rgba(255,255,255,.08);box-shadow:var(--fp-shadow); }
+.driverHeroBalance.negative { background:linear-gradient(145deg,#432536,#5a2e43); }
+.heroBalanceTop { display:flex;align-items:flex-start;justify-content:space-between;gap:14px; }
+.heroBalanceTop span,.heroBalanceTop strong { display:block; }
+.heroBalanceTop span { color:#aeb9ca;font-size:12px; }
+.heroBalanceTop strong { margin-top:4px;color:#fff;font-size:36px;line-height:1;letter-spacing:-.05em; }
+.heroBalanceTop button { width:36px!important;height:36px;display:grid;place-items:center;padding:0;border:0;border-radius:50%;background:rgba(255,255,255,.08);color:#9fdcff; }
+.heroBalanceTop button svg { width:16px;height:16px; }
+.heroBalanceActions { display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:19px;padding-top:15px;border-top:1px solid rgba(255,255,255,.08); }
+.heroBalanceActions button { min-height:42px;display:flex;align-items:center;justify-content:center;gap:7px;padding:0 11px;border:0;border-radius:13px;background:rgba(255,255,255,.08);color:#fff;font-size:12px;font-weight:800; }
+.heroBalanceActions button svg { width:16px;height:16px;color:#66c7f7; }
+.heroBalanceFoot { display:flex;justify-content:space-between;gap:12px;margin-top:12px;color:#8090a7;font-size:9px; }
+
+.homeSectionTitle { margin:22px 3px 9px; }
+.homeSectionTitle span { font-size:10px;font-weight:900;letter-spacing:.16em; }
+.glanceGrid { display:grid;grid-template-columns:1fr 1fr;gap:10px; }
+.glanceCard { min-height:140px;display:flex;flex-direction:column;align-items:flex-start;padding:16px!important;border:1px solid rgba(255,255,255,.07)!important;border-radius:18px!important;text-align:left!important;color:#fff!important;background:#1b2942!important;box-shadow:0 10px 25px rgba(0,0,0,.1); }
+.glanceCard svg { width:20px;height:20px;margin-bottom:19px;color:#8fd7fa; }
+.glanceCard span { color:#dfe7f2;font-size:12px;font-weight:850; }
+.glanceCard b { display:block;margin-top:5px;color:#fff;font-size:18px;line-height:1.15;letter-spacing:-.025em; }
+.glanceCard small { display:block;margin-top:auto;padding-top:10px;color:#8c9ab0;font-size:9px;line-height:1.3; }
+.glanceCard.payments { background:linear-gradient(145deg,#2a526d,#315d7b)!important; }
+.glanceCard.payout { background:linear-gradient(145deg,#4a315f,#593972)!important; }
+.glanceCard.activity { background:linear-gradient(145deg,#285058,#32636b)!important; }
+.glanceCard.account { background:linear-gradient(145deg,#3b4058,#454c69)!important; }
+
+.driverVNext .driverCard { background:#1b2942!important;border-color:rgba(255,255,255,.075)!important;box-shadow:0 10px 28px rgba(0,0,0,.11)!important; }
+.driverVNext .driverCard h2,.driverVNext .driverCard h3,.driverVNext .driverCard b,.driverVNext .driverCard strong { color:#f7f9fc; }
+.driverVNext .driverCard p,.driverVNext .driverCard span,.driverVNext .driverCard small { color:#9aa8bc; }
+.driverVNext .sectionHeader { border-color:rgba(255,255,255,.06); }
+.driverVNext .cleanHistoryRow,.driverVNext .cleanNotice,.driverVNext .profileRows>div,.driverVNext .feeRows>div { border-color:rgba(255,255,255,.07); }
+.driverVNext .historyIcon,.driverVNext .compactActionIcon { background:rgba(255,255,255,.07);color:#8fd7fa; }
+.driverVNext .historyMain>b,.driverVNext .profileRows b,.driverVNext .feeRows b { color:#f7f9fc; }
+.driverVNext .linkButton { color:#59c5fb; }
+
+.driverVNext .paymentDueCard { border-color:rgba(245,184,75,.36)!important;background:linear-gradient(160deg,#352d26,#27283a)!important; }
+.driverVNext .paymentDueHeader h2 { color:#fff!important;font-size:30px!important; }
+.mondayDueHero { position:relative;overflow:hidden;margin-top:2px!important;padding:20px!important;border:1px solid rgba(255,107,120,.32)!important;background:linear-gradient(145deg,#4c2637,#35253a 60%,#252b42)!important; }
+.mondayDueHero::after { content:'';position:absolute;right:-45px;top:-55px;width:160px;height:160px;border-radius:50%;background:rgba(255,107,120,.08);pointer-events:none; }
+.mondayDueHero .eyebrow { color:#ffb8c0!important; }
+.mondayDueHero .paymentDueHeader { position:relative;z-index:1; }
+.mondayDueHero .paymentDueHeader h2 { margin-top:6px!important;font-size:42px!important;letter-spacing:-.055em; }
+.mondayDueHero > h3 { position:relative;z-index:1;margin:16px 0 5px;color:#fff;font-size:18px; }
+.mondayDueHero > p { position:relative;z-index:1;margin:0;color:#c9b9c2!important;font-size:12px!important;line-height:1.5; }
+.mondayDueHero > p b { color:#fff; }
+.dueHeroMeta { position:relative;z-index:1;display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:15px 0 4px; }
+.dueHeroMeta>div { padding:11px 12px;border-radius:13px;background:rgba(255,255,255,.07); }
+.dueHeroMeta span,.dueHeroMeta b { display:block; }
+.dueHeroMeta span { color:#aa9bab!important;font-size:9px!important;text-transform:uppercase;letter-spacing:.08em; }
+.dueHeroMeta b { margin-top:4px;color:#fff;font-size:12px;line-height:1.35; }
+.driverVNext .dueRequestRow { border-color:rgba(255,255,255,.07); }
+.heroPayButton { min-width:100px;background:#48c987!important;color:#082519!important;border:0!important;font-weight:900!important; }
+.dueDetailsButton { width:100%!important;min-height:42px;margin-top:8px;display:flex;align-items:center;justify-content:center;gap:5px;border:1px solid rgba(255,255,255,.1)!important;border-radius:12px!important;background:rgba(255,255,255,.05)!important;color:#fff!important;font-size:11px;font-weight:800; }
+.dueDetailsButton svg { width:15px; }
+
+.driverVNext .modernInput,.driverVNext .modernMoneyInput,.driverVNext input,.driverVNext select,.driverVNext textarea { color:#fff!important;background:#142139!important;border-color:rgba(255,255,255,.10)!important; }
+.driverVNext .modernMoneyInput input { background:transparent!important; }
+.driverVNext .modernMoneyInput span { color:#a9b6c8!important; }
+.driverVNext input::placeholder,.driverVNext textarea::placeholder { color:#687991; }
+.driverVNext .paymentBreakdown,.driverVNext .activePaymentSheet,.driverVNext .cutoffNotice,.driverVNext .compactPreview,.driverVNext .activitySummary>div { background:#142139!important;border-color:rgba(255,255,255,.07)!important; }
+.driverVNext .paymentBreakdown .paymentTotal { border-color:rgba(255,255,255,.08); }
+.driverVNext .paymentBreakdown span,.driverVNext .paymentBreakdown b { color:#aab6c7; }
+.driverVNext .paymentBreakdown .paymentTotal span,.driverVNext .paymentBreakdown .paymentTotal strong { color:#fff; }
+
+.driverVNext .driverBottomNav { background:rgba(15,25,44,.97);border-color:rgba(255,255,255,.07);box-shadow:0 -10px 30px rgba(0,0,0,.22); }
+.driverVNext .driverBottomNav button { color:#718198; }
+.driverVNext .driverBottomNav button.active { color:#57c5fb;background:rgba(66,184,245,.10); }
+.driverVNext .driverBottomNav button i { border-color:#101b30; }
+.driverVNext .driverFooter { color:#667991; }
+
+/* Forms keep local draft state. Do not visually jump while background data updates. */
+.driverVNext input:focus,.driverVNext textarea:focus,.driverVNext select:focus,.driverVNext .modernMoneyInput:focus-within { border-color:#4abcf4!important;box-shadow:0 0 0 3px rgba(66,184,245,.12)!important;outline:none; }
+
+@media (max-width:420px){
+ .driverIdentity b{font-size:18px}.driverHeroBalance{padding:17px;border-radius:20px}.heroBalanceTop strong{font-size:33px}.glanceCard{min-height:132px;padding:14px!important}.mondayDueHero .paymentDueHeader h2{font-size:38px!important}.dueHeroMeta{grid-template-columns:1fr}.driverVNext .modernDriverMain{padding-left:max(11px,env(safe-area-inset-left))!important;padding-right:max(11px,env(safe-area-inset-right))!important}
+}
+
+/* =========================================================
+   DRIVER VNext — POLISH PASS / LIGHT + DARK THEMES
+   ========================================================= */
+.driverAuthV2,
+.driverVNext {
+  --fp-font: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+  font-family: var(--fp-font);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.driverAuthV2 {
+  position: relative;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: max(24px, env(safe-area-inset-top)) 20px max(28px, env(safe-area-inset-bottom));
+  overflow: auto;
+  transition: background .2s ease, color .2s ease;
+}
+.driverAuthV2.theme-dark {
+  --auth-bg: #0b1424;
+  --auth-card: rgba(22,34,55,.92);
+  --auth-line: rgba(255,255,255,.08);
+  --auth-text: #f7f9fc;
+  --auth-muted: #98a6ba;
+  --auth-field: #101d31;
+  --auth-soft: rgba(255,255,255,.055);
+  background:
+    radial-gradient(circle at 50% -10%, rgba(51,130,246,.20), transparent 31%),
+    linear-gradient(180deg,#0b1424 0%,#0f1a2e 100%);
+  color: var(--auth-text);
+}
+.driverAuthV2.theme-light {
+  --auth-bg: #f4f7fb;
+  --auth-card: rgba(255,255,255,.97);
+  --auth-line: #e5eaf1;
+  --auth-text: #152033;
+  --auth-muted: #6f7c90;
+  --auth-field: #f7f9fc;
+  --auth-soft: #f3f6fa;
+  background:
+    radial-gradient(circle at 50% -10%, rgba(37,99,235,.11), transparent 31%),
+    linear-gradient(180deg,#f7f9fc 0%,#eef3f8 100%);
+  color: var(--auth-text);
+}
+.driverAuthShell { width: min(100%, 430px); }
+.driverAuthBrand { display:flex;align-items:center;justify-content:center;gap:11px;margin:0 0 24px; }
+.authLogoMark { width:48px;height:48px;border-radius:15px;display:grid;place-items:center;background:linear-gradient(145deg,#2f7df5,#4bbcf3);box-shadow:0 12px 30px rgba(38,119,230,.28);color:#fff;font-size:16px;font-weight:950;letter-spacing:-.04em; }
+.driverAuthBrand b,.driverAuthBrand span { display:block; }
+.driverAuthBrand b { color:var(--auth-text);font-size:23px;letter-spacing:-.035em;line-height:1; }
+.driverAuthBrand span { margin-top:4px;color:var(--auth-muted);font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase; }
+.authThemeToggle { position:fixed;top:max(16px,env(safe-area-inset-top));right:16px;width:42px;height:42px;display:grid;place-items:center;border:1px solid var(--auth-line);border-radius:14px;background:var(--auth-card);color:var(--auth-text);box-shadow:0 8px 24px rgba(15,23,42,.10);z-index:4; }
+.authThemeToggle svg { width:18px;height:18px; }
+.polishedAuthCard { width:100%;padding:28px 24px 22px!important;border:1px solid var(--auth-line)!important;border-radius:26px!important;background:var(--auth-card)!important;box-shadow:0 26px 70px rgba(15,23,42,.20)!important;backdrop-filter:blur(18px); }
+.authIntro { text-align:left;margin-bottom:24px; }
+.authKicker { display:block;color:#4caef1;font-size:9px;font-weight:950;letter-spacing:.17em;text-transform:uppercase;margin-bottom:8px; }
+.authIntro h1 { margin:0!important;color:var(--auth-text)!important;font-size:30px!important;line-height:1.08;letter-spacing:-.045em; }
+.authIntro p { margin:9px 0 0!important;color:var(--auth-muted)!important;font-size:13px!important;line-height:1.55; }
+.authForm { display:grid;gap:16px; }
+.authForm label { display:grid;gap:7px;color:var(--auth-text);font-size:11px;font-weight:800; }
+.authField { position:relative;display:flex;align-items:center;min-height:52px;border:1px solid var(--auth-line);border-radius:15px;background:var(--auth-field);transition:border-color .16s ease,box-shadow .16s ease,background .16s ease; }
+.authField:focus-within { border-color:#3ba8ef;box-shadow:0 0 0 4px rgba(59,168,239,.12); }
+.authField>svg { width:17px;height:17px;flex:0 0 17px;margin-left:15px;color:#7f8da2; }
+.authField input { width:100%;height:50px;padding:0 14px!important;border:0!important;background:transparent!important;box-shadow:none!important;outline:0!important;color:var(--auth-text)!important;font-size:15px!important;font-weight:650; }
+.authField input::placeholder { color:#98a3b2!important;font-weight:500; }
+.passwordToggle { width:42px;height:42px;flex:0 0 42px;padding:0!important;margin-right:5px;border:0!important;background:transparent!important;color:#7e8ba0!important;display:grid;place-items:center; }
+.passwordToggle svg { width:17px;height:17px; }
+.authRow { display:flex;justify-content:flex-end;margin-top:-5px; }
+.driverAuthV2 .textBtn { padding:0;border:0;background:transparent;color:#379ee8;font-size:11px;font-weight:850; }
+.driverAuthV2 .textBtn.centered { justify-self:center;margin-top:1px; }
+.authPrimary { min-height:52px!important;border-radius:15px!important;background:linear-gradient(135deg,#2f74ed,#35a9ef)!important;box-shadow:0 12px 26px rgba(47,116,237,.24)!important;font-size:14px!important;font-weight:900!important; }
+.authPrimary svg { width:17px!important;height:17px!important; }
+.authSecondary { min-height:50px;border:1px solid var(--auth-line);border-radius:15px;background:var(--auth-soft);color:var(--auth-text);font-size:13px;font-weight:850; }
+.authDivider { position:relative;text-align:center;margin:2px 0 -2px; }
+.authDivider::before { content:'';position:absolute;left:0;right:0;top:50%;height:1px;background:var(--auth-line); }
+.authDivider span { position:relative;padding:0 10px;background:var(--auth-card);color:var(--auth-muted);font-size:10px; }
+.driverAuthV2 .secureBanner { border:1px solid var(--auth-line);background:var(--auth-soft);border-radius:14px;color:var(--auth-muted); }
+.driverAuthV2 .secureBanner svg { color:#42b8f5; }
+.authTrust { display:flex;justify-content:center;align-items:center;gap:6px;margin-top:21px;color:var(--auth-muted);font-size:9px; }
+.authTrust svg { width:13px;height:13px;color:#4fc58b; }
+.authLoading { min-height:180px;display:flex!important;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center;color:var(--auth-text); }
+.authLoading svg { width:24px;height:24px;color:#42b8f5; }
+.authLoading span { color:var(--auth-muted);font-size:11px; }
+
+/* More deliberate card rhythm and tap targets */
+.driverVNext .modernDriverMain { padding-bottom:108px!important; }
+.driverVNext .driverCard,
+.driverVNext .driverHeroBalance,
+.driverVNext .glanceCard { transition:background .2s ease,border-color .2s ease,box-shadow .2s ease,transform .12s ease; }
+.driverVNext .driverCard { padding:18px!important;border-radius:20px!important; }
+.driverVNext .sectionHeader { padding-bottom:13px;margin-bottom:4px; }
+.driverVNext .cleanHistoryRow { padding:14px 0;gap:12px; }
+.driverVNext .historyIcon { width:42px;height:42px;border-radius:13px;display:grid;place-items:center;flex:0 0 42px; }
+.driverVNext .historyIcon svg { width:18px;height:18px; }
+.driverVNext button { -webkit-tap-highlight-color:transparent; }
+.driverVNext button:active { transform:scale(.985); }
+.driverVNext .driverBottomNav button { min-height:58px;border-radius:14px; }
+.driverVNext .headerRefresh,.driverVNext .headerBell { border:1px solid var(--fp-line)!important; }
+.driverVNext .glanceGrid { gap:12px; }
+.driverVNext .glanceCard { border-radius:20px!important;padding:17px!important; }
+.driverVNext .glanceCard svg { margin-bottom:17px; }
+.driverVNext .pageTitle { padding-top:10px; }
+.driverVNext .pageTitle h1 { margin-top:4px;letter-spacing:-.045em; }
+
+/* Theme chooser */
+.themeOptions { display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px; }
+.themeOptions button { min-height:74px;padding:13px;border:1px solid var(--fp-line);border-radius:16px;background:var(--fp-card-2);color:var(--fp-ink);display:flex;align-items:center;gap:10px;text-align:left; }
+.themeOptions button>svg { width:20px;height:20px;color:var(--fp-muted); }
+.themeOptions button span,.themeOptions button b,.themeOptions button small { display:block!important; }
+.themeOptions button b { color:var(--fp-ink)!important;font-size:12px; }
+.themeOptions button small { margin-top:3px;color:var(--fp-muted)!important;font-size:9px; }
+.themeOptions button.active { border-color:rgba(66,184,245,.55);box-shadow:0 0 0 3px rgba(66,184,245,.10); }
+.themeOptions button.active>svg { color:#42b8f5; }
+
+/* Light theme for the signed-in driver app */
+.driverVNext.theme-light {
+  --fp-bg:#f4f7fb;
+  --fp-card:#ffffff;
+  --fp-card-2:#f6f8fb;
+  --fp-ink:#162033;
+  --fp-muted:#748196;
+  --fp-line:#e4e9f0;
+  --fp-blue:#238ed8;
+  --fp-blue-soft:#eaf6fd;
+  --fp-green:#20a66a;
+  --fp-red:#d94b5b;
+  --fp-amber:#d49422;
+  --fp-shadow:0 13px 30px rgba(28,44,70,.09);
+  background:var(--fp-bg)!important;
+  color:var(--fp-ink);
+}
+.driverVNext.theme-light .driverVNextHeader { background:rgba(255,255,255,.96);border-color:#e6eaf0;box-shadow:0 1px 0 rgba(22,32,51,.02); }
+.driverVNext.theme-light .driverIdentity span { color:#8190a4; }
+.driverVNext.theme-light .driverIdentity b { color:#162033; }
+.driverVNext.theme-light .driverAvatar { background:linear-gradient(145deg,#dceaff,#c9e4f7);color:#245783;border-color:#fff; }
+.driverVNext.theme-light .headerRefresh,.driverVNext.theme-light .headerBell { background:#f3f6fa;color:#258ed7; }
+.driverVNext.theme-light .headerBell i { border-color:#fff; }
+.driverVNext.theme-light .pageTitle h1 { color:#162033; }
+.driverVNext.theme-light .pageTitle p { color:#748196; }
+.driverVNext.theme-light .driverHeroBalance { background:linear-gradient(145deg,#ffffff,#f7f9fc);border-color:#e5eaf1;box-shadow:var(--fp-shadow); }
+.driverVNext.theme-light .driverHeroBalance.negative { background:linear-gradient(145deg,#fff,#fff3f5); }
+.driverVNext.theme-light .heroBalanceTop span { color:#738095; }
+.driverVNext.theme-light .heroBalanceTop strong { color:#162033; }
+.driverVNext.theme-light .heroBalanceTop button { background:#edf5fb;color:#258ed7; }
+.driverVNext.theme-light .heroBalanceActions { border-color:#e9edf2; }
+.driverVNext.theme-light .heroBalanceActions button { background:#f2f6fa;color:#203047; }
+.driverVNext.theme-light .heroBalanceFoot { color:#8290a2; }
+.driverVNext.theme-light .driverCard { background:#fff!important;border-color:#e5eaf0!important;box-shadow:var(--fp-shadow)!important; }
+.driverVNext.theme-light .driverCard h2,.driverVNext.theme-light .driverCard h3,.driverVNext.theme-light .driverCard b,.driverVNext.theme-light .driverCard strong { color:#162033; }
+.driverVNext.theme-light .driverCard p,.driverVNext.theme-light .driverCard span,.driverVNext.theme-light .driverCard small { color:#748196; }
+.driverVNext.theme-light .sectionHeader,.driverVNext.theme-light .cleanHistoryRow,.driverVNext.theme-light .cleanNotice,.driverVNext.theme-light .profileRows>div,.driverVNext.theme-light .feeRows>div { border-color:#edf0f4; }
+.driverVNext.theme-light .historyIcon,.driverVNext.theme-light .compactActionIcon { background:#eef6fb;color:#258ed7; }
+.driverVNext.theme-light .historyMain>b,.driverVNext.theme-light .profileRows b,.driverVNext.theme-light .feeRows b { color:#162033; }
+.driverVNext.theme-light .glanceCard { border-color:#e4eaf1!important;box-shadow:var(--fp-shadow); }
+.driverVNext.theme-light .glanceCard.payments { background:linear-gradient(145deg,#eaf7fd,#dceffa)!important;color:#15344b!important; }
+.driverVNext.theme-light .glanceCard.payout { background:linear-gradient(145deg,#f5edfb,#eadcf6)!important;color:#3f2452!important; }
+.driverVNext.theme-light .glanceCard.activity { background:linear-gradient(145deg,#eaf8f3,#dff1ea)!important;color:#173f35!important; }
+.driverVNext.theme-light .glanceCard.account { background:linear-gradient(145deg,#f1f3f8,#e6eaf2)!important;color:#253148!important; }
+.driverVNext.theme-light .glanceCard span,.driverVNext.theme-light .glanceCard b { color:inherit!important; }
+.driverVNext.theme-light .glanceCard small { color:#607084!important; }
+.driverVNext.theme-light .modernInput,.driverVNext.theme-light .modernMoneyInput,.driverVNext.theme-light input,.driverVNext.theme-light select,.driverVNext.theme-light textarea { color:#162033!important;background:#f7f9fc!important;border-color:#dfe5ec!important; }
+.driverVNext.theme-light .modernMoneyInput input { background:transparent!important; }
+.driverVNext.theme-light input::placeholder,.driverVNext.theme-light textarea::placeholder { color:#98a4b4; }
+.driverVNext.theme-light .paymentBreakdown,.driverVNext.theme-light .activePaymentSheet,.driverVNext.theme-light .cutoffNotice,.driverVNext.theme-light .compactPreview,.driverVNext.theme-light .activitySummary>div { background:#f7f9fc!important;border-color:#e8ecf2!important; }
+.driverVNext.theme-light .paymentBreakdown span,.driverVNext.theme-light .paymentBreakdown b { color:#617086; }
+.driverVNext.theme-light .paymentBreakdown .paymentTotal span,.driverVNext.theme-light .paymentBreakdown .paymentTotal strong { color:#162033; }
+.driverVNext.theme-light .driverBottomNav { background:rgba(255,255,255,.97);border-color:#e5e9ef;box-shadow:0 -9px 28px rgba(27,43,65,.08); }
+.driverVNext.theme-light .driverBottomNav button { color:#8290a3; }
+.driverVNext.theme-light .driverBottomNav button.active { color:#228ed9;background:#edf7fd; }
+.driverVNext.theme-light .driverBottomNav button i { border-color:#fff; }
+.driverVNext.theme-light .paymentDueCard { background:linear-gradient(160deg,#fff8ea,#fff)!important;border-color:#f0d59b!important; }
+.driverVNext.theme-light .mondayDueHero { background:linear-gradient(145deg,#fff2f4,#fff 62%,#f5f8fc)!important;border-color:#efc6cc!important; }
+.driverVNext.theme-light .mondayDueHero::after { background:rgba(217,75,91,.06); }
+.driverVNext.theme-light .mondayDueHero .paymentDueHeader h2,.driverVNext.theme-light .mondayDueHero>h3 { color:#2b1a20!important; }
+.driverVNext.theme-light .mondayDueHero>p { color:#7d626b!important; }
+.driverVNext.theme-light .mondayDueHero>p b { color:#2b1a20; }
+.driverVNext.theme-light .dueHeroMeta>div { background:#fff;border:1px solid #f0e2e5; }
+.driverVNext.theme-light .dueHeroMeta span { color:#9a7a83!important; }
+.driverVNext.theme-light .dueHeroMeta b { color:#2b1a20; }
+.driverVNext.theme-light .dueDetailsButton { background:#fff!important;color:#26344a!important;border-color:#e5d9dc!important; }
+.driverVNext.theme-light .themeOptions button { background:#f7f9fc; }
+
+@media (max-width:430px){
+  .driverAuthV2{padding-left:15px;padding-right:15px;place-items:start center;}
+  .driverAuthShell{margin-top:36px;}
+  .polishedAuthCard{padding:24px 19px 20px!important;border-radius:23px!important;}
+  .authIntro h1{font-size:27px!important;}
+  .driverAuthBrand{margin-bottom:20px;}
+  .driverVNext .driverCard{padding:16px!important;border-radius:18px!important;}
+  .themeOptions{grid-template-columns:1fr 1fr;}
+}
+
+
+/* FleetPay Driver VNext — bank account + unmistakable balance states */
+.driverHeroBalance{position:relative;overflow:hidden}
+.driverHeroBalance .balanceMeaning{display:flex;flex-direction:column;gap:4px;padding-right:48px}
+.balanceMeaningLabel{font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;opacity:.84}
+.driverHeroBalance .balanceMeaning strong{font-size:clamp(38px,10vw,56px);line-height:1;letter-spacing:-.045em;font-variant-numeric:tabular-nums}
+.driverHeroBalance .balanceMeaning p{margin:5px 0 0;font-size:14px;font-weight:650;opacity:.82}
+.balanceRefresh{position:absolute;top:20px;right:20px;width:42px;height:42px;border-radius:14px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.1);color:inherit;display:grid;place-items:center}
+.balanceRefresh svg{width:18px;height:18px}
+.balanceStateStrip{margin:20px 0 4px;padding:13px 15px;border-radius:15px;display:flex;justify-content:space-between;gap:12px;align-items:center;background:rgba(0,0,0,.13);border:1px solid rgba(255,255,255,.1)}
+.balanceStateStrip span{font-size:12px;font-weight:700;opacity:.75}.balanceStateStrip b{font-size:13px;text-align:right}
+.driverHeroBalance.balanceState-positive{background:linear-gradient(145deg,#083a35 0%,#0b6b5d 58%,#119a7d 100%);color:#fff}
+.driverHeroBalance.balanceState-negative{background:linear-gradient(145deg,#521b20 0%,#8f2f34 56%,#be4b45 100%);color:#fff}
+.driverHeroBalance.balanceState-settled{background:linear-gradient(145deg,#17283e 0%,#24405e 58%,#315a7e 100%);color:#fff}
+.theme-light .driverHeroBalance.balanceState-positive,.theme-light .driverHeroBalance.balanceState-negative,.theme-light .driverHeroBalance.balanceState-settled{box-shadow:0 18px 42px rgba(15,23,42,.18)}
+.bankSetupPrompt{display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center}
+.bankSetupPrompt h3{margin:3px 0 3px;font-size:17px}.bankSetupPrompt p{margin:0;font-size:13px;opacity:.72;line-height:1.45}
+.bankSetupIcon,.bankLogoTile{width:46px;height:46px;border-radius:15px;display:grid;place-items:center;background:var(--driver-soft,#eef2ff);color:var(--driver-accent,#4158d0)}
+.bankSetupIcon svg,.bankLogoTile svg{width:22px;height:22px}
+.bankRequiredNotice{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;padding:13px 14px;margin:14px 0;border-radius:14px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.25)}
+.bankRequiredNotice>svg{width:20px;color:#d97706}.bankRequiredNotice b,.bankRequiredNotice span{display:block}.bankRequiredNotice span{font-size:12px;opacity:.72;margin-top:2px}
+.bankSectionHeader{align-items:center}.savedBankSummary{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:13px;padding:14px;border-radius:16px;background:rgba(127,127,127,.07);border:1px solid rgba(127,127,127,.13)}
+.savedBankSummary span,.savedBankSummary small{display:block;font-size:12px;opacity:.65}.savedBankSummary b{display:block;font-size:18px;margin:2px 0;font-variant-numeric:tabular-nums;letter-spacing:.04em}
+.bankSecurityNote{display:flex;gap:10px;align-items:flex-start;margin:13px 1px;color:inherit;opacity:.74;font-size:12px;line-height:1.5}.bankSecurityNote svg{width:17px;height:17px;flex:0 0 auto;margin-top:1px}
+.bankChangeButton{margin-top:4px}.bankEditForm{display:flex;flex-direction:column;gap:14px}.bankEditForm label{display:flex;flex-direction:column;gap:7px;font-size:13px;font-weight:750}.bankWarning{display:flex;gap:10px;align-items:flex-start;padding:12px 13px;border-radius:13px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.24);font-size:12px;line-height:1.45}.bankWarning svg{width:18px;height:18px;flex:0 0 auto;color:#d97706}
+.bankFieldGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.inlinePasswordField{margin-top:0}.bankFormActions{display:grid;grid-template-columns:1fr 1.4fr;gap:10px;margin-top:2px}.bankUpdated{display:block;margin-top:12px;opacity:.55;font-size:11px;text-align:center}
+@media(max-width:430px){.bankSetupPrompt{grid-template-columns:auto 1fr}.bankSetupPrompt>button{grid-column:1/-1;width:100%}.bankFieldGrid{grid-template-columns:1fr}.balanceStateStrip{align-items:flex-start;flex-direction:column}.balanceStateStrip b{text-align:left}.driverHeroBalance .balanceMeaning strong{font-size:44px}}
+.driverVNext.theme-light .driverHeroBalance.balanceState-positive{background:linear-gradient(145deg,#e9fbf5 0%,#d5f4e8 58%,#c5ebdf 100%)!important;color:#0d473d!important;border-color:#b9e5d7!important}
+.driverVNext.theme-light .driverHeroBalance.balanceState-negative{background:linear-gradient(145deg,#fff1f2 0%,#fde3e4 58%,#f8d1d3 100%)!important;color:#7f252b!important;border-color:#f0c2c6!important}
+.driverVNext.theme-light .driverHeroBalance.balanceState-settled{background:linear-gradient(145deg,#eef5fb 0%,#e2edf7 58%,#d6e4f0 100%)!important;color:#27435f!important;border-color:#cfdfec!important}
+.driverVNext.theme-light .driverHeroBalance .balanceMeaning strong,.driverVNext.theme-light .driverHeroBalance .balanceMeaning p,.driverVNext.theme-light .driverHeroBalance .balanceMeaningLabel,.driverVNext.theme-light .driverHeroBalance .balanceStateStrip span,.driverVNext.theme-light .driverHeroBalance .balanceStateStrip b{color:inherit!important}
+.driverVNext.theme-light .driverHeroBalance .balanceRefresh{background:rgba(255,255,255,.72);border-color:rgba(15,23,42,.08);color:inherit}
+.driverVNext.theme-light .driverHeroBalance .balanceStateStrip{background:rgba(255,255,255,.58);border-color:rgba(15,23,42,.07)}
+
+/* FleetPay Office — payout bank readiness */
+.bankTableCell{display:flex;flex-direction:column;gap:6px;align-items:flex-start;min-width:150px}
+.bankTableCell small{font-size:11px;opacity:.62;font-variant-numeric:tabular-nums;letter-spacing:.025em}
+.payoutAccountCard{margin-top:18px;padding:18px;border:1px solid var(--border,#e5e7eb);border-radius:18px;background:var(--panel,#fff)}
+.payoutAccountHead{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;margin-bottom:15px}
+.payoutAccountHead>div:nth-child(2)>span{display:block;font-size:10px;font-weight:800;letter-spacing:.11em;opacity:.55}
+.payoutAccountHead h3{margin:2px 0 0;font-size:16px}
+.payoutAccountIcon{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;background:rgba(59,130,246,.1);color:#2563eb}
+.payoutAccountIcon svg{width:20px;height:20px}
+.payoutAccountDetails{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.payoutAccountDetails>div{padding:12px;border-radius:12px;background:rgba(127,127,127,.06);border:1px solid rgba(127,127,127,.1)}
+.payoutAccountDetails span,.payoutAccountDetails b{display:block}.payoutAccountDetails span{font-size:11px;opacity:.58;margin-bottom:4px}.payoutAccountDetails b{font-size:13px;word-break:break-word}
+.bankMissingNotice,.bankRecentNotice{display:flex;gap:11px;align-items:flex-start;padding:13px 14px;border-radius:13px;margin-top:8px}
+.bankMissingNotice{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.18)}
+.bankRecentNotice{background:rgba(245,158,11,.09);border:1px solid rgba(245,158,11,.2)}
+.bankMissingNotice>svg,.bankRecentNotice>svg{width:19px;height:19px;flex:0 0 auto;margin-top:1px}.bankMissingNotice>svg{color:#dc2626}.bankRecentNotice>svg{color:#d97706}
+.bankMissingNotice b,.bankMissingNotice span,.bankRecentNotice b,.bankRecentNotice span{display:block}.bankMissingNotice span,.bankRecentNotice span{font-size:12px;opacity:.7;margin-top:3px;line-height:1.45}
+.payoutAccountCard .bankSecurityNote{margin:14px 0 0;padding-top:12px;border-top:1px solid rgba(127,127,127,.12)}
+@media(max-width:620px){.payoutAccountDetails{grid-template-columns:1fr}.payoutAccountHead{grid-template-columns:auto 1fr}.payoutAccountHead>.pill{grid-column:1/-1;justify-self:start}}
+
+/* =========================================================
+   DRIVER INPUT STABILITY + ACCESSIBLE TEXT SCALE
+   ========================================================= */
+.driverVNext,
+.driverAuthV2 {
+  --driver-text-scale: 1;
+}
+
+/* Keep iOS inputs comfortably above the auto-zoom threshold. */
+.driverVNext input,
+.driverVNext select,
+.driverVNext textarea,
+.driverAuthV2 input,
+.driverAuthV2 select,
+.driverAuthV2 textarea {
+  font-size: max(16px, calc(16px * var(--driver-text-scale))) !important;
+}
+
+/* Scale the key typography, not the physical cards, so spacing remains tidy. */
+.driverVNext .driverIdentity span { font-size: calc(10px * var(--driver-text-scale)); }
+.driverVNext .driverIdentity b { font-size: calc(15px * var(--driver-text-scale)); }
+.driverVNext .modernHello span,
+.driverVNext .pageTitle > span,
+.driverVNext .eyebrow { font-size: calc(10px * var(--driver-text-scale)); }
+.driverVNext .modernHello h1,
+.driverVNext .pageTitle h1 { font-size: calc(30px * var(--driver-text-scale)); }
+.driverVNext .modernHello p,
+.driverVNext .pageTitle p,
+.driverVNext .compactCopy { font-size: calc(13px * var(--driver-text-scale)); }
+.driverVNext .driverCard h2 { font-size: calc(18px * var(--driver-text-scale)); }
+.driverVNext .driverCard h3 { font-size: calc(16px * var(--driver-text-scale)); }
+.driverVNext .driverCard p,
+.driverVNext .driverCard label,
+.driverVNext .driverCard span { font-size: calc(13px * var(--driver-text-scale)); }
+.driverVNext .driverCard small,
+.driverVNext .driverFooter,
+.driverVNext .heroBalanceFoot,
+.driverVNext .cleanHistoryRow small { font-size: calc(11px * var(--driver-text-scale)); }
+.driverVNext .balanceMeaningLabel { font-size: calc(12px * var(--driver-text-scale)); }
+.driverVNext .balanceMeaning strong { font-size: calc(38px * var(--driver-text-scale)); }
+.driverVNext .balanceMeaning p { font-size: calc(13px * var(--driver-text-scale)); }
+.driverVNext .driverBottomNav span { font-size: calc(10px * var(--driver-text-scale)); }
+.driverVNext button { font-size: calc(13px * var(--driver-text-scale)); }
+
+.driverAuthV2 .authKicker { font-size: calc(10px * var(--driver-text-scale)); }
+.driverAuthV2 h1 { font-size: calc(28px * var(--driver-text-scale)); }
+.driverAuthV2 p,
+.driverAuthV2 label,
+.driverAuthV2 button,
+.driverAuthV2 .authTrust { font-size: calc(13px * var(--driver-text-scale)); }
+
+.textSizeControl {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--fp-line);
+}
+.textSizeHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+.textSizeHead > div { display: grid; gap: 3px; }
+.textSizeHead b { color: var(--fp-ink); font-size: calc(14px * var(--driver-text-scale)); }
+.textSizeHead span { color: var(--fp-muted); font-size: calc(12px * var(--driver-text-scale)); line-height: 1.35; }
+.textSizeHead strong {
+  flex: 0 0 auto;
+  min-width: 48px;
+  padding: 5px 8px;
+  border-radius: 10px;
+  background: var(--fp-blue-soft);
+  color: var(--fp-blue);
+  text-align: center;
+  font-size: calc(12px * var(--driver-text-scale));
+}
+.textSizeSliderRow {
+  display: grid;
+  grid-template-columns: 24px 1fr 28px;
+  align-items: center;
+  gap: 10px;
+  margin-top: 13px;
+}
+.textSizeSliderRow input[type="range"] {
+  appearance: auto;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  min-height: 28px;
+  accent-color: var(--fp-blue);
+}
+.textSizeSmall,
+.textSizeLarge { color: var(--fp-ink); font-weight: 800; text-align: center; }
+.textSizeSmall { font-size: 13px !important; }
+.textSizeLarge { font-size: 20px !important; }
+.textSizeReset {
+  margin-top: 8px;
+  padding: 5px 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: var(--fp-blue) !important;
+  font-weight: 750;
+}
+
+
+/* Accessibility text-size presets */
+.textSizePresets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+.textSizePresets button {
+  min-height: 40px;
+  padding: 9px 10px !important;
+  border: 1px solid var(--fp-line) !important;
+  border-radius: 12px !important;
+  background: var(--fp-surface-2) !important;
+  color: var(--fp-ink) !important;
+  font-weight: 750;
+  line-height: 1.15;
+}
+.textSizePresets button.active {
+  border-color: var(--fp-blue) !important;
+  background: var(--fp-blue-soft) !important;
+  color: var(--fp-blue) !important;
+}
+.textSizePresets button:last-child {
+  grid-column: 1 / -1;
+}
+
+/* Allow large accessibility text to wrap rather than overflow cards. */
+.driverVNext .driverCard,
+.driverVNext .driverCard *,
+.driverAuthV2 .driverAuthCard,
+.driverAuthV2 .driverAuthCard * {
+  min-width: 0;
+}
+.driverVNext .profileRows b,
+.driverVNext .feeRows b,
+.driverVNext .compactAction span,
+.driverVNext .cleanHistoryRow b,
+.driverVNext .cleanHistoryRow span,
+.driverVNext .bankAccountSummary b,
+.driverVNext .bankAccountSummary span {
+  overflow-wrap: anywhere;
+}
+@media (min-width: 420px) {
+  .textSizePresets { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .textSizePresets button:last-child { grid-column: auto; }
+}
