@@ -197,7 +197,13 @@ for (const sql of [
   'ALTER TABLE settlement_runs ADD COLUMN run_date TEXT',
   'ALTER TABLE settlement_runs ADD COLUMN created_by TEXT',
   'ALTER TABLE settlement_runs ADD COLUMN approved_at TEXT',
-  'ALTER TABLE settlement_runs ADD COLUMN payout_run_id TEXT'
+  'ALTER TABLE settlement_runs ADD COLUMN payout_run_id TEXT',
+  'ALTER TABLE payout_runs ADD COLUMN funding_status TEXT',
+  'ALTER TABLE payout_runs ADD COLUMN funding_required REAL',
+  'ALTER TABLE payout_runs ADD COLUMN funding_sent_at TEXT',
+  'ALTER TABLE payout_runs ADD COLUMN funds_cleared_at TEXT',
+  'ALTER TABLE payout_runs ADD COLUMN released_at TEXT',
+  'ALTER TABLE payout_runs ADD COLUMN reconciled_at TEXT'
 ]) { try { db.exec(sql); } catch {} }
 
 const defaultSettings = {
@@ -738,7 +744,7 @@ async function createStripeCustomerPayment(item){
 
  return session;
 }
-function serializePayoutRun(r){return {id:r.id,runType:r.run_type,status:r.status,createdAt:r.created_at,createdBy:r.created_by,scheduledFor:r.scheduled_for,totalAmount:r.total_amount,itemCount:r.item_count,provider:r.provider,providerRef:r.provider_ref,notes:r.notes,paidAt:r.paid_at}}
+function serializePayoutRun(r){return {id:r.id,runType:r.run_type,status:r.status,createdAt:r.created_at,createdBy:r.created_by,scheduledFor:r.scheduled_for,totalAmount:r.total_amount,itemCount:r.item_count,provider:r.provider,providerRef:r.provider_ref,notes:r.notes,paidAt:r.paid_at,fundingStatus:r.funding_status||'not_started',fundingRequired:Number(r.funding_required??r.total_amount??0),fundingSentAt:r.funding_sent_at,fundsClearedAt:r.funds_cleared_at,releasedAt:r.released_at,reconciledAt:r.reconciled_at}}
 async function markPayoutPaid(item, req, source='manual'){
  if(item.status==='paid') return;
  const now=new Date().toISOString();
@@ -796,6 +802,42 @@ app.post('/api/admin/mfa/enable',(req,res)=>{
  res.json({token:signToken({role:'admin',mfa:true,staffId:u.id,email:u.email,name:u.name,staffRole:u.role},12),staff:staffSafe({...u,mfa_enabled:1,last_login_at:now})});
 });
 
+// Authenticator recovery: password login has already succeeded and produced mfaToken.
+// A one-time code sent to the office user's registered email is required before a new TOTP secret is issued.
+app.post('/api/admin/mfa/recovery/start',async(req,res)=>{
+ try{
+  const p=verifyToken(String(req.body.mfaToken||''));
+  if(p?.role!=='admin_mfa')return res.status(401).json({error:'Login verification expired. Sign in again.'});
+  const u=db.prepare('SELECT * FROM staff_users WHERE id=?').get(p.staffId);
+  if(!u||!u.active)return res.status(404).json({error:'Office user not found'});
+  const code=String(Math.floor(100000+Math.random()*900000));
+  const challenge=id('mfarecover');
+  const expires=Date.now()+10*60000;
+  db.prepare("DELETE FROM auth_challenges WHERE type='office_mfa_recovery' AND email=?").run(u.email);
+  db.prepare('INSERT INTO auth_challenges(id,type,driver_id,callsign,email,code_hash,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?)').run(challenge,'office_mfa_recovery',null,null,u.email,crypto.createHash('sha256').update(code).digest('hex'),expires,new Date().toISOString());
+  const sent=await sendEmail(u.email,'FleetPay authenticator recovery code',`<div style="font-family:Arial,sans-serif;max-width:560px"><h2>FleetPay authenticator recovery</h2><p>Your one-time recovery code is:</p><p style="font-size:30px;font-weight:700;letter-spacing:6px">${code}</p><p>This code expires in 10 minutes. If you did not request this, do not share the code.</p></div>`);
+  if(!sent?.sent){db.prepare('DELETE FROM auth_challenges WHERE id=?').run(challenge);return res.status(503).json({error:'Office recovery email is not configured. Ask an administrator to reset MFA.'})}
+  audit(req,'staff',u.email,'office_mfa_recovery_started','staff_user',u.id,{provider:sent.provider||''});
+  res.json({challengeId:challenge,emailHint:u.email.replace(/^(.{1,2}).*(@.*)$/,'$1••••$2'),message:'Recovery code sent'});
+ }catch(e){res.status(500).json({error:e.message})}
+});
+
+app.post('/api/admin/mfa/recovery/complete',(req,res)=>{
+ const p=verifyToken(String(req.body.mfaToken||''));
+ if(p?.role!=='admin_mfa')return res.status(401).json({error:'Login verification expired. Sign in again.'});
+ const c=db.prepare("SELECT * FROM auth_challenges WHERE id=? AND type='office_mfa_recovery'").get(String(req.body.challengeId||''));
+ if(!c||c.expires_at<Date.now()||safeEmail(c.email)!==safeEmail(p.email))return res.status(400).json({error:'Recovery code expired or invalid'});
+ const codeHash=crypto.createHash('sha256').update(String(req.body.code||'')).digest('hex');
+ if(codeHash!==c.code_hash)return res.status(400).json({error:'Incorrect recovery code'});
+ const u=db.prepare('SELECT * FROM staff_users WHERE id=?').get(p.staffId);
+ if(!u||!u.active)return res.status(404).json({error:'Office user not found'});
+ const secret=newMfaSecret(),now=new Date().toISOString();
+ db.prepare('UPDATE staff_users SET mfa_secret=?,mfa_enabled=0,updated_at=? WHERE id=?').run(secret,now,u.id);
+ db.prepare('DELETE FROM auth_challenges WHERE id=?').run(c.id);
+ audit(req,'staff',u.email,'office_mfa_recovery_completed','staff_user',u.id);
+ res.json({mfaSetupRequired:true,setupToken:signToken({role:'admin_mfa_setup',staffId:u.id,email:u.email},0.17),secret,otpauthUri:makeOtpAuth(u.email,secret),staff:staffSafe({...u,mfa_secret:secret,mfa_enabled:0})});
+});
+
 app.get('/api/admin/me',adminAuth,(req,res)=>{const u=db.prepare('SELECT * FROM staff_users WHERE id=?').get(req.auth.staffId);if(!u)return res.status(404).json({error:'Office user not found'});res.json(staffSafe(u))});
 app.get('/api/admin/staff',adminAuth,requireStaffRole('administrator'),(req,res)=>res.json({staff:db.prepare('SELECT * FROM staff_users ORDER BY name,email').all().map(staffSafe)}));
 app.post('/api/admin/staff',adminAuth,requireStaffRole('administrator'),(req,res)=>{try{const email=safeEmail(req.body.email),name=String(req.body.name||'').trim(),role=String(req.body.role||'office'),password=String(req.body.password||'');if(!email||!name||password.length<10)return res.status(400).json({error:'Name, email and a password of at least 10 characters are required'});if(!['administrator','finance','office','readonly'].includes(role))return res.status(400).json({error:'Invalid role'});if(db.prepare('SELECT id FROM staff_users WHERE email=?').get(email))return res.status(409).json({error:'An office user already exists with this email'});const hp=hashPassword(password),now=new Date().toISOString(),staffId=id('staff');db.prepare('INSERT INTO staff_users(id,email,name,role,password_hash,password_salt,mfa_enabled,active,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(staffId,email,name,role,hp.hash,hp.salt,0,1,now,now);audit(req,'staff',req.auth.email,'office_user_created','staff_user',staffId,{email,name,role});res.json({staff:staffSafe(db.prepare('SELECT * FROM staff_users WHERE id=?').get(staffId))})}catch(e){res.status(500).json({error:e.message})}});
@@ -846,22 +888,66 @@ app.post('/api/admin/payout-runs',adminAuth,requireStaffRole('administrator','fi
  const today=londonWindow().date;const eligible=runType==='early'?db.prepare("SELECT * FROM payouts WHERE type='early' AND status='approved' AND payout_run_id IS NULL AND (eligible_run_date IS NULL OR eligible_run_date<=?) ORDER BY COALESCE(eligible_run_date,substr(created_at,1,10)),created_at").all(today):db.prepare("SELECT * FROM payouts WHERE type='weekly' AND status='queued' AND payout_run_id IS NULL ORDER BY created_at").all();
  if(!eligible.length)return res.status(400).json({error:`No ${runType} payouts are ready to batch`});
  const runId=id('payrun'),now=new Date().toISOString(),total=eligible.reduce((s,x)=>s+Number(x.net_amount||x.amount||0),0);
- db.prepare('INSERT INTO payout_runs(id,run_type,status,created_at,created_by,scheduled_for,total_amount,item_count,provider,notes) VALUES(?,?,?,?,?,?,?,?,?,?)').run(runId,runType,'ready',now,req.auth.email,now,total,eligible.length,String(req.body.provider||'manual'),String(req.body.notes||''));
+ db.prepare('INSERT INTO payout_runs(id,run_type,status,created_at,created_by,scheduled_for,total_amount,item_count,provider,notes,funding_status,funding_required) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(runId,runType,'ready',now,req.auth.email,now,total,eligible.length,String(req.body.provider||'manual'),String(req.body.notes||''),'not_started',total);
  const upd=db.prepare("UPDATE payouts SET payout_run_id=?,status='batched',updated_at=? WHERE id=?");for(const x of eligible)upd.run(runId,now,x.id);
  audit(req,'admin',req.auth.email,'payout_run_created','payout_run',runId,{runType,itemCount:eligible.length,totalAmount:total,callsigns:eligible.map(x=>x.callsign)});
  res.json({run:serializePayoutRun(db.prepare('SELECT * FROM payout_runs WHERE id=?').get(runId)),items:eligible.map(x=>({id:x.id,callsign:x.callsign,driverName:x.driver_name,amount:Number(x.net_amount||x.amount||0)}))});
 });
 app.patch('/api/admin/payout-runs/:id',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{
  const run=db.prepare('SELECT * FROM payout_runs WHERE id=?').get(req.params.id);if(!run)return res.status(404).json({error:'Payout run not found'});const status=String(req.body.status||run.status),now=new Date().toISOString();
- if(status==='paid'&&run.status!=='paid'){const items=db.prepare('SELECT * FROM payouts WHERE payout_run_id=?').all(run.id);for(const item of items)await markPayoutPaid(item,req,'payout_run');db.prepare('UPDATE payout_runs SET status=?,paid_at=? WHERE id=?').run('paid',now,run.id);audit(req,'admin',req.auth.email,'payout_run_paid','payout_run',run.id,{runType:run.run_type,itemCount:items.length,totalAmount:run.total_amount,callsigns:items.map(x=>x.callsign)});}else db.prepare('UPDATE payout_runs SET status=? WHERE id=?').run(status,run.id);
+ if(status==='paid'&&run.status!=='paid'){if(!['submitted_sandbox','submitted','processing'].includes(run.status))return res.status(400).json({error:'This run must be released to the payment provider before it can be confirmed paid.'});const items=db.prepare('SELECT * FROM payouts WHERE payout_run_id=?').all(run.id);for(const item of items)await markPayoutPaid(item,req,'payout_run');db.prepare('UPDATE payout_runs SET status=?,paid_at=?,reconciled_at=? WHERE id=?').run('paid',now,now,run.id);audit(req,'admin',req.auth.email,'payout_run_paid','payout_run',run.id,{runType:run.run_type,itemCount:items.length,totalAmount:run.total_amount,callsigns:items.map(x=>x.callsign)});}else db.prepare('UPDATE payout_runs SET status=? WHERE id=?').run(status,run.id);
  res.json({ok:true});
+});
+
+app.post('/api/admin/payout-runs/:id/cancel',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{
+ const run=db.prepare('SELECT * FROM payout_runs WHERE id=?').get(req.params.id);if(!run)return res.status(404).json({error:'Payout run not found'});
+ if(run.status==='cancelled')return res.json({ok:true,alreadyCancelled:true});
+ const cancellable=['ready','funding_pending','funded'];
+ if(!cancellable.includes(run.status))return res.status(400).json({error:`This payment run cannot be cancelled at the ${run.status} stage. Cancellation is allowed only before payments are released.`});
+ if(run.provider_ref||run.released_at)return res.status(400).json({error:'This payment run has already been released to the payment provider and cannot be cancelled safely.'});
+ const reason=String(req.body?.reason||'').trim();if(!reason)return res.status(400).json({error:'A cancellation reason is required'});
+ const now=new Date().toISOString();
+ const items=db.prepare('SELECT * FROM payouts WHERE payout_run_id=?').all(run.id);
+ db.exec('BEGIN IMMEDIATE');
+ try{
+  const restore=db.prepare("UPDATE payouts SET payout_run_id=NULL,status='approved',updated_at=? WHERE id=? AND status='batched'");
+  for(const item of items)restore.run(now,item.id);
+  if(run.run_type==='weekly'){
+   const settlement=db.prepare('SELECT * FROM settlement_runs WHERE payout_run_id=?').get(run.id);
+   if(settlement)db.prepare("UPDATE settlement_runs SET status='approved',payout_run_id=NULL WHERE id=?").run(settlement.id);
+  }
+  db.prepare("UPDATE payout_runs SET status='cancelled',notes=TRIM(COALESCE(notes,'') || CASE WHEN COALESCE(notes,'')='' THEN '' ELSE ' | ' END || ? ) WHERE id=?").run(`Cancelled ${now} by ${req.auth.email}: ${reason}`,run.id);
+  db.exec('COMMIT');
+ }catch(e){
+  try{db.exec('ROLLBACK')}catch{}
+  throw e;
+ }
+ audit(req,'staff',req.auth.email,'payout_run_cancelled','payout_run',run.id,{runType:run.run_type,itemCount:items.length,totalAmount:run.total_amount,reason,callsigns:items.map(x=>x.callsign)});
+ res.json({ok:true,status:'cancelled',restoredItems:items.filter(x=>x.status==='batched').length});
+});
+
+
+app.post('/api/admin/payout-runs/:id/funding-sent',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{
+ const run=db.prepare('SELECT * FROM payout_runs WHERE id=?').get(req.params.id);if(!run)return res.status(404).json({error:'Payout run not found'});
+ if(run.status!=='ready')return res.status(400).json({error:'Funding can only be started from a ready payment run.'});
+ const now=new Date().toISOString();db.prepare("UPDATE payout_runs SET status='funding_pending',funding_status='awaiting_clearance',funding_required=COALESCE(funding_required,total_amount),funding_sent_at=? WHERE id=?").run(now,run.id);
+ audit(req,'staff',req.auth.email,'payout_run_funding_sent','payout_run',run.id,{runType:run.run_type,totalAmount:run.total_amount});
+ res.json({ok:true,run:serializePayoutRun(db.prepare('SELECT * FROM payout_runs WHERE id=?').get(run.id))});
+});
+app.post('/api/admin/payout-runs/:id/funds-cleared',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{
+ const run=db.prepare('SELECT * FROM payout_runs WHERE id=?').get(req.params.id);if(!run)return res.status(404).json({error:'Payout run not found'});
+ if(!['ready','funding_pending'].includes(run.status))return res.status(400).json({error:'Cleared funds can only be confirmed before the payment run is released.'});
+ const now=new Date().toISOString();db.prepare("UPDATE payout_runs SET status='funded',funding_status='cleared',funding_required=COALESCE(funding_required,total_amount),funds_cleared_at=? WHERE id=?").run(now,run.id);
+ audit(req,'staff',req.auth.email,'payout_run_funds_cleared','payout_run',run.id,{runType:run.run_type,totalAmount:run.total_amount,manualConfirmation:true});
+ res.json({ok:true,run:serializePayoutRun(db.prepare('SELECT * FROM payout_runs WHERE id=?').get(run.id))});
 });
 
 app.post('/api/admin/payout-runs/:id/wise-sandbox',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{
  if(WISE_ENV!=='sandbox')return res.status(400).json({error:'WISE_ENV must be sandbox for demo submission'});
  const run=db.prepare('SELECT * FROM payout_runs WHERE id=?').get(req.params.id);if(!run)return res.status(404).json({error:'Payout run not found'});
- const wise=await testWiseConnection();const ref=`wise_sandbox_${Date.now()}`;
- db.prepare('UPDATE payout_runs SET status=?,provider=?,provider_ref=? WHERE id=?').run('submitted_sandbox','wise_sandbox',ref,run.id);
+ if(run.status!=='funded')return res.status(400).json({error:'FleetPay will not release this run until cleared funds have been confirmed.'});
+ const wise=await testWiseConnection();const ref=`wise_sandbox_${Date.now()}`,releasedAt=new Date().toISOString();
+ db.prepare('UPDATE payout_runs SET status=?,provider=?,provider_ref=?,released_at=? WHERE id=?').run('submitted_sandbox','wise_sandbox',ref,releasedAt,run.id);
  audit(req,'admin',req.auth.email,'wise_sandbox_run_submitted','payout_run',run.id,{runType:run.run_type,itemCount:run.item_count,totalAmount:run.total_amount,providerRef:ref});
  res.json({ok:true,demo:true,message:'Wise sandbox demo submission recorded. No real money moved.',providerRef:ref,wiseEnvironment:wise.environment});
  }catch(e){res.status(500).json({error:e.message})}});
@@ -910,7 +996,7 @@ app.post('/api/admin/monday-runs',adminAuth,requireStaffRole('administrator','fi
 app.get('/api/admin/monday-runs',adminAuth,(req,res)=>{const runs=db.prepare("SELECT * FROM settlement_runs WHERE run_date IS NOT NULL ORDER BY created_at DESC LIMIT 40").all().map(r=>({id:r.id,createdAt:r.created_at,status:r.status,runDate:r.run_date,createdBy:r.created_by,approvedAt:r.approved_at,payoutRunId:r.payout_run_id,settings:JSON.parse(r.settings_json||'{}'),items:JSON.parse(r.items_json||'[]')}));res.json({runs})});
 app.patch('/api/admin/monday-runs/:runId/payouts/:payoutId',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const status=String(req.body.status||''),reason=String(req.body.reason||'').trim();if(!['approved','excluded','pending'].includes(status))return res.status(400).json({error:'Invalid approval status'});if(status==='excluded'&&!reason)return res.status(400).json({error:'Enter a reason for excluding this driver'});const pmt=db.prepare('SELECT * FROM payouts WHERE id=? AND run_id=? AND type=\'weekly\'').get(req.params.payoutId,req.params.runId);if(!pmt)return res.status(404).json({error:'Weekly payout not found'});if(pmt.payout_run_id)return res.status(400).json({error:'This payout is already locked into a payment run'});const dbStatus=status==='approved'?'approved':status==='excluded'?'declined':'pending_approval';db.prepare('UPDATE payouts SET status=?,decline_reason=?,decision_at=?,decision_by=?,updated_at=? WHERE id=?').run(dbStatus,status==='excluded'?reason:null,status==='pending'?null:new Date().toISOString(),status==='pending'?null:req.auth.email,new Date().toISOString(),pmt.id);const items=updateRunItem(req.params.runId,pmt.id,status,reason);audit(req,'staff',req.auth.email,'weekly_payout_approval_changed','payout',pmt.id,{runId:req.params.runId,callsign:pmt.callsign,status,reason});res.json({ok:true,items})});
 app.post('/api/admin/monday-runs/:runId/approve-all',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const rows=db.prepare("SELECT * FROM payouts WHERE run_id=? AND type='weekly' AND status='pending_approval' AND payout_run_id IS NULL").all(req.params.runId),now=new Date().toISOString();const up=db.prepare("UPDATE payouts SET status='approved',decision_at=?,decision_by=?,updated_at=? WHERE id=?");for(const r of rows){up.run(now,req.auth.email,now,r.id);updateRunItem(req.params.runId,r.id,'approved','')}db.prepare("UPDATE settlement_runs SET status='approved',approved_at=? WHERE id=?").run(now,req.params.runId);audit(req,'staff',req.auth.email,'weekly_payouts_approved_all','settlement_run',req.params.runId,{count:rows.length});res.json({ok:true,count:rows.length})});
-app.post('/api/admin/monday-runs/:runId/create-payout-run',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const settlement=db.prepare('SELECT * FROM settlement_runs WHERE id=?').get(req.params.runId);if(!settlement)return res.status(404).json({error:'Monday run not found'});if(settlement.payout_run_id)return res.status(409).json({error:'A payout batch has already been created for this Monday run',payoutRunId:settlement.payout_run_id});const eligible=db.prepare("SELECT * FROM payouts WHERE run_id=? AND type='weekly' AND status='approved' AND payout_run_id IS NULL ORDER BY CAST(callsign AS INTEGER),callsign").all(req.params.runId);if(!eligible.length)return res.status(400).json({error:'No approved weekly payouts are ready'});const runId=id('payrun'),now=new Date().toISOString(),total=eligible.reduce((a,x)=>a+Number(x.net_amount||x.amount||0),0);db.prepare('INSERT INTO payout_runs(id,run_type,status,created_at,created_by,scheduled_for,total_amount,item_count,provider,notes) VALUES(?,?,?,?,?,?,?,?,?,?)').run(runId,'weekly','ready',now,req.auth.email,now,total,eligible.length,String(req.body.provider||'wise'),`Monday run ${settlement.id}`);const up=db.prepare("UPDATE payouts SET payout_run_id=?,status='batched',updated_at=? WHERE id=?");for(const x of eligible)up.run(runId,now,x.id);db.prepare("UPDATE settlement_runs SET status='batched',payout_run_id=? WHERE id=?").run(runId,settlement.id);audit(req,'staff',req.auth.email,'weekly_payout_run_created','payout_run',runId,{settlementRunId:settlement.id,itemCount:eligible.length,totalAmount:total,callsigns:eligible.map(x=>x.callsign)});res.json({run:serializePayoutRun(db.prepare('SELECT * FROM payout_runs WHERE id=?').get(runId)),items:eligible.map(x=>({id:x.id,callsign:x.callsign,driverName:x.driver_name,amount:Number(x.net_amount||x.amount||0)}))})});
+app.post('/api/admin/monday-runs/:runId/create-payout-run',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const settlement=db.prepare('SELECT * FROM settlement_runs WHERE id=?').get(req.params.runId);if(!settlement)return res.status(404).json({error:'Monday run not found'});if(settlement.payout_run_id)return res.status(409).json({error:'A payout batch has already been created for this Monday run',payoutRunId:settlement.payout_run_id});const eligible=db.prepare("SELECT * FROM payouts WHERE run_id=? AND type='weekly' AND status='approved' AND payout_run_id IS NULL ORDER BY CAST(callsign AS INTEGER),callsign").all(req.params.runId);if(!eligible.length)return res.status(400).json({error:'No approved weekly payouts are ready'});const runId=id('payrun'),now=new Date().toISOString(),total=eligible.reduce((a,x)=>a+Number(x.net_amount||x.amount||0),0);db.prepare('INSERT INTO payout_runs(id,run_type,status,created_at,created_by,scheduled_for,total_amount,item_count,provider,notes,funding_status,funding_required) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(runId,'weekly','ready',now,req.auth.email,now,total,eligible.length,String(req.body.provider||'wise'),`Monday run ${settlement.id}`,'not_started',total);const up=db.prepare("UPDATE payouts SET payout_run_id=?,status='batched',updated_at=? WHERE id=?");for(const x of eligible)up.run(runId,now,x.id);db.prepare("UPDATE settlement_runs SET status='batched',payout_run_id=? WHERE id=?").run(runId,settlement.id);audit(req,'staff',req.auth.email,'weekly_payout_run_created','payout_run',runId,{settlementRunId:settlement.id,itemCount:eligible.length,totalAmount:total,callsigns:eligible.map(x=>x.callsign)});res.json({run:serializePayoutRun(db.prepare('SELECT * FROM payout_runs WHERE id=?').get(runId)),items:eligible.map(x=>({id:x.id,callsign:x.callsign,driverName:x.driver_name,amount:Number(x.net_amount||x.amount||0)}))})});
 
 app.get('/api/admin/outstanding-payments',adminAuth,(req,res)=>{const now=new Date().toISOString().slice(0,16),rows=db.prepare("SELECT *,driver_id driverId,driver_name driverName,weekly_fee weeklyFee,carried_charges carriedCharges,payment_url paymentUrl,created_at createdAt,updated_at updatedAt,paid_at paidAt,due_at dueAt,email_sent_at emailSentAt,sms_sent_at smsSentAt,communication_error communicationError FROM payment_requests ORDER BY CASE status WHEN 'open' THEN 0 ELSE 1 END,created_at DESC").all().map(x=>({...x,overdue:x.status==='open'&&x.dueAt&&String(x.dueAt).slice(0,16)<now}));res.json({payments:rows})});
 app.post('/api/admin/outstanding-payments/:id/resend',adminAuth,requireStaffRole('administrator','finance','office'),async(req,res)=>{try{const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(req.params.id);if(!item)return res.status(404).json({error:'Payment request not found'});const d=cachedDriver(item.driver_id);const out=await sendOutstandingCommunications(item,d);audit(req,'staff',req.auth.email,'outstanding_message_resent','payment_request',item.id,{callsign:item.callsign});res.json({ok:true,...out})}catch(e){res.status(500).json({error:e.message})}});
