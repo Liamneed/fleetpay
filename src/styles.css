@@ -3618,3 +3618,49 @@ body {
   .textSizePresets { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .textSizePresets button:last-child { grid-column: auto; }
 }
+
+
+/* FleetPay in-app branding */
+.authLogoMark.branded {
+  overflow: hidden;
+  padding: 0;
+}
+
+.authLogoMark.branded img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.driverVNextHeader {
+  gap: 10px;
+}
+
+.driverBrandMark {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 12px;
+  background: linear-gradient(145deg,#2f7df5,#4bbcf3);
+  box-shadow: 0 7px 18px rgba(38,119,230,.20);
+}
+
+.driverBrandMark img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+@media (max-width: 390px) {
+  .driverBrandMark {
+    width: 34px;
+    height: 34px;
+    flex-basis: 34px;
+    border-radius: 10px;
+  }
+}
