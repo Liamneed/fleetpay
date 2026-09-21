@@ -513,10 +513,16 @@ function autocabCapabilityText(cap){
  if(typeof cap==='string')return cap.trim();
  if(!cap||typeof cap!=='object')return '';
  return String(
-  cap.name ??
-  cap.description ??
-  cap.descriptor ??
+  cap.ShortCode ??
+  cap.shortCode ??
+  cap.Code ??
   cap.code ??
+  cap.Name ??
+  cap.name ??
+  cap.Description ??
+  cap.description ??
+  cap.Descriptor ??
+  cap.descriptor ??
   cap.shortName ??
   cap.value ??
   ''
@@ -532,15 +538,20 @@ app.post(['/api/webhooks/autocab/booking-created','/created'],(req,res)=>{
  try{
   const raw=req.body||{};
   const b=autocabBookingPayload(raw);
-  const pricing=b.pricing||{};
-  const pickup=b.pickup?.address||b.pickup||{};
-  const destination=b.destination?.address||b.destination||{};
-  const capabilities=Array.isArray(b.capabilities)?b.capabilities:[];
+  const pricing=b.Pricing||b.pricing||{};
+  const pickup=b.Pickup||b.pickup||{};
+  const destination=b.Destination||b.destination||{};
+  const capabilities=Array.isArray(b.Capabilities)
+   ?b.Capabilities
+   :(Array.isArray(b.capabilities)?b.capabilities:[]);
 
   const bookingId=String(
+   b.Id ??
    b.id ??
+   b.BookingId ??
    b.bookingId ??
    b.bookingID ??
+   raw.BookingId ??
    raw.bookingId ??
    raw.bookingID ??
    ''
@@ -563,17 +574,17 @@ app.post(['/api/webhooks/autocab/booking-created','/created'],(req,res)=>{
    webhookId,
    'BookingCreated',
    bookingId||null,
-   Number(b.companyId??0)||null,
-   Number(b.rowVersion??0)||null,
-   String(b.name||b.passengerName||'').trim(),
-   String(b.telephoneNumber||b.mobile||b.passengerMobile||'').trim(),
-   String(b.customerEmail||b.email||'').trim(),
-   String(pickup.text||pickup.addressText||'').trim(),
-   String(destination.text||destination.addressText||'').trim(),
-   b.pickupDueTimeUtc||b.pickupDueTime||null,
-   Number(pricing.cost??0),
-   Number(pricing.price??0),
-   String(b.paymentMethod||b.paymentType||'').trim(),
+   Number(b.Company?.Id??b.companyId??0)||null,
+   Number(b.RowVersion??b.rowVersion??0)||null,
+   String(b.Name||b.name||b.passengerName||'').trim(),
+   String(b.TelephoneNumber||b.telephoneNumber||b.mobile||b.passengerMobile||'').trim(),
+   String(b.CustomerEmail||b.customerEmail||b.email||'').trim(),
+   String(pickup.Address||pickup.address||pickup.text||pickup.addressText||'').trim(),
+   String(destination.Address||destination.address||destination.text||destination.addressText||'').trim(),
+   b.PickupDueTimeUtc||b.pickupDueTimeUtc||b.PickupDueTime||b.pickupDueTime||null,
+   Number(pricing.Cost??pricing.cost??0),
+   Number(pricing.Price??pricing.price??0),
+   String(b.PaymentMethod||b.paymentMethod||b.PaymentType||b.paymentType||'').trim(),
    JSON.stringify(capabilities),
    hasFleetPayCapability(capabilities)?1:0,
    JSON.stringify(raw),
@@ -585,10 +596,10 @@ app.post(['/api/webhooks/autocab/booking-created','/created'],(req,res)=>{
    `[FleetPay] Autocab BookingCreated received`,
    {
     bookingId:bookingId||null,
-    companyId:b.companyId??null,
-    rowVersion:b.rowVersion??null,
-    cost:pricing.cost??null,
-    price:pricing.price??null,
+    companyId:b.Company?.Id??b.companyId??null,
+    rowVersion:b.RowVersion??b.rowVersion??null,
+    cost:pricing.Cost??pricing.cost??null,
+    price:pricing.Price??pricing.price??null,
     capabilities:capabilities.map(autocabCapabilityText)
    }
   );
