@@ -70,8 +70,8 @@ CREATE TABLE IF NOT EXISTS payment_requests (
 
 CREATE TABLE IF NOT EXISTS customer_payments (
  id TEXT PRIMARY KEY,
- driver_id INTEGER NOT NULL,
- callsign TEXT NOT NULL,
+ driver_id INTEGER,
+ callsign TEXT,
  driver_name TEXT,
  booking_id TEXT,
  fare_amount REAL NOT NULL,
@@ -93,7 +93,6 @@ ON customer_payments(driver_id, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_customer_payments_booking
 ON customer_payments(booking_id);
-
 CREATE TABLE IF NOT EXISTS autocab_booking_webhooks (
  id TEXT PRIMARY KEY,
  event_type TEXT NOT NULL,
@@ -265,6 +264,96 @@ for (const sql of [
   'ALTER TABLE payout_runs ADD COLUMN released_at TEXT',
   'ALTER TABLE payout_runs ADD COLUMN reconciled_at TEXT'
 ]) { try { db.exec(sql); } catch {} }
+
+// Existing databases created before automated Autocab customer payments
+// required driver_id and callsign. Make those columns nullable once.
+{
+ const cols=db.prepare("PRAGMA table_info(customer_payments)").all();
+ const driverId=cols.find(c=>c.name==='driver_id');
+ const callsign=cols.find(c=>c.name==='callsign');
+
+ if(driverId?.notnull || callsign?.notnull){
+  db.exec(`
+   BEGIN IMMEDIATE;
+
+   ALTER TABLE customer_payments
+   RENAME TO customer_payments_before_nullable_driver;
+
+   CREATE TABLE customer_payments (
+    id TEXT PRIMARY KEY,
+    driver_id INTEGER,
+    callsign TEXT,
+    driver_name TEXT,
+    booking_id TEXT,
+    fare_amount REAL NOT NULL,
+    fee_amount REAL NOT NULL DEFAULT 0,
+    total_amount REAL NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    provider TEXT,
+    provider_session_id TEXT,
+    payment_url TEXT,
+    stripe_payment_intent_id TEXT,
+    payment_method TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT,
+    paid_at TEXT,
+    customer_name TEXT,
+    customer_mobile TEXT,
+    customer_email TEXT,
+    pickup TEXT,
+    destination TEXT,
+    journey_at TEXT,
+    taxi_company TEXT,
+    notes TEXT,
+    source TEXT,
+    created_by TEXT,
+    provider_checkout_url TEXT,
+    refund_status TEXT,
+    refunded_amount REAL NOT NULL DEFAULT 0,
+    refunded_at TEXT
+   );
+
+   INSERT INTO customer_payments(
+    id,driver_id,callsign,driver_name,booking_id,
+    fare_amount,fee_amount,total_amount,status,
+    provider,provider_session_id,payment_url,
+    stripe_payment_intent_id,payment_method,
+    created_at,updated_at,paid_at,
+    customer_name,customer_mobile,customer_email,
+    pickup,destination,journey_at,taxi_company,
+    notes,source,created_by,provider_checkout_url,
+    refund_status,refunded_amount,refunded_at
+   )
+   SELECT
+    id,driver_id,callsign,driver_name,booking_id,
+    fare_amount,fee_amount,total_amount,status,
+    provider,provider_session_id,payment_url,
+    stripe_payment_intent_id,payment_method,
+    created_at,updated_at,paid_at,
+    customer_name,customer_mobile,customer_email,
+    pickup,destination,journey_at,taxi_company,
+    notes,source,created_by,provider_checkout_url,
+    refund_status,refunded_amount,refunded_at
+   FROM customer_payments_before_nullable_driver;
+
+   DROP TABLE customer_payments_before_nullable_driver;
+
+   CREATE INDEX idx_customer_payments_driver
+   ON customer_payments(driver_id, created_at DESC);
+
+   CREATE INDEX idx_customer_payments_booking
+   ON customer_payments(booking_id);
+
+   COMMIT;
+  `);
+ }
+}
+
+db.exec(`
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_payments_autocab_booking
+ON customer_payments(booking_id)
+WHERE source='autocab_booking_created';
+`);
 
 const defaultSettings = {
  negativeThreshold: 20,
@@ -591,6 +680,65 @@ app.post(['/api/webhooks/autocab/booking-created','/created'],(req,res)=>{
    'received',
    receivedAt
   );
+
+  if(hasFleetPayCapability(capabilities) && bookingId){
+   const fareAmount=Number(pricing.Price??pricing.price??0);
+
+   if(Number.isFinite(fareAmount) && fareAmount>0){
+    const feeAmount=customerPaymentFeeFor(fareAmount);
+    const totalAmount=Math.round((fareAmount+feeAmount)*100)/100;
+    const paymentId=id('customerpay');
+
+    db.prepare(`
+     INSERT OR IGNORE INTO customer_payments(
+      id,
+      driver_id,
+      callsign,
+      driver_name,
+      booking_id,
+      fare_amount,
+      fee_amount,
+      total_amount,
+      status,
+      payment_method,
+      customer_name,
+      customer_mobile,
+      customer_email,
+      pickup,
+      destination,
+      journey_at,
+      taxi_company,
+      source,
+      created_by,
+      created_at,
+      updated_at
+     )
+     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(
+     paymentId,
+     null,
+     null,
+     null,
+     bookingId,
+     fareAmount,
+     feeAmount,
+     totalAmount,
+     'open',
+     String(b.PaymentMethod||b.paymentMethod||b.PaymentType||b.paymentType||'').trim()||null,
+     String(b.Name||b.name||b.passengerName||'').trim()||null,
+     String(b.TelephoneNumber||b.telephoneNumber||b.mobile||b.passengerMobile||'').trim()||null,
+     String(b.CustomerEmail||b.customerEmail||b.email||'').trim()||null,
+     String(pickup.Address||pickup.address||pickup.text||pickup.addressText||'').trim()||null,
+     String(destination.Address||destination.address||destination.text||destination.addressText||'').trim()||null,
+     b.PickupDueTimeUtc||b.pickupDueTimeUtc||b.PickupDueTime||b.pickupDueTime||null,
+     getSettings().companyName||'Need-A-Cab',
+     'autocab_booking_created',
+     'autocab_webhook',
+     receivedAt,
+     receivedAt
+    );
+   }
+  }
 
   console.log(
    `[FleetPay] Autocab BookingCreated received`,
