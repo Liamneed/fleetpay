@@ -13,7 +13,10 @@ dotenv.config();
 const app = express();
 const PORT = Number(process.env.PORT || 3001);
 const API_KEY = process.env.AUTOCAB_API_KEY || '';
-const COMPANY_ID = Number(process.env.AUTOCAB_COMPANY_ID || 1);
+const COMPANY_IDS = String(process.env.AUTOCAB_COMPANY_IDS || process.env.AUTOCAB_COMPANY_ID || '1')
+  .split(',')
+  .map(x => Number(x.trim()))
+  .filter(Number.isFinite);
 const BASE_URL = 'https://autocab-api.azure-api.net';
 const TOKEN_SECRET = process.env.PORTAL_TOKEN_SECRET || 'change-me-in-production';
 const ADMIN_EMAIL = String(process.env.ADMIN_EMAIL || 'admin@fleetpay.local').toLowerCase();
@@ -208,6 +211,20 @@ for (const sql of [
   'ALTER TABLE payment_requests ADD COLUMN email_sent_at TEXT',
   'ALTER TABLE payment_requests ADD COLUMN sms_sent_at TEXT',
   'ALTER TABLE payment_requests ADD COLUMN communication_error TEXT',
+  'ALTER TABLE customer_payments ADD COLUMN customer_name TEXT',
+  'ALTER TABLE customer_payments ADD COLUMN customer_mobile TEXT',
+  'ALTER TABLE customer_payments ADD COLUMN customer_email TEXT',
+  'ALTER TABLE customer_payments ADD COLUMN pickup TEXT',
+  'ALTER TABLE customer_payments ADD COLUMN destination TEXT',
+  'ALTER TABLE customer_payments ADD COLUMN journey_at TEXT',
+  'ALTER TABLE customer_payments ADD COLUMN taxi_company TEXT',
+  'ALTER TABLE customer_payments ADD COLUMN notes TEXT',
+  'ALTER TABLE customer_payments ADD COLUMN source TEXT',
+  'ALTER TABLE customer_payments ADD COLUMN created_by TEXT',
+  'ALTER TABLE customer_payments ADD COLUMN provider_checkout_url TEXT',
+  'ALTER TABLE customer_payments ADD COLUMN refund_status TEXT',
+  'ALTER TABLE customer_payments ADD COLUMN refunded_amount REAL NOT NULL DEFAULT 0',
+  'ALTER TABLE customer_payments ADD COLUMN refunded_at TEXT',
   'ALTER TABLE settlement_runs ADD COLUMN run_date TEXT',
   'ALTER TABLE settlement_runs ADD COLUMN created_by TEXT',
   'ALTER TABLE settlement_runs ADD COLUMN approved_at TEXT',
@@ -322,7 +339,7 @@ app.post('/api/stripe/webhook', express.raw({type:'application/json'}), async (r
 
           recordFee({feeType:'customer_payment',sourceType:'customer_payment',sourceId:item.id,driverId:item.driver_id,callsign:item.callsign,description:item.booking_id?`Customer payment fee · Booking ${item.booking_id}`:'Customer payment fee',amount:Number(item.fee_amount||0),createdAt:now});
 
-          notify(
+          if(Number(item.driver_id)>0) notify(
             item.driver_id,
             'Customer payment received',
             `Customer payment received. Fare £${Number(item.fare_amount).toFixed(2)} plus £${Number(item.fee_amount).toFixed(2)} FleetPay service fee.`,
@@ -537,7 +554,15 @@ function audit(req,actorType,actorId,action,entityType=null,entityId=null,detail
 const headers=()=>({'Content-Type':'application/json','Cache-Control':'no-cache','Ocp-Apim-Subscription-Key':API_KEY});
 async function putJson(url,body){if(!API_KEY)throw new Error('AUTOCAB_API_KEY is not configured');const r=await fetch(url,{method:'PUT',headers:headers(),body:JSON.stringify(body)});const text=await r.text();if(!r.ok)throw new Error(`Autocab ${r.status}: ${text.slice(0,500)}`);try{return text?JSON.parse(text):{ok:true}}catch{return {ok:true,raw:text}}}
 async function postJson(url,body){if(!API_KEY)throw new Error('AUTOCAB_API_KEY is not configured');const r=await fetch(url,{method:'POST',headers:headers(),body:JSON.stringify(body)});if(!r.ok)throw new Error(`Autocab ${r.status}: ${(await r.text()).slice(0,300)}`);return r.json()}
-async function getActiveDrivers(){return postJson(`${BASE_URL}/driver/v1/drivers/active`,{CompanyId:COMPANY_ID,ActiveStatusType:'Active'})}
+async function getActiveDrivers(){
+ const groups=await Promise.all(COMPANY_IDS.map(async companyId=>{
+  const drivers=await postJson(`${BASE_URL}/driver/v1/drivers/active`,{CompanyId:companyId,ActiveStatusType:'Active'});
+  return (drivers||[]).map(d=>({...d,companyId}));
+ }));
+ const byId=new Map();
+ for(const d of groups.flat())byId.set(Number(d.id),d);
+ return [...byId.values()];
+}
 async function getDriverAccounts(){return postJson(`${BASE_URL}/accounts/v1/DriversAccounts?pageno=1&pagesize=1000`,{companyId:null,driverId:null})}
 function mergeDrivers(drivers,accountsResponse){const accounts=accountsResponse?.summaries||[];const byId=new Map(accounts.map(a=>[Number(a.driverId),a]));return (drivers||[]).map(d=>{const a=byId.get(Number(d.id));return {driverId:d.id,callsign:d.callsign,forename:d.forename,surname:d.surname,fullName:d.fullName||`${d.forename||''} ${d.surname||''}`.trim(),mobile:d.mobile||d.telephone||'',email:d.email||'',active:Boolean(d.active),suspended:Boolean(d.suspended),previousBalance:a?.previousBalance??null,currentBalance:a?.currentBalance??null,lastProcessed:a?.lastProcessed??null,lastProcessedBy:a?.lastProcessedBy??null,notes:a?.notes??'',totals:a?{allJobsTotal:a.allJobsTotal??0,cashJobsTotal:a.cashJobsTotal??0,accountJobsTotal:a.accountJobsTotal??0,cardJobsTotal:a.cardJobsTotal??0,driverTransactionsTotal:a.driverTransactionsTotal??0,groupTransactionsTotal:a.groupTransactionsTotal??0,pendingTransactionsTotal:a.pendingTransactionsTotal??0,paidInTotal:a.paidInTotal??0,paidOutTotal:a.paidOutTotal??0,vatAmount:a.vatAmount??0,allJobsCommission:a.allJobsCommission??0}:null}})}
 async function getMergedDrivers(){const [d,a]=await Promise.all([getActiveDrivers(),getDriverAccounts()]);return mergeDrivers(d,a)}
@@ -678,10 +703,10 @@ async function createStripePaymentRequest(item){
 async function createStripeCustomerPayment(item){
  if(!stripe) return null;
 
- if(item.payment_url && item.provider_session_id){
+ if(item.provider_checkout_url && item.provider_session_id){
    return {
      id:item.provider_session_id,
-     url:item.payment_url,
+     url:item.provider_checkout_url,
      reused:true
    };
  }
@@ -719,8 +744,8 @@ async function createStripeCustomerPayment(item){
   mode:'payment',
   client_reference_id:item.id,
 
-  success_url:`${PUBLIC_BASE_URL}/payment-success`,
-  cancel_url:`${PUBLIC_BASE_URL}/payment-cancelled`,
+  success_url:`${PUBLIC_BASE_URL}/pay/${item.id}?status=success`,
+  cancel_url:`${PUBLIC_BASE_URL}/pay/${item.id}?status=cancelled`,
 
    metadata:{
      fleetpay_customer_payment_id:item.id,
@@ -743,15 +768,15 @@ async function createStripeCustomerPayment(item){
 
  db.prepare(`
    UPDATE customer_payments
-   SET payment_url=?,
-       provider=?,
+   SET provider=?,
        provider_session_id=?,
+       provider_checkout_url=?,
        updated_at=?
    WHERE id=?
  `).run(
-   session.url,
    'stripe',
    session.id,
+   session.url,
    new Date().toISOString(),
    item.id
  );
@@ -879,6 +904,75 @@ function officeTransactions(limit=250){
 }
 app.get('/api/admin/transactions',adminAuth,(req,res)=>{const limit=Math.min(1000,Math.max(25,Number(req.query.limit||300))),q=String(req.query.q||'').trim().toLowerCase(),type=String(req.query.type||'all'),status=String(req.query.status||'all');let rows=officeTransactions(limit);if(type!=='all')rows=rows.filter(x=>x.type===type);if(status!=='all')rows=rows.filter(x=>x.status===status);if(q)rows=rows.filter(x=>`${x.id} ${x.callsign||''} ${x.driverName||''} ${x.bookingId||''} ${x.providerRef||''} ${x.typeLabel}`.toLowerCase().includes(q));res.json({transactions:rows.slice(0,limit),count:rows.length})});
 app.get('/api/admin/security',adminAuth,requireStaffRole('administrator'),(req,res)=>{const logs=db.prepare("SELECT id,created_at createdAt,actor_type actorType,actor_id actorId,action,entity_type entityType,entity_id entityId,details_json detailsJson,ip FROM audit_logs WHERE action LIKE 'office_%' OR action LIKE '%login%' OR action LIKE '%mfa%' ORDER BY id DESC LIMIT 300").all().map(r=>({...r,details:JSON.parse(r.detailsJson||'{}')}));res.json({logs})});
+
+
+function customerPaymentFeeFor(fareAmount,settings=getSettings()){
+ let fee=0;
+ if(settings.customerPaymentFeeType==='percentage')fee=Number(fareAmount)*(Number(settings.customerPaymentFeeValue||0)/100);
+ else fee=Number(settings.customerPaymentFeeValue||0);
+ return Math.round(Math.max(0,fee)*100)/100;
+}
+function publicCustomerPayment(row){
+ if(!row)return null;
+ return {
+  id:row.id,bookingId:row.booking_id||'',customerName:row.customer_name||'',pickup:row.pickup||'',destination:row.destination||'',journeyAt:row.journey_at||null,
+  taxiCompany:row.taxi_company||getSettings().companyName||'Taxi company',fareAmount:Number(row.fare_amount||0),feeAmount:Number(row.fee_amount||0),totalAmount:Number(row.total_amount||0),
+  status:row.status,createdAt:row.created_at,paidAt:row.paid_at||null,refundStatus:row.refund_status||null,refundedAmount:Number(row.refunded_amount||0)
+ };
+}
+app.get('/api/public/customer-payments/:id',(req,res)=>{
+ const row=db.prepare('SELECT * FROM customer_payments WHERE id=?').get(req.params.id);
+ if(!row)return res.status(404).json({error:'Payment link not found'});
+ res.json({payment:publicCustomerPayment(row),stripeConfigured:Boolean(stripe)});
+});
+app.post('/api/public/customer-payments/:id/checkout',async(req,res)=>{
+ try{
+  if(!stripe)return res.status(400).json({error:'Card payments are not currently available.'});
+  const row=db.prepare('SELECT * FROM customer_payments WHERE id=?').get(req.params.id);
+  if(!row)return res.status(404).json({error:'Payment link not found'});
+  if(row.status==='paid')return res.status(400).json({error:'This payment has already been completed.'});
+  if(row.status==='cancelled')return res.status(400).json({error:'This payment link has been cancelled.'});
+  const session=await createStripeCustomerPayment(row);
+  res.json({ok:true,checkoutUrl:session.url});
+ }catch(e){res.status(500).json({error:e.message})}
+});
+app.get('/api/admin/customer-payments',adminAuth,(req,res)=>{
+ const rows=db.prepare(`SELECT cp.*,fl.fleetpay_share,fl.taxi_company_share,fl.gross_fee
+  FROM customer_payments cp LEFT JOIN fee_ledger fl ON fl.source_type='customer_payment' AND fl.source_id=cp.id
+  ORDER BY cp.created_at DESC LIMIT 500`).all();
+ const payments=rows.map(r=>({...publicCustomerPayment(r),driverId:r.driver_id,callsign:r.callsign,driverName:r.driver_name,customerMobile:r.customer_mobile||'',customerEmail:r.customer_email||'',notes:r.notes||'',source:r.source||'driver',createdBy:r.created_by||'',paymentUrl:r.payment_url||`${PUBLIC_BASE_URL}/pay/${r.id}`,provider:r.provider||'stripe',providerRef:r.stripe_payment_intent_id||r.provider_session_id||'',fleetPayFeeShare:Number(r.fleetpay_share||0),taxiCompanyFeeShare:Number(r.taxi_company_share||0),grossFee:Number(r.gross_fee||r.fee_amount||0)}));
+ const paid=payments.filter(x=>x.status==='paid');
+ res.json({payments,summary:{count:payments.length,open:payments.filter(x=>x.status==='open').length,paid:paid.length,grossPaid:Number(paid.reduce((a,x)=>a+x.totalAmount,0).toFixed(2)),feesPaid:Number(paid.reduce((a,x)=>a+x.feeAmount,0).toFixed(2)),fleetPayShare:Number(paid.reduce((a,x)=>a+x.fleetPayFeeShare,0).toFixed(2)),taxiCompanyShare:Number(paid.reduce((a,x)=>a+x.taxiCompanyFeeShare,0).toFixed(2))}});
+});
+app.post('/api/admin/customer-payments',adminAuth,requireStaffRole('administrator','finance','office'),(req,res)=>{
+ try{
+  const fareAmount=Number(req.body.fareAmount||0);
+  if(!Number.isFinite(fareAmount)||fareAmount<=0)return res.status(400).json({error:'Enter a valid journey fare.'});
+  const bookingId=String(req.body.bookingId||'').trim();
+  const customerName=String(req.body.customerName||'').trim();
+  const customerMobile=String(req.body.customerMobile||'').trim();
+  const customerEmail=safeEmail(req.body.customerEmail||'');
+  const pickup=String(req.body.pickup||'').trim();
+  const destination=String(req.body.destination||'').trim();
+  const journeyAt=String(req.body.journeyAt||'').trim()||null;
+  const notes=String(req.body.notes||'').trim();
+  const taxiCompany=String(req.body.taxiCompany||getSettings().companyName||'Taxi company').trim();
+  const callsign=String(req.body.callsign||'').trim();
+  let driverId=0,driverName='Office payment';
+  if(callsign){const d=cacheRows().find(x=>String(x.callsign)===callsign);if(!d)return res.status(400).json({error:`Callsign ${callsign} was not found in the FleetPay driver cache.`});driverId=d.driverId;driverName=d.fullName||`Callsign ${callsign}`;}
+  const feeAmount=customerPaymentFeeFor(fareAmount);
+  const totalAmount=Math.round((fareAmount+feeAmount)*100)/100;
+  const paymentId=id('customerpay'),now=new Date().toISOString(),paymentUrl=`${PUBLIC_BASE_URL}/pay/${paymentId}`;
+  db.prepare(`INSERT INTO customer_payments(id,driver_id,callsign,driver_name,booking_id,fare_amount,fee_amount,total_amount,status,payment_url,customer_name,customer_mobile,customer_email,pickup,destination,journey_at,taxi_company,notes,source,created_by,created_at,updated_at)
+   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(paymentId,driverId,callsign||'OFFICE',driverName,bookingId||null,fareAmount,feeAmount,totalAmount,'open',paymentUrl,customerName,customerMobile,customerEmail,pickup,destination,journeyAt,taxiCompany,notes,'office_manual',req.auth.email,now,now);
+  audit(req,'admin',req.auth.email,'customer_payment_link_created','customer_payment',paymentId,{bookingId:bookingId||null,callsign:callsign||null,fareAmount,feeAmount,totalAmount});
+  res.json({ok:true,payment:publicCustomerPayment(db.prepare('SELECT * FROM customer_payments WHERE id=?').get(paymentId)),paymentUrl});
+ }catch(e){res.status(500).json({error:e.message})}
+});
+app.post('/api/admin/customer-payments/:id/cancel',adminAuth,requireStaffRole('administrator','finance','office'),(req,res)=>{
+ const row=db.prepare('SELECT * FROM customer_payments WHERE id=?').get(req.params.id);if(!row)return res.status(404).json({error:'Payment not found'});if(row.status==='paid')return res.status(400).json({error:'Paid payments cannot be cancelled. Use the refund workflow when enabled.'});
+ db.prepare('UPDATE customer_payments SET status=?,updated_at=? WHERE id=?').run('cancelled',new Date().toISOString(),row.id);audit(req,'admin',req.auth.email,'customer_payment_cancelled','customer_payment',row.id,{});res.json({ok:true});
+});
 
 app.get('/api/admin/integrations',adminAuth,(req,res)=>{res.json({stripe:{configured:Boolean(STRIPE_SECRET_KEY),testMode:STRIPE_SECRET_KEY.startsWith('sk_test_')},wise:{configured:Boolean(WISE_API_TOKEN),environment:WISE_ENV,profileId:WISE_PROFILE_ID||null},autocab:{configured:Boolean(API_KEY),adjustmentsEnabled:AUTOCAB_ADJUSTMENTS_ENABLED},push:{configured:Boolean(VAPID_PUBLIC_KEY&&VAPID_PRIVATE_KEY),publicKey:VAPID_PUBLIC_KEY||null}})});
 app.post('/api/admin/integrations/wise/test',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{const out=await testWiseConnection();audit(req,'admin',req.auth.email,'wise_connection_test','integration','wise',{environment:WISE_ENV});res.json(out)}catch(e){res.status(500).json({error:e.message})}});
@@ -1201,7 +1295,8 @@ app.post('/api/driver/customer-payment',driverAuth,async(req,res)=>{
       'SELECT * FROM customer_payments WHERE id=?'
     ).get(paymentId);
 
-    const session=await createStripeCustomerPayment(item);
+    const publicPaymentUrl=`${PUBLIC_BASE_URL}/pay/${paymentId}`;
+    db.prepare('UPDATE customer_payments SET payment_url=?,updated_at=? WHERE id=?').run(publicPaymentUrl,now,paymentId);
 
     audit(
       req,
@@ -1216,7 +1311,7 @@ app.post('/api/driver/customer-payment',driverAuth,async(req,res)=>{
         fareAmount,
         feeAmount,
         totalAmount,
-        sessionId:session.id
+        paymentUrl:publicPaymentUrl
       }
     );
 
@@ -1227,7 +1322,7 @@ app.post('/api/driver/customer-payment',driverAuth,async(req,res)=>{
       fareAmount,
       feeAmount,
       totalAmount,
-      paymentUrl:session.url
+      paymentUrl:publicPaymentUrl
     });
 
   }catch(e){
