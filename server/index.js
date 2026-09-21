@@ -623,7 +623,7 @@ function hasFleetPayCapability(capabilities){
   capabilities.some(cap=>autocabCapabilityText(cap)==='+');
 }
 
-app.post(['/api/webhooks/autocab/booking-created','/created'],(req,res)=>{
+app.post(['/api/webhooks/autocab/booking-created','/created'],async(req,res)=>{
  try{
   const raw=req.body||{};
   const b=autocabBookingPayload(raw);
@@ -737,6 +737,20 @@ app.post(['/api/webhooks/autocab/booking-created','/created'],(req,res)=>{
      receivedAt,
      receivedAt
     );
+
+    if(stripe){
+     const item=db.prepare(`
+      SELECT *
+      FROM customer_payments
+      WHERE booking_id=?
+        AND source='autocab_booking_created'
+      LIMIT 1
+     `).get(bookingId);
+
+     if(item){
+      await createStripeCustomerPayment(item);
+     }
+    }
    }
   }
 
