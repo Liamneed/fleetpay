@@ -700,6 +700,7 @@ app.post(['/api/webhooks/autocab/booking-created','/created'],async(req,res)=>{
       fee_amount,
       total_amount,
       status,
+      payment_url,
       payment_method,
       customer_name,
       customer_mobile,
@@ -713,7 +714,7 @@ app.post(['/api/webhooks/autocab/booking-created','/created'],async(req,res)=>{
       created_at,
       updated_at
      )
-     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
      paymentId,
      null,
@@ -724,6 +725,7 @@ app.post(['/api/webhooks/autocab/booking-created','/created'],async(req,res)=>{
      feeAmount,
      totalAmount,
      'open',
+     `${PUBLIC_BASE_URL}/pay/${paymentId}`,
      String(b.PaymentMethod||b.paymentMethod||b.PaymentType||b.paymentType||'').trim()||null,
      String(b.Name||b.name||b.passengerName||'').trim()||null,
      String(b.TelephoneNumber||b.telephoneNumber||b.mobile||b.passengerMobile||'').trim()||null,
