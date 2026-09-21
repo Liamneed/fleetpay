@@ -3770,3 +3770,47 @@ body {
     grid-template-columns:1fr;
   }
 }
+
+.payoutControlCard{
+  margin-top:14px;
+  padding:16px;
+  border:1px solid #dfe6ef;
+  border-radius:14px;
+  background:#f8fafc;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:18px;
+}
+
+.payoutControlCard.excluded{
+  background:#fff7f7;
+  border-color:#fecaca;
+}
+
+.payoutControlCard span{
+  display:block;
+  font-size:10px;
+  font-weight:800;
+  letter-spacing:.12em;
+  color:#64748b;
+  margin-bottom:4px;
+}
+
+.payoutControlCard h3{
+  margin:0 0 4px;
+}
+
+.payoutControlCard p{
+  margin:0;
+  color:#64748b;
+  font-size:13px;
+  max-width:460px;
+}
+
+@media(max-width:700px){
+  .payoutControlCard{
+    align-items:stretch;
+    flex-direction:column;
+  }
+}
