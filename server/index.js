@@ -94,6 +94,33 @@ ON customer_payments(driver_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_customer_payments_booking
 ON customer_payments(booking_id);
 
+CREATE TABLE IF NOT EXISTS autocab_booking_webhooks (
+ id TEXT PRIMARY KEY,
+ event_type TEXT NOT NULL,
+ booking_id TEXT,
+ company_id INTEGER,
+ row_version INTEGER,
+ passenger_name TEXT,
+ passenger_mobile TEXT,
+ passenger_email TEXT,
+ pickup TEXT,
+ destination TEXT,
+ pickup_due_time TEXT,
+ driver_cost REAL,
+ office_price REAL,
+ payment_method TEXT,
+ capabilities_json TEXT,
+ has_payment_capability INTEGER NOT NULL DEFAULT 0,
+ raw_json TEXT NOT NULL,
+ status TEXT NOT NULL DEFAULT 'received',
+ received_at TEXT NOT NULL,
+ processed_at TEXT,
+ error TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_autocab_booking_webhooks_booking
+ON autocab_booking_webhooks(booking_id, received_at DESC);
+
 CREATE TABLE IF NOT EXISTS carried_charges (driver_id INTEGER PRIMARY KEY, amount REAL NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS audit_logs (
  id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, actor_type TEXT NOT NULL, actor_id TEXT,
@@ -476,6 +503,108 @@ app.post('/api/stripe/webhook', express.raw({type:'application/json'}), async (r
 });
 
 app.use(express.json());
+
+function autocabBookingPayload(body){
+ if(!body||typeof body!=='object')return {};
+ return body.booking || body.data?.booking || body.data || body;
+}
+
+function autocabCapabilityText(cap){
+ if(typeof cap==='string')return cap.trim();
+ if(!cap||typeof cap!=='object')return '';
+ return String(
+  cap.name ??
+  cap.description ??
+  cap.descriptor ??
+  cap.code ??
+  cap.shortName ??
+  cap.value ??
+  ''
+ ).trim();
+}
+
+function hasFleetPayCapability(capabilities){
+ return Array.isArray(capabilities) &&
+  capabilities.some(cap=>autocabCapabilityText(cap)==='+');
+}
+
+app.post(['/api/webhooks/autocab/booking-created','/created'],(req,res)=>{
+ try{
+  const raw=req.body||{};
+  const b=autocabBookingPayload(raw);
+  const pricing=b.pricing||{};
+  const pickup=b.pickup?.address||b.pickup||{};
+  const destination=b.destination?.address||b.destination||{};
+  const capabilities=Array.isArray(b.capabilities)?b.capabilities:[];
+
+  const bookingId=String(
+   b.id ??
+   b.bookingId ??
+   b.bookingID ??
+   raw.bookingId ??
+   raw.bookingID ??
+   ''
+  ).trim();
+
+  const receivedAt=new Date().toISOString();
+  const webhookId=id('autocab_booking');
+
+  db.prepare(`
+   INSERT INTO autocab_booking_webhooks(
+    id,event_type,booking_id,company_id,row_version,
+    passenger_name,passenger_mobile,passenger_email,
+    pickup,destination,pickup_due_time,
+    driver_cost,office_price,payment_method,
+    capabilities_json,has_payment_capability,
+    raw_json,status,received_at
+   )
+   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `).run(
+   webhookId,
+   'BookingCreated',
+   bookingId||null,
+   Number(b.companyId??0)||null,
+   Number(b.rowVersion??0)||null,
+   String(b.name||b.passengerName||'').trim(),
+   String(b.telephoneNumber||b.mobile||b.passengerMobile||'').trim(),
+   String(b.customerEmail||b.email||'').trim(),
+   String(pickup.text||pickup.addressText||'').trim(),
+   String(destination.text||destination.addressText||'').trim(),
+   b.pickupDueTimeUtc||b.pickupDueTime||null,
+   Number(pricing.cost??0),
+   Number(pricing.price??0),
+   String(b.paymentMethod||b.paymentType||'').trim(),
+   JSON.stringify(capabilities),
+   hasFleetPayCapability(capabilities)?1:0,
+   JSON.stringify(raw),
+   'received',
+   receivedAt
+  );
+
+  console.log(
+   `[FleetPay] Autocab BookingCreated received`,
+   {
+    bookingId:bookingId||null,
+    companyId:b.companyId??null,
+    rowVersion:b.rowVersion??null,
+    cost:pricing.cost??null,
+    price:pricing.price??null,
+    capabilities:capabilities.map(autocabCapabilityText)
+   }
+  );
+
+  res.status(200).json({
+   ok:true,
+   received:true,
+   webhookId,
+   bookingId:bookingId||null
+  });
+
+ }catch(e){
+  console.error('[FleetPay] BookingCreated webhook error',e);
+  res.status(500).json({ok:false,error:'Webhook could not be stored'});
+ }
+});
 
 function getSettings(){
  const rows=db.prepare('SELECT key,value FROM settings').all(); const out={...defaultSettings};
@@ -1028,6 +1157,40 @@ app.post('/api/admin/customer-payments',adminAuth,requireStaffRole('administrato
 app.post('/api/admin/customer-payments/:id/cancel',adminAuth,requireStaffRole('administrator','finance','office'),(req,res)=>{
  const row=db.prepare('SELECT * FROM customer_payments WHERE id=?').get(req.params.id);if(!row)return res.status(404).json({error:'Payment not found'});if(row.status==='paid')return res.status(400).json({error:'Paid payments cannot be cancelled. Use the refund workflow when enabled.'});
  db.prepare('UPDATE customer_payments SET status=?,updated_at=? WHERE id=?').run('cancelled',new Date().toISOString(),row.id);audit(req,'admin',req.auth.email,'customer_payment_cancelled','customer_payment',row.id,{});res.json({ok:true});
+});
+
+app.get('/api/admin/autocab-booking-webhooks',adminAuth,requireStaffRole('administrator','finance','office'),(req,res)=>{
+ const rows=db.prepare(`
+  SELECT
+   id,
+   event_type eventType,
+   booking_id bookingId,
+   company_id companyId,
+   row_version rowVersion,
+   passenger_name passengerName,
+   passenger_mobile passengerMobile,
+   passenger_email passengerEmail,
+   pickup,
+   destination,
+   pickup_due_time pickupDueTime,
+   driver_cost driverCost,
+   office_price officePrice,
+   payment_method paymentMethod,
+   capabilities_json capabilitiesJson,
+   has_payment_capability hasPaymentCapability,
+   status,
+   received_at receivedAt,
+   processed_at processedAt,
+   error
+  FROM autocab_booking_webhooks
+  ORDER BY received_at DESC
+  LIMIT 100
+ `).all().map(x=>({
+  ...x,
+  hasPaymentCapability:Boolean(x.hasPaymentCapability),
+  capabilities:(()=>{try{return JSON.parse(x.capabilitiesJson||'[]')}catch{return []}})()
+ }));
+ res.json({webhooks:rows});
 });
 
 app.get('/api/admin/integrations',adminAuth,(req,res)=>{res.json({stripe:{configured:Boolean(STRIPE_SECRET_KEY),testMode:STRIPE_SECRET_KEY.startsWith('sk_test_')},wise:{configured:Boolean(WISE_API_TOKEN),environment:WISE_ENV,profileId:WISE_PROFILE_ID||null},autocab:{configured:Boolean(API_KEY),adjustmentsEnabled:AUTOCAB_ADJUSTMENTS_ENABLED},push:{configured:Boolean(VAPID_PUBLIC_KEY&&VAPID_PRIVATE_KEY),publicKey:VAPID_PUBLIC_KEY||null}})});
