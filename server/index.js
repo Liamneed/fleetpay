@@ -904,7 +904,61 @@ function officeTransactions(limit=250){
  for(const x of db.prepare("SELECT a.*,c.full_name FROM autocab_adjustments a LEFT JOIN driver_cache c ON c.driver_id=a.driver_id WHERE a.event_key LIKE 'manual:%' ORDER BY a.created_at DESC LIMIT ?").all(limit))rows.push({id:x.id,ref:`manual:${x.id}`,type:'manual_adjustment',typeLabel:x.is_credit?'Manual pay in':'Manual payout',direction:x.is_credit?'in':'out',callsign:x.callsign,driverName:x.full_name,amount:Number(x.amount),feeAmount:0,status:x.status,provider:'Autocab',providerRef:x.event_key||'',createdAt:x.created_at,completedAt:x.completed_at});
  return rows.sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
 }
-app.get('/api/admin/transactions',adminAuth,(req,res)=>{const limit=Math.min(1000,Math.max(25,Number(req.query.limit||300))),q=String(req.query.q||'').trim().toLowerCase(),type=String(req.query.type||'all'),status=String(req.query.status||'all');let rows=officeTransactions(limit);if(type!=='all')rows=rows.filter(x=>x.type===type);if(status!=='all')rows=rows.filter(x=>x.status===status);if(q)rows=rows.filter(x=>`${x.id} ${x.callsign||''} ${x.driverName||''} ${x.bookingId||''} ${x.providerRef||''} ${x.typeLabel}`.toLowerCase().includes(q));res.json({transactions:rows.slice(0,limit),count:rows.length})});
+function transactionLondonDate(value){
+ const d=new Date(value);
+ if(Number.isNaN(d.getTime()))return '';
+ const parts=Object.fromEntries(new Intl.DateTimeFormat('en-GB',{
+  timeZone:'Europe/London',
+  year:'numeric',
+  month:'2-digit',
+  day:'2-digit'
+ }).formatToParts(d).map(x=>[x.type,x.value]));
+ return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+app.get('/api/admin/transactions',adminAuth,(req,res)=>{
+ const limit=Math.min(1000,Math.max(25,Number(req.query.limit||300)));
+ const q=String(req.query.q||'').trim().toLowerCase();
+ const type=String(req.query.type||'all');
+ const status=String(req.query.status||'all');
+ const category=String(req.query.category||'all');
+ const dateFrom=String(req.query.dateFrom||'').trim();
+ const dateTo=String(req.query.dateTo||'').trim();
+
+ let rows=officeTransactions(limit);
+
+ if(category==='driver_in')rows=rows.filter(x=>
+  x.type==='driver_payment' ||
+  (x.type==='manual_adjustment' && x.direction==='in')
+ );
+
+ if(category==='driver_out')rows=rows.filter(x=>
+  x.type==='weekly_payout' ||
+  x.type==='early_payout' ||
+  (x.type==='manual_adjustment' && x.direction==='out')
+ );
+
+ if(category==='customer')rows=rows.filter(x=>x.type==='customer_payment');
+ if(category==='fees')rows=rows.filter(x=>x.type==='fee');
+
+ if(type!=='all')rows=rows.filter(x=>x.type===type);
+ if(status!=='all')rows=rows.filter(x=>x.status===status);
+
+ if(dateFrom)rows=rows.filter(x=>transactionLondonDate(x.createdAt)>=dateFrom);
+ if(dateTo)rows=rows.filter(x=>transactionLondonDate(x.createdAt)<=dateTo);
+
+ if(q)rows=rows.filter(x=>
+  `${x.id} ${x.callsign||''} ${x.driverName||''} ${x.bookingId||''} ${x.providerRef||''} ${x.typeLabel}`
+   .toLowerCase()
+   .includes(q)
+ );
+
+ res.json({
+  transactions:rows.slice(0,limit),
+  count:rows.length,
+  filters:{category,type,status,dateFrom,dateTo}
+ });
+});
 app.get('/api/admin/security',adminAuth,requireStaffRole('administrator'),(req,res)=>{const logs=db.prepare("SELECT id,created_at createdAt,actor_type actorType,actor_id actorId,action,entity_type entityType,entity_id entityId,details_json detailsJson,ip FROM audit_logs WHERE action LIKE 'office_%' OR action LIKE '%login%' OR action LIKE '%mfa%' ORDER BY id DESC LIMIT 300").all().map(r=>({...r,details:JSON.parse(r.detailsJson||'{}')}));res.json({logs})});
 
 

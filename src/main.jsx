@@ -153,7 +153,7 @@ function AdminApp(){
  const[outstanding,setOutstanding]=useState([]),[fees,setFees]=useState({fees:[],summary:{}}),[earlySummary,setEarlySummary]=useState(null);
  const[customerAdmin,setCustomerAdmin]=useState({payments:[],summary:{}}),[customerCreate,setCustomerCreate]=useState({bookingId:'',callsign:'',customerName:'',customerMobile:'',customerEmail:'',pickup:'',destination:'',journeyAt:'',fareAmount:'',taxiCompany:'',notes:''}),[createdCustomerLink,setCreatedCustomerLink]=useState(null),[customerCreateBusy,setCustomerCreateBusy]=useState(false);
  const[driverUsers,setDriverUsers]=useState([]),[staff,setStaff]=useState([]),[securityLogs,setSecurityLogs]=useState([]);
- const[txQ,setTxQ]=useState(''),[txType,setTxType]=useState('all'),[txStatus,setTxStatus]=useState('all');
+ const[txQ,setTxQ]=useState(''),[txType,setTxType]=useState('all'),[txStatus,setTxStatus]=useState('all'),[txCategory,setTxCategory]=useState('all'),[txDateFrom,setTxDateFrom]=useState(''),[txDateTo,setTxDateTo]=useState('');
  const[q,setQ]=useState(''),[filter,setFilter]=useState('all'),[selected,setSelected]=useState(null),[selectedTx,setSelectedTx]=useState(null);
  const[selectedWeeklyPayouts,setSelectedWeeklyPayouts]=useState([]);
  const[mobileNav,setMobileNav]=useState(false),[loading,setLoading]=useState(false),[err,setErr]=useState('');
@@ -169,7 +169,18 @@ function AdminApp(){
  async function safeLoad(fn){try{return await fn()}catch(e){if(/authentication|office authentication/i.test(e.message))logout();else setErr(e.message)}}
  const loadMe=()=>safeLoad(async()=>setMe(await api('/api/admin/me')));
  const loadOverview=()=>safeLoad(async()=>setOverview(await api('/api/admin/office-overview')));
- const loadTransactions=()=>safeLoad(async()=>{const p=new URLSearchParams({limit:'500',q:txQ,type:txType,status:txStatus});setTransactions((await api(`/api/admin/transactions?${p}`)).transactions||[])});
+ const loadTransactions=()=>safeLoad(async()=>{
+ const p=new URLSearchParams({
+  limit:'500',
+  q:txQ,
+  type:txType,
+  status:txStatus,
+  category:txCategory,
+  dateFrom:txDateFrom,
+  dateTo:txDateTo
+ });
+ setTransactions((await api(`/api/admin/transactions?${p}`)).transactions||[])
+});
  const loadDrivers=()=>safeLoad(async()=>{setLoading(true);try{const j=await api('/api/drivers');setDrivers(j.drivers||[]);setMeta(j)}finally{setLoading(false)}});
  const loadSettings=()=>safeLoad(async()=>setSettings(await api('/api/admin/operations-settings')));
  const loadIntegrations=()=>safeLoad(async()=>setIntegrations(await api('/api/admin/integrations')));
@@ -284,7 +295,7 @@ function AdminApp(){
   };
  },[token,view,txQ,txType,txStatus]);
 
- useEffect(()=>{if(token&&view==='transactions')loadTransactions()},[txType,txStatus]);
+ useEffect(()=>{if(token&&view==='transactions')loadTransactions()},[txType,txStatus,txCategory,txDateFrom,txDateTo]);
  const isAdmin=me?.role==='administrator',canMoney=['administrator','finance'].includes(me?.role),canOffice=['administrator','finance','office'].includes(me?.role);
  const nav=[
   ['dashboard',LayoutDashboard,'Dashboard'],['transactions',CreditCard,'Transactions'],['customerPayments',Send,'Customer Payments'],['monday',CalendarDays,'Monday Run'],['early',ArrowUpRight,'Early Payouts'],['outstanding',AlertTriangle,'Outstanding'],['fees',BadgePoundSterling,'Fees & Billing'],['demo',PlayCircle,'Demo Lab'],['drivers',Users,'Drivers'],['access',UserCheck,'Users & Access'],...(isAdmin?[['security',ShieldCheck,'Security'],['settings',Settings,'Settings']]:[])
@@ -434,7 +445,114 @@ function AdminApp(){
      </section>
      <section className="panel"><div className="panelHead"><div><h3>Recent money movement</h3><p>The latest customer payments, driver payments, payouts and fees.</p></div><button className="mini" onClick={()=>go('transactions')}>View all</button></div><div className="transactionList">{recentTx.map(x=><button key={x.ref} className="txRow" onClick={()=>setSelectedTx(x)}><div className={`txIcon ${x.direction}`}><CreditCard/></div><div className="txMain"><b>{x.typeLabel}</b><span>{x.callsign?`Callsign ${x.callsign}`:'FleetPay'}{x.bookingId?` · Booking ${x.bookingId}`:''}</span></div><div className="txMeta"><b className={x.direction==='out'?'out':''}>{x.direction==='out'?'-':'+'}{money(x.amount)}</b><span>{dt(x.createdAt)}</span></div><Pill tone={statusTone(x.status)}>{x.status}</Pill></button>)}</div></section>
     </>}
-    {view==='transactions'&&<><section className="officePageIntro"><div><span>MASTER LEDGER</span><h2>Transaction history</h2><p>One searchable record of every payment, payout and fee recorded by FleetPay.</p></div></section><section className="panel"><div className="transactionTools"><div className="searchBox"><Search/><input value={txQ} onChange={e=>setTxQ(e.target.value)} onKeyDown={e=>e.key==='Enter'&&loadTransactions()} placeholder="Search callsign, driver, booking or reference…"/><button onClick={loadTransactions}>Search</button></div><select value={txType} onChange={e=>setTxType(e.target.value)}>{txTypes.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select><select value={txStatus} onChange={e=>setTxStatus(e.target.value)}><option value="all">All statuses</option><option value="paid">Paid</option><option value="open">Open</option><option value="approved">Approved</option><option value="batched">Batched</option><option value="failed">Failed</option></select></div><div className="transactionList ledgerList">{transactions.map(x=><button key={x.ref} className="txRow" onClick={()=>setSelectedTx(x)}><div className={`txIcon ${x.direction}`}><CreditCard/></div><div className="txMain"><b>{x.typeLabel}</b><span>{x.callsign?`Callsign ${x.callsign}`:'FleetPay'}{x.driverName?` · ${x.driverName}`:''}{x.bookingId?` · Booking ${x.bookingId}`:''}</span></div><div className="txMeta"><b className={x.direction==='out'?'out':''}>{x.direction==='out'?'-':'+'}{money(x.amount)}</b><span>{dt(x.createdAt)}</span></div><Pill tone={statusTone(x.status)}>{x.status}</Pill><ChevronRight/></button>)}</div></section></>}
+    {view==='transactions'&&<><section className="officePageIntro"><div><span>MASTER LEDGER</span><h2>Transaction history</h2><p>Search and filter driver payments, payouts, customer payments and fees.</p></div></section>
+
+<section className="transactionCategoryTabs">
+ {[
+  ['all','All transactions'],
+  ['driver_in','Driver pay-ins'],
+  ['driver_out','Driver payouts'],
+  ['customer','Customer payments'],
+  ['fees','Fees']
+ ].map(([v,l])=><button key={v} className={txCategory===v?'active':''} onClick={()=>setTxCategory(v)}>{l}</button>)}
+</section>
+
+<section className="panel transactionPanel">
+ <div className="transactionFilterGrid">
+  <div className="searchBox transactionSearch">
+   <Search/>
+   <input
+    value={txQ}
+    onChange={e=>setTxQ(e.target.value)}
+    onKeyDown={e=>e.key==='Enter'&&loadTransactions()}
+    placeholder="Search callsign, driver, booking or reference…"
+   />
+   <button onClick={loadTransactions}>Search</button>
+  </div>
+
+  <label>From
+   <input type="date" value={txDateFrom} onChange={e=>setTxDateFrom(e.target.value)}/>
+  </label>
+
+  <label>To
+   <input type="date" value={txDateTo} onChange={e=>setTxDateTo(e.target.value)}/>
+  </label>
+
+  <label>Status
+   <select value={txStatus} onChange={e=>setTxStatus(e.target.value)}>
+    <option value="all">All statuses</option>
+    <option value="paid">Paid</option>
+    <option value="open">Open</option>
+    <option value="approved">Approved</option>
+    <option value="batched">Batched</option>
+    <option value="pending_approval">Pending approval</option>
+    <option value="declined">Declined</option>
+    <option value="cancelled">Cancelled</option>
+    <option value="failed">Failed</option>
+    <option value="completed">Completed</option>
+    <option value="uninvoiced">Uninvoiced</option>
+    <option value="invoiced">Invoiced</option>
+   </select>
+  </label>
+
+  <label>Type
+   <select value={txType} onChange={e=>setTxType(e.target.value)}>
+    {txTypes.map(([v,l])=><option key={v} value={v}>{l}</option>)}
+   </select>
+  </label>
+
+  <button className="secondary clearTransactionFilters" onClick={()=>{
+   setTxQ('');
+   setTxType('all');
+   setTxStatus('all');
+   setTxCategory('all');
+   setTxDateFrom('');
+   setTxDateTo('');
+  }}>Clear filters</button>
+ </div>
+
+ <div className="transactionResultHead">
+  <div>
+   <h3>{transactions.length} transaction{transactions.length===1?'':'s'}</h3>
+   <p>Click any row to view full transaction details.</p>
+  </div>
+ </div>
+
+ <div className="tableWrap transactionTableWrap">
+  <table className="transactionTable">
+   <thead>
+    <tr>
+     <th>Date / time</th>
+     <th>Type</th>
+     <th>Driver / customer</th>
+     <th>Reference</th>
+     <th>Amount</th>
+     <th>Direction</th>
+     <th>Status</th>
+     <th></th>
+    </tr>
+   </thead>
+   <tbody>
+    {transactions.map(x=><tr key={x.ref} onClick={()=>setSelectedTx(x)}>
+     <td>{dt(x.createdAt)}</td>
+     <td><b>{x.typeLabel}</b></td>
+     <td>
+      <b>{x.callsign?`Callsign ${x.callsign}`:(x.driverName||'FleetPay')}</b>
+      <small>{x.driverName&&x.callsign?x.driverName:(x.bookingId?`Booking ${x.bookingId}`:'')}</small>
+     </td>
+     <td>
+      <span className="transactionRef">{x.bookingId?`Booking ${x.bookingId}`:(x.providerRef||x.id)}</span>
+     </td>
+     <td><b className={x.direction==='out'?'transactionAmountOut':'transactionAmountIn'}>{x.direction==='out'?'-':'+'}{money(x.amount)}</b></td>
+     <td><Pill tone={x.direction==='out'?'bad':'good'}>{x.direction==='out'?'Outgoing':'Incoming'}</Pill></td>
+     <td><Pill tone={statusTone(x.status)}>{x.status}</Pill></td>
+     <td><ChevronRight/></td>
+    </tr>)}
+    {!transactions.length&&<tr><td colSpan="8"><div className="emptyTransactionState">No transactions match the selected filters.</div></td></tr>}
+   </tbody>
+  </table>
+ </div>
+</section></>}
     {view==='customerPayments'&&<div className="customerPaymentsAdmin">
     <section className="customerPayHero"><div><span className="eyebrow">CUSTOMER PAYMENTS</span><h2>Create and track secure payment links</h2><p>Start manually for testing. FleetPay stores the journey, fare and service-fee breakdown; Autocab automation can be added once this flow is proven.</p></div><div className="customerPayHeroIcon"><CreditCard/></div></section>
     <div className="customerPayStats"><div><span>Total links</span><b>{customerAdmin.summary?.count||0}</b></div><div><span>Awaiting payment</span><b>{customerAdmin.summary?.open||0}</b></div><div><span>Paid</span><b>{customerAdmin.summary?.paid||0}</b></div><div><span>Customer money received</span><b>{money(customerAdmin.summary?.grossPaid||0)}</b></div><div><span>Service fees</span><b>{money(customerAdmin.summary?.feesPaid||0)}</b></div><div><span>FleetPay / taxi split</span><b>{money(customerAdmin.summary?.fleetPayShare||0)} / {money(customerAdmin.summary?.taxiCompanyShare||0)}</b></div></div>

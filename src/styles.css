@@ -3814,3 +3814,157 @@ body {
     flex-direction:column;
   }
 }
+
+.transactionCategoryTabs{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  margin-bottom:14px;
+}
+
+.transactionCategoryTabs button{
+  border:1px solid #dfe6ef;
+  background:#fff;
+  color:#475569;
+  border-radius:10px;
+  padding:9px 14px;
+  font-weight:700;
+  cursor:pointer;
+}
+
+.transactionCategoryTabs button.active{
+  background:#172033;
+  color:#fff;
+  border-color:#172033;
+}
+
+.transactionPanel{
+  overflow:hidden;
+}
+
+.transactionFilterGrid{
+  display:grid;
+  grid-template-columns:minmax(320px,2fr) repeat(4,minmax(140px,1fr)) auto;
+  gap:12px;
+  align-items:end;
+  padding:16px;
+  border-bottom:1px solid #e8edf3;
+}
+
+.transactionFilterGrid label{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  font-size:11px;
+  font-weight:700;
+  color:#64748b;
+}
+
+.transactionFilterGrid input,
+.transactionFilterGrid select{
+  min-height:42px;
+}
+
+.transactionSearch{
+  margin:0;
+}
+
+.clearTransactionFilters{
+  min-height:42px;
+  white-space:nowrap;
+}
+
+.transactionResultHead{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  padding:16px 18px 10px;
+}
+
+.transactionResultHead h3{
+  margin:0;
+}
+
+.transactionResultHead p{
+  margin:3px 0 0;
+  color:#64748b;
+  font-size:12px;
+}
+
+.transactionTableWrap{
+  margin-top:0;
+}
+
+.transactionTable tbody tr{
+  cursor:pointer;
+}
+
+.transactionTable tbody tr:hover{
+  background:#f8fafc;
+}
+
+.transactionTable td{
+  vertical-align:middle;
+}
+
+.transactionTable td small{
+  display:block;
+  margin-top:3px;
+  color:#718096;
+}
+
+.transactionRef{
+  display:block;
+  max-width:260px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-size:12px;
+  color:#64748b;
+}
+
+.transactionAmountIn{
+  color:#15803d;
+  white-space:nowrap;
+}
+
+.transactionAmountOut{
+  color:#dc2626;
+  white-space:nowrap;
+}
+
+.emptyTransactionState{
+  padding:38px 18px;
+  text-align:center;
+  color:#64748b;
+}
+
+@media(max-width:1200px){
+  .transactionFilterGrid{
+    grid-template-columns:1fr 1fr 1fr;
+  }
+
+  .transactionSearch{
+    grid-column:1/-1;
+  }
+}
+
+@media(max-width:760px){
+  .transactionFilterGrid{
+    grid-template-columns:1fr;
+  }
+
+  .transactionCategoryTabs{
+    overflow-x:auto;
+    flex-wrap:nowrap;
+    padding-bottom:4px;
+  }
+
+  .transactionCategoryTabs button{
+    white-space:nowrap;
+  }
+
+  .transactionTable{
+    min-width:900px;
+  }
+}
