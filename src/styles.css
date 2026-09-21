@@ -3673,3 +3673,100 @@ body {
 .publicPayPage{min-height:100vh;background:radial-gradient(circle at 85% 0%,rgba(22,137,231,.22),transparent 30%),linear-gradient(160deg,#07121f,#0b1b2f 55%,#07111d);color:#eef6ff;padding:18px 14px 34px;box-sizing:border-box;font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.publicPayShell{width:min(100%,520px);margin:0 auto}.publicPayBrand{display:flex;align-items:center;gap:12px;padding:6px 2px 18px}.publicPayBrand>div:nth-child(2){display:flex;flex-direction:column}.publicPayBrand b{font-size:23px;letter-spacing:-.02em}.publicPayBrand span{font-size:12px;color:#9eb2ca}.publicPayBrand>svg{margin-left:auto;color:#39c7e8}.publicPayLogo{width:44px;height:44px;border-radius:13px;display:grid;place-items:center;font-weight:900;font-size:19px;background:linear-gradient(145deg,#1676ff,#34d7dd);box-shadow:0 10px 26px rgba(20,119,255,.35);color:white}.publicPayTotal{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:24px;border:1px solid rgba(53,175,255,.35);border-radius:21px;background:linear-gradient(135deg,rgba(24,67,106,.9),rgba(12,40,67,.92));box-shadow:0 18px 45px rgba(0,0,0,.24)}.publicPayTotal span{font-size:12px;letter-spacing:.12em;color:#9ddcff;font-weight:800}.publicPayTotal h1{font-size:48px;line-height:1;margin:8px 0 6px;letter-spacing:-.04em}.publicPayTotal p{margin:0;color:#b8c9db}.publicPayTotal>svg{width:42px;height:42px;color:#31cfe7;flex:0 0 auto}.publicPayBreakdown{margin-top:14px;border:1px solid rgba(153,189,221,.22);border-radius:19px;padding:18px;background:rgba(19,39,62,.82);box-shadow:0 15px 36px rgba(0,0,0,.16)}.publicPayBreakdown>div:not(.publicPayDivider){display:flex;justify-content:space-between;gap:18px;padding:8px 0}.publicPayBreakdown span{color:#a9bdd2}.publicPayBreakdown b{text-align:right;font-weight:700}.publicJourney b{max-width:68%}.publicPayDivider{height:1px;background:rgba(177,203,229,.16);margin:6px 0}.publicPayGrandTotal{margin:6px -6px -4px;padding:13px 11px!important;background:rgba(48,112,174,.22);border-radius:12px}.publicPayGrandTotal span,.publicPayGrandTotal b{color:#fff;font-size:18px;font-weight:800}.publicPayTrust{margin:14px 2px;display:flex;gap:11px;align-items:flex-start}.publicPayTrust>svg{color:#38ddb8;flex:0 0 auto}.publicPayTrust div{display:flex;flex-direction:column;gap:3px}.publicPayTrust b{color:#5ce4ca}.publicPayTrust span{font-size:12px;color:#9dafc4;line-height:1.45}.publicPayButton{width:100%;border:0;border-radius:16px;padding:17px 20px;background:linear-gradient(90deg,#1580ff,#24cfd6);box-shadow:0 14px 30px rgba(18,132,229,.27);color:#fff;font-size:19px;font-weight:900;display:flex;align-items:center;justify-content:center;gap:12px;cursor:pointer}.publicPayButton:disabled{opacity:.6;cursor:not-allowed}.publicPayButton svg{width:21px}.publicPayConsent{text-align:center;color:#8fa4bb;font-size:12px;line-height:1.5;margin:12px 22px}.publicPayFooter{text-align:center;padding:24px 0 6px;color:#647c96;font-size:11px;letter-spacing:.08em;text-transform:uppercase}.publicPayComplete{margin-top:28px;padding:34px 22px;text-align:center;border-radius:22px;background:rgba(19,52,71,.88);border:1px solid rgba(56,221,184,.28)}.publicPayComplete>svg{width:54px;height:54px;color:#45ddb8}.publicPayComplete span{display:block;margin-top:14px;font-size:12px;letter-spacing:.12em;color:#6ee1c6;font-weight:800}.publicPayComplete h1{font-size:48px;margin:8px 0}.publicPayComplete p{color:#b8cada}.publicPayComplete small{color:#8198b0}.publicPayComplete.cancelled{border-color:rgba(255,174,83,.3)}.publicPayComplete.cancelled>svg{color:#ffb15e}.publicPayError,.publicPayLoading{text-align:center;padding:50px 20px;color:#c7d8e9}.publicPayError>svg{width:48px;height:48px;color:#ffad63}.publicPayLoading{display:flex;justify-content:center;gap:10px;align-items:center}
 @media(max-width:1150px){.customerPayStats{grid-template-columns:repeat(3,1fr)}.customerPayGrid{grid-template-columns:1fr}.customerPaymentTableHead,.customerPaymentAdminRow{grid-template-columns:1fr 1.1fr .8fr .5fr auto}}
 @media(max-width:720px){.customerPayStats{grid-template-columns:1fr 1fr}.customerFormGrid{grid-template-columns:1fr}.customerPaymentTableHead{display:none}.customerPaymentAdminRow{grid-template-columns:1fr;gap:8px;border:1px solid #e5ebf2;border-radius:14px;margin-bottom:10px}.customerPaymentRowActions{justify-content:flex-start}.customerPayHero{padding:20px}.customerPayHeroIcon{display:none}.publicPayPage{padding-left:12px;padding-right:12px}.publicPayTotal{padding:20px}.publicPayTotal h1{font-size:43px}}
+
+.mondayFinanceSummary{
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  min-width:720px;
+}
+
+.mondayFinanceRow{
+  display:grid;
+  grid-template-columns:1.15fr repeat(4,1fr);
+  gap:8px;
+}
+
+.mondayFinanceRow>div,
+.mondayFinanceOther>div{
+  background:#f7f9fc;
+  border:1px solid #e6ebf2;
+  border-radius:12px;
+  padding:10px 12px;
+  min-width:0;
+}
+
+.mondayFinanceRow span,
+.mondayFinanceOther span{
+  display:block;
+  font-size:11px;
+  color:#718096;
+  margin-bottom:3px;
+}
+
+.mondayFinanceRow b,
+.mondayFinanceOther b{
+  display:block;
+  font-size:16px;
+  color:#172033;
+}
+
+.mondayFinanceLabel{
+  background:#eef5ff!important;
+}
+
+.mondayFinanceLabel span{
+  font-size:10px;
+  letter-spacing:.12em;
+  font-weight:800;
+  color:#2563eb;
+}
+
+.mondayFinanceLabel b{
+  font-size:14px;
+}
+
+.mondayFinanceRow.incoming .mondayFinanceLabel{
+  background:#fff3f3!important;
+}
+
+.mondayFinanceRow.incoming .mondayFinanceLabel span{
+  color:#dc2626;
+}
+
+.mondayFinanceOther{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:8px;
+}
+
+.mondayFinanceOther b{
+  font-size:15px;
+}
+
+.mondayFinanceOther small{
+  display:block;
+  margin-top:2px;
+  color:#718096;
+  font-size:11px;
+}
+
+@media(max-width:1100px){
+  .mondayFinanceSummary{
+    min-width:0;
+    width:100%;
+  }
+
+  .mondayFinanceRow{
+    grid-template-columns:1fr 1fr;
+  }
+
+  .mondayFinanceLabel{
+    grid-column:1/-1;
+  }
+
+  .mondayFinanceOther{
+    grid-template-columns:1fr;
+  }
+}
