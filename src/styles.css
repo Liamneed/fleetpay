@@ -3968,3 +3968,25 @@ body {
     min-width:900px;
   }
 }
+
+.transactionSearch{
+  display:grid;
+  grid-template-columns:auto 1fr auto;
+  align-items:center;
+  gap:8px;
+}
+
+.transactionSearch button{
+  border:0;
+  background:#172033;
+  color:#fff;
+  min-height:38px;
+  padding:0 14px;
+  border-radius:9px;
+  font-weight:700;
+  cursor:pointer;
+}
+
+.transactionSearch button:hover{
+  background:#0f172a;
+}

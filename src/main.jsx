@@ -257,7 +257,10 @@ function AdminApp(){
     limit:'500',
     q:txQ,
     type:txType,
-    status:txStatus
+    status:txStatus,
+    category:txCategory,
+    dateFrom:txDateFrom,
+    dateTo:txDateTo
    });
    jobs.push(
     api('/api/admin/transactions?'+p.toString()).then(j=>setTransactions(j.transactions||[]))
@@ -293,7 +296,7 @@ function AdminApp(){
    window.removeEventListener('focus',refresh);
    document.removeEventListener('visibilitychange',onVisibility);
   };
- },[token,view,txQ,txType,txStatus]);
+ },[token,view,txQ,txType,txStatus,txCategory,txDateFrom,txDateTo]);
 
  useEffect(()=>{if(token&&view==='transactions')loadTransactions()},[txType,txStatus,txCategory,txDateFrom,txDateTo]);
  const isAdmin=me?.role==='administrator',canMoney=['administrator','finance'].includes(me?.role),canOffice=['administrator','finance','office'].includes(me?.role);
