@@ -1599,7 +1599,137 @@ app.post('/api/admin/mfa/recovery/complete',(req,res)=>{
 
 app.get('/api/admin/me',adminAuth,(req,res)=>{const u=db.prepare('SELECT * FROM staff_users WHERE id=?').get(req.auth.staffId);if(!u)return res.status(404).json({error:'Office user not found'});res.json(staffSafe(u))});
 app.get('/api/admin/staff',adminAuth,requireStaffRole('administrator'),(req,res)=>res.json({staff:db.prepare('SELECT * FROM staff_users ORDER BY name,email').all().map(staffSafe)}));
-app.post('/api/admin/staff',adminAuth,requireStaffRole('administrator'),(req,res)=>{try{const email=safeEmail(req.body.email),name=String(req.body.name||'').trim(),role=String(req.body.role||'office'),password=String(req.body.password||'');if(!email||!name||password.length<10)return res.status(400).json({error:'Name, email and a password of at least 10 characters are required'});if(!['administrator','finance','office','readonly'].includes(role))return res.status(400).json({error:'Invalid role'});if(db.prepare('SELECT id FROM staff_users WHERE email=?').get(email))return res.status(409).json({error:'An office user already exists with this email'});const hp=hashPassword(password),now=new Date().toISOString(),staffId=id('staff');db.prepare('INSERT INTO staff_users(id,email,name,role,password_hash,password_salt,mfa_enabled,active,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(staffId,email,name,role,hp.hash,hp.salt,0,1,now,now);audit(req,'staff',req.auth.email,'office_user_created','staff_user',staffId,{email,name,role});res.json({staff:staffSafe(db.prepare('SELECT * FROM staff_users WHERE id=?').get(staffId))})}catch(e){res.status(500).json({error:e.message})}});
+app.post('/api/admin/staff',adminAuth,requireStaffRole('administrator'),async(req,res)=>{
+ try{
+  const email=safeEmail(req.body.email);
+  const name=String(req.body.name||'').trim();
+  const role=String(req.body.role||'office');
+  const password=String(req.body.password||'');
+
+  if(!email||!name||password.length<10){
+   return res.status(400).json({error:'Name, email and a password of at least 10 characters are required'});
+  }
+
+  if(!['administrator','finance','office','readonly'].includes(role)){
+   return res.status(400).json({error:'Invalid role'});
+  }
+
+  if(db.prepare('SELECT id FROM staff_users WHERE email=?').get(email)){
+   return res.status(409).json({error:'An office user already exists with this email'});
+  }
+
+  const hp=hashPassword(password);
+  const now=new Date().toISOString();
+  const staffId=id('staff');
+
+  db.prepare(`
+   INSERT INTO staff_users(
+    id,email,name,role,password_hash,password_salt,
+    mfa_enabled,active,created_at,updated_at
+   ) VALUES(?,?,?,?,?,?,?,?,?,?)
+  `).run(
+   staffId,email,name,role,hp.hash,hp.salt,
+   0,1,now,now
+  );
+
+  audit(
+   req,
+   'staff',
+   req.auth.email,
+   'office_user_created',
+   'staff_user',
+   staffId,
+   {email,name,role}
+  );
+
+  let inviteEmail={sent:false};
+
+  try{
+   const html=`
+    <div style="margin:0;padding:28px 14px;background:#f3f6f5;font-family:Arial,Helvetica,sans-serif;color:#172033">
+     <div style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:18px;overflow:hidden;border:1px solid #e4e9e7">
+      <div style="background:#173b32;padding:24px 28px;color:#ffffff">
+       <div style="font-size:12px;font-weight:700;letter-spacing:1.5px;opacity:.8">FLEETPAY</div>
+       <div style="font-size:25px;font-weight:700;margin-top:7px">Your FleetPay account is ready</div>
+      </div>
+
+      <div style="padding:28px">
+       <p style="margin:0 0 18px;font-size:16px;line-height:1.6">Hello ${String(name).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))},</p>
+
+       <p style="font-size:15px;line-height:1.65;color:#40504a">
+        An administrator has created a FleetPay Office account for you.
+       </p>
+
+       <div style="background:#f7f9f8;border:1px solid #e7ece9;border-radius:14px;padding:18px;margin:22px 0">
+        <div style="font-size:13px;color:#66736f;margin-bottom:6px">ACCOUNT EMAIL</div>
+        <div style="font-size:16px;font-weight:700">${email}</div>
+       </div>
+
+       <p style="font-size:15px;line-height:1.65;color:#40504a">
+        Use the temporary password provided to you separately by your administrator.
+        For security, your temporary password is not included in this email.
+       </p>
+
+       <p style="font-size:15px;line-height:1.65;color:#40504a">
+        When you first sign in, FleetPay will require you to set up authenticator-based multi-factor authentication.
+       </p>
+
+       <div style="text-align:center;margin:28px 0">
+        <a href="${PUBLIC_BASE_URL}" style="display:inline-block;background:#24845b;color:#ffffff;text-decoration:none;font-size:16px;font-weight:700;padding:14px 26px;border-radius:10px">
+         Sign in to FleetPay
+        </a>
+       </div>
+
+       <p style="margin:24px 0 0;font-size:12px;line-height:1.55;color:#7a8581;text-align:center">
+        If you were not expecting this account, please contact your FleetPay administrator.
+       </p>
+      </div>
+     </div>
+    </div>`;
+
+   const out=await sendEmail(
+    email,
+    'Your FleetPay Office account is ready',
+    html
+   );
+
+   if(out.sent){
+    inviteEmail={sent:true,provider:out.provider||'',id:out.id||''};
+
+    logCommunication({
+     channel:'email',
+     recipient:email,
+     templateKey:'office_user_welcome',
+     entityType:'staff_user',
+     entityId:staffId,
+     status:'sent',
+     providerRef:out.id||out.provider||''
+    });
+   }
+  }catch(e){
+   inviteEmail={sent:false,error:e.message};
+
+   logCommunication({
+    channel:'email',
+    recipient:email,
+    templateKey:'office_user_welcome',
+    entityType:'staff_user',
+    entityId:staffId,
+    status:'failed',
+    error:e.message
+   });
+
+   console.error('[FleetPay] Office welcome email failed',e);
+  }
+
+  res.json({
+   staff:staffSafe(db.prepare('SELECT * FROM staff_users WHERE id=?').get(staffId)),
+   inviteEmail
+  });
+ }catch(e){
+  res.status(500).json({error:e.message});
+ }
+});
 app.patch('/api/admin/staff/:id',adminAuth,requireStaffRole('administrator'),(req,res)=>{const u=db.prepare('SELECT * FROM staff_users WHERE id=?').get(req.params.id);if(!u)return res.status(404).json({error:'Office user not found'});const role='role'in req.body?String(req.body.role):u.role,active='active'in req.body?(req.body.active?1:0):u.active;if(!['administrator','finance','office','readonly'].includes(role))return res.status(400).json({error:'Invalid role'});if(u.id===req.auth.staffId&&!active)return res.status(400).json({error:'You cannot disable your own account'});db.prepare('UPDATE staff_users SET role=?,active=?,updated_at=? WHERE id=?').run(role,active,new Date().toISOString(),u.id);audit(req,'staff',req.auth.email,'office_user_updated','staff_user',u.id,{role,active:Boolean(active)});res.json({staff:staffSafe(db.prepare('SELECT * FROM staff_users WHERE id=?').get(u.id))})});
 
 
