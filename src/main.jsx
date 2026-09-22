@@ -191,7 +191,14 @@ function AdminApp(){
  const loadOutstanding=()=>safeLoad(async()=>setOutstanding((await api('/api/admin/outstanding-payments')).payments||[]));
  const loadFees=()=>safeLoad(async()=>setFees(await api('/api/admin/fees')));
  const loadEarlySummary=()=>safeLoad(async()=>setEarlySummary(await api('/api/admin/early-summary')));
- const loadCustomerAdmin=()=>safeLoad(async()=>setCustomerAdmin(await api('/api/admin/customer-payments')));
+ const applyCustomerAdminData=j=>{
+  setCustomerAdmin(j);
+  setSelectedCustomerPayment(prev=>{
+   if(!prev)return prev;
+   return (j?.payments||[]).find(x=>String(x.id)===String(prev.id))||prev;
+  });
+ };
+ const loadCustomerAdmin=()=>safeLoad(async()=>applyCustomerAdminData(await api('/api/admin/customer-payments')));
  const loadDriverUsers=()=>safeLoad(async()=>setDriverUsers(await api('/api/admin/users')));
  const loadStaff=()=>safeLoad(async()=>setStaff((await api('/api/admin/staff')).staff||[]));
  const loadSecurity=()=>safeLoad(async()=>setSecurityLogs((await api('/api/admin/security')).logs||[]));
@@ -228,7 +235,7 @@ function AdminApp(){
    })
   ];
 
-  if(view==='customerPayments'){jobs.push(api('/api/admin/customer-payments').then(setCustomerAdmin));}
+  if(view==='customerPayments'){jobs.push(api('/api/admin/customer-payments').then(applyCustomerAdminData));}
 
   if(view==='monday'){
    jobs.push(
@@ -410,6 +417,47 @@ function AdminApp(){
  async function updateStaff(u,changes){try{await api(`/api/admin/staff/${u.id}`,{method:'PATCH',body:JSON.stringify(changes)});await loadStaff()}catch(e){alert(e.message)}}
  async function setApproval(u,approved){try{await api(`/api/admin/users/${u.id}`,{method:'PATCH',body:JSON.stringify({approved})});await loadDriverUsers()}catch(e){alert(e.message)}}
  const statusTone=s=>['paid','completed','approved','sent','invoiced'].includes(String(s))?'good':['failed','declined','overdue','cancelled'].includes(String(s))?'bad':'warn';
+
+ const customerPaymentStatus=x=>x?.paymentStatus||x?.status||'open';
+ const customerJobStatus=x=>x?.jobStatus||'';
+ const customerSettlementStatus=x=>x?.driverSettlementStatus||'not_ready';
+
+ const customerPaymentLabel=s=>({
+  open:'Awaiting payment',
+  paid:'Paid',
+  cancelled:'Cancelled',
+  refunded:'Refunded'
+ }[s]||String(s||'').replaceAll('_',' '));
+
+ const customerJobLabel=s=>({
+  awaiting_payment:'Awaiting payment',
+  release_pending:'Release pending',
+  ready:'Ready',
+  dispatched:'Dispatched',
+  completed:'Completed',
+  no_fare:'No Fare',
+  cancelled:'Cancelled',
+  manual:'Manual'
+ }[s]||String(s||'').replaceAll('_',' '));
+
+ const customerSettlementLabel=s=>({
+  not_ready:'Not ready',
+  review:'Review required',
+  approved:'Approved',
+  paid:'Paid',
+  held:'Held'
+ }[s]||String(s||'').replaceAll('_',' '));
+
+ const customerJobTone=s=>
+  s==='completed'||s==='ready'?'good':
+  s==='cancelled'||s==='no_fare'?'bad':
+  s==='dispatched'?'neutral':
+  'warn';
+
+ const customerSettlementTone=s=>
+  s==='approved'||s==='paid'?'good':
+  s==='review'||s==='held'?'warn':
+  'neutral';
  async function resetDemo(){if(!confirm('Reset Demo Lab back to its original made-up data?'))return;try{setDemo(await api('/api/admin/demo/reset',{method:'POST'}))}catch(e){alert(e.message)}}
  async function demoMondayDecision(x,status){try{setDemo(await api(`/api/admin/demo/monday/${x.id}`,{method:'POST',body:JSON.stringify({status,reason:status==='excluded'?'Excluded during demonstration':''})}))}catch(e){alert(e.message)}}
  async function demoApproveAll(){try{setDemo(await api('/api/admin/demo/monday/approve-all',{method:'POST'}))}catch(e){alert(e.message)}}
@@ -641,7 +689,13 @@ function AdminApp(){
         <option value="all">All statuses</option>
         <option value="open">Awaiting payment</option>
         <option value="paid">Paid</option>
+        <option value="release_pending">Release pending</option>
+        <option value="ready">Ready</option>
+        <option value="dispatched">Dispatched</option>
+        <option value="completed">Completed</option>
+        <option value="no_fare">No Fare</option>
         <option value="cancelled">Cancelled</option>
+        <option value="review">Settlement review</option>
         <option value="refunded">Refunded</option>
        </select>
 
@@ -670,10 +724,18 @@ function AdminApp(){
          {(customerAdmin.payments||[])
           .filter(x=>{
 
-           if(
-            customerPayStatus!=='all' &&
-            x.status!==customerPayStatus
-           ) return false;
+           if(customerPayStatus!=='all'){
+            const lifecycleStatuses=[
+             x.status,
+             customerPaymentStatus(x),
+             customerJobStatus(x),
+             customerSettlementStatus(x)
+            ].filter(Boolean);
+
+            if(!lifecycleStatuses.includes(customerPayStatus)){
+             return false;
+            }
+           }
 
            const search=customerPayQ.trim().toLowerCase();
 
@@ -793,19 +855,36 @@ function AdminApp(){
 
 
             <td>
-             <Pill
-              tone={
-               x.status==='paid'
-                ? 'good'
-                : x.status==='cancelled'
-                ? 'bad'
-                : x.status==='refunded'
-                ? 'neutral'
-                : 'warn'
+             <div className="customerLifecycleBadges">
+              <Pill
+               tone={
+                customerPaymentStatus(x)==='paid'
+                 ? 'good'
+                 : customerPaymentStatus(x)==='cancelled'
+                 ? 'bad'
+                 : customerPaymentStatus(x)==='refunded'
+                 ? 'neutral'
+                 : 'warn'
+               }
+              >
+               {customerPaymentLabel(customerPaymentStatus(x))}
+              </Pill>
+
+              {customerJobStatus(x) &&
+               customerJobStatus(x)!=='manual' &&
+               !(
+                customerPaymentStatus(x)==='open' &&
+                customerJobStatus(x)==='awaiting_payment'
+               ) &&
+               <Pill tone={customerJobTone(customerJobStatus(x))}>
+                {customerJobLabel(customerJobStatus(x))}
+               </Pill>
               }
-             >
-              {x.status}
-             </Pill>
+
+              {customerSettlementStatus(x)==='review'&&
+               <Pill tone="warn">Review</Pill>
+              }
+             </div>
             </td>
 
 
@@ -821,10 +900,18 @@ function AdminApp(){
          {(customerAdmin.payments||[])
           .filter(x=>{
 
-           if(
-            customerPayStatus!=='all' &&
-            x.status!==customerPayStatus
-           ) return false;
+           if(customerPayStatus!=='all'){
+            const lifecycleStatuses=[
+             x.status,
+             customerPaymentStatus(x),
+             customerJobStatus(x),
+             customerSettlementStatus(x)
+            ].filter(Boolean);
+
+            if(!lifecycleStatuses.includes(customerPayStatus)){
+             return false;
+            }
+           }
 
            const search=customerPayQ.trim().toLowerCase();
 
@@ -1187,19 +1274,32 @@ function AdminApp(){
             : 'Manual payment'}
           </h2>
 
-          <Pill
-           tone={
-            selectedCustomerPayment.status==='paid'
-             ? 'good'
-             : selectedCustomerPayment.status==='cancelled'
-             ? 'bad'
-             : selectedCustomerPayment.status==='refunded'
-             ? 'neutral'
-             : 'warn'
+          <div className="customerDrawerLifecycleBadges">
+           <Pill
+            tone={
+             customerPaymentStatus(selectedCustomerPayment)==='paid'
+              ? 'good'
+              : customerPaymentStatus(selectedCustomerPayment)==='cancelled'
+              ? 'bad'
+              : customerPaymentStatus(selectedCustomerPayment)==='refunded'
+              ? 'neutral'
+              : 'warn'
+            }
+           >
+            {customerPaymentLabel(customerPaymentStatus(selectedCustomerPayment))}
+           </Pill>
+
+           {customerJobStatus(selectedCustomerPayment)&&
+            customerJobStatus(selectedCustomerPayment)!=='manual'&&
+            <Pill tone={customerJobTone(customerJobStatus(selectedCustomerPayment))}>
+             {customerJobLabel(customerJobStatus(selectedCustomerPayment))}
+            </Pill>
            }
-          >
-           {selectedCustomerPayment.status}
-          </Pill>
+
+           {customerSettlementStatus(selectedCustomerPayment)==='review'&&
+            <Pill tone="warn">Review required</Pill>
+           }
+          </div>
          </div>
 
         </div>
@@ -1222,6 +1322,20 @@ function AdminApp(){
 
         </div>
 
+
+        {customerSettlementStatus(selectedCustomerPayment)==='review'&&
+         <div className="customerLifecycleWarning">
+          <AlertTriangle/>
+          <div>
+           <b>Driver settlement review required</b>
+           <span>
+            The customer payment remains paid, but this job ended as {
+             customerJobLabel(customerJobStatus(selectedCustomerPayment))
+            }. Review the driver payment before settlement.
+           </span>
+          </div>
+         </div>
+        }
 
         <div className="customerDetailSection">
          <span className="customerDetailTitle">
@@ -1295,6 +1409,35 @@ function AdminApp(){
          </div>
         </div>
 
+
+        <div className="customerDetailSection customerLifecycleSection">
+         <span className="customerDetailTitle">
+          STATUS & SETTLEMENT
+         </span>
+
+         <div className="detailList">
+          <div>
+           <span>Payment status</span>
+           <b>{customerPaymentLabel(customerPaymentStatus(selectedCustomerPayment))}</b>
+          </div>
+
+          <div>
+           <span>Job status</span>
+           <b>
+            {customerJobStatus(selectedCustomerPayment)
+             ? customerJobLabel(customerJobStatus(selectedCustomerPayment))
+             : '—'}
+           </b>
+          </div>
+
+          <div>
+           <span>Driver settlement</span>
+           <b>
+            {customerSettlementLabel(customerSettlementStatus(selectedCustomerPayment))}
+           </b>
+          </div>
+         </div>
+        </div>
 
         <div className="customerDetailSection">
          <span className="customerDetailTitle">

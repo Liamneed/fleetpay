@@ -4586,3 +4586,54 @@ body {
     min-width:1050px;
   }
 }
+
+/* Customer payment lifecycle */
+.customerLifecycleBadges,
+.customerDrawerLifecycleBadges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.customerDrawerLifecycleBadges {
+  margin-top: 8px;
+}
+
+.customerLifecycleWarning {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin: 16px 0;
+  padding: 14px 16px;
+  border: 1px solid rgba(217, 119, 6, .22);
+  border-radius: 12px;
+  background: rgba(245, 158, 11, .08);
+}
+
+.customerLifecycleWarning > svg {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.customerLifecycleWarning div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.customerLifecycleWarning b {
+  font-size: 13px;
+}
+
+.customerLifecycleWarning span {
+  font-size: 12px;
+  line-height: 1.45;
+  opacity: .78;
+}
+
+.customerLifecycleSection .detailList b {
+  text-transform: none;
+}
