@@ -833,7 +833,14 @@ app.post(['/api/webhooks/autocab/booking-modified','/modified'],async(req,res)=>
 
   const pickup=b.Pickup||b.pickup||{};
   const destination=b.Destination||b.destination||{};
-  const driver=b.Driver||b.driver||b.AssignedDriver||b.assignedDriver||{};
+  const driver=
+   b.DriverDetails?.Driver ||
+   b.driverDetails?.driver ||
+   b.Driver ||
+   b.driver ||
+   b.AssignedDriver ||
+   b.assignedDriver ||
+   {};
 
   const bookingId=String(
    b.Id ??
@@ -936,6 +943,9 @@ app.post(['/api/webhooks/autocab/booking-modified','/modified'],async(req,res)=>
    driver.fullName ??
    driver.Name ??
    driver.name ??
+   (
+    `${driver.Forename ?? driver.forename ?? ''} ${driver.Surname ?? driver.surname ?? ''}`.trim()
+   ) ??
    b.DriverName ??
    b.driverName ??
    ''
