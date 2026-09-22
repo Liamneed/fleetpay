@@ -36,6 +36,11 @@ const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || `http://localhost:5173`).replace(/\/$/, '');
 const AUTOCAB_ADJUSTMENTS_ENABLED = String(process.env.AUTOCAB_ADJUSTMENTS_ENABLED || 'false').toLowerCase()==='true';
+
+const AUTOCAB_FLEETPAY_CUSTOMER_ID = Number(process.env.AUTOCAB_FLEETPAY_CUSTOMER_ID || 2203);
+const AUTOCAB_FLEETPAY_CUSTOMER_NAME = String(process.env.AUTOCAB_FLEETPAY_CUSTOMER_NAME || 'FleetPay UK');
+const AUTOCAB_FLEETPAY_ACCOUNT_CODE = String(process.env.AUTOCAB_FLEETPAY_ACCOUNT_CODE || 'Fleet');
+const AUTOCAB_FLEETPAY_CAPABILITY_ID = Number(process.env.AUTOCAB_FLEETPAY_CAPABILITY_ID || 39);
 const WISE_API_TOKEN = process.env.WISE_API_TOKEN || '';
 const WISE_ENV = String(process.env.WISE_ENV || 'sandbox').toLowerCase();
 const WISE_PROFILE_ID = process.env.WISE_PROFILE_ID || '';
@@ -558,6 +563,62 @@ app.post('/api/stripe/webhook', express.raw({type:'application/json'}), async (r
             }
           );
         }
+
+        /*
+         * If this is an Autocab-created payment, release the booking
+         * after Stripe payment has been durably recorded.
+         *
+         * This also allows a duplicate Stripe webhook to retry a
+         * booking that is still sitting in release_pending.
+         */
+        const releaseItem=db.prepare(
+          'SELECT * FROM customer_payments WHERE id=?'
+        ).get(customerPaymentId);
+
+        if(
+          releaseItem &&
+          releaseItem.source==='autocab_booking_created' &&
+          releaseItem.payment_status==='paid' &&
+          releaseItem.job_status==='release_pending'
+        ){
+          try{
+            const releaseResult=await releaseFleetPayBooking(customerPaymentId);
+
+            audit(
+              null,
+              'system',
+              'autocab',
+              'customer_payment_booking_released',
+              'customer_payment',
+              customerPaymentId,
+              releaseResult
+            );
+          }catch(e){
+            console.error(
+              `FleetPay Autocab release failed for payment ${customerPaymentId}:`,
+              e.message
+            );
+
+            audit(
+              null,
+              'system',
+              'autocab',
+              'customer_payment_booking_release_failed',
+              'customer_payment',
+              customerPaymentId,
+              {
+                bookingId:releaseItem.booking_id||null,
+                error:e.message
+              }
+            );
+
+            /*
+             * Payment remains PAID and job remains RELEASE_PENDING.
+             * Throw so Stripe retries the webhook.
+             */
+            throw e;
+          }
+        }
       }
 
       /*
@@ -875,10 +936,12 @@ app.post(['/api/webhooks/autocab/booking-created','/created'],async(req,res)=>{
  * operational booking details. Booking ID is the permanent join key.
  *
  * Important:
- * - Does NOT create another payment.
- * - Does NOT alter payment/Stripe status.
- * - Does NOT change fare/fee/total because an existing Stripe Checkout
- *   session may already have been created for the original amount.
+ * - Creates a payment only if BookingCreated arrived before pricing
+ *   and no payment exists yet.
+ * - Never creates a duplicate payment for the same Autocab booking.
+ * - Does NOT alter fare/fee/total once a payment already exists because
+ *   a Stripe Checkout session may already have been created.
+ * - Does NOT alter an existing payment/Stripe status.
  */
 app.post(['/api/webhooks/autocab/booking-modified','/modified'],async(req,res)=>{
  try{
@@ -1063,7 +1126,7 @@ app.post(['/api/webhooks/autocab/booking-modified','/modified'],async(req,res)=>
   let updated=0;
 
   if(bookingId){
-   const payment=db.prepare(`
+   let payment=db.prepare(`
     SELECT *
     FROM customer_payments
     WHERE booking_id=?
@@ -1071,6 +1134,123 @@ app.post(['/api/webhooks/autocab/booking-modified','/modified'],async(req,res)=>
     ORDER BY created_at DESC
     LIMIT 1
    `).get(bookingId);
+
+   /*
+    * A BookingCreated webhook can arrive before Autocab has populated
+    * the final price. If a later BookingModified contains a valid price
+    * and the FleetPay + capability is still present, create the missing
+    * customer payment here.
+    */
+   if(!payment && hasFleetPayCapability(capabilities)){
+    const fareAmount=Number(pricing.Price??pricing.price??0);
+
+    if(Number.isFinite(fareAmount) && fareAmount>0){
+     const feeAmount=customerPaymentFeeFor(fareAmount);
+     const totalAmount=Math.round((fareAmount+feeAmount)*100)/100;
+     const paymentId=id('customerpay');
+
+     db.prepare(`
+      INSERT OR IGNORE INTO customer_payments(
+       id,
+       driver_id,
+       callsign,
+       driver_name,
+       booking_id,
+       fare_amount,
+       fee_amount,
+       total_amount,
+       status,
+       payment_url,
+       payment_method,
+       customer_name,
+       customer_mobile,
+       customer_email,
+       pickup,
+       destination,
+       journey_at,
+       taxi_company,
+       source,
+       created_by,
+       created_at,
+       updated_at
+      )
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+     `).run(
+      paymentId,
+      driverId,
+      callsign||null,
+      driverName||null,
+      bookingId,
+      fareAmount,
+      feeAmount,
+      totalAmount,
+      'open',
+      `${PUBLIC_BASE_URL}/pay/${paymentId}`,
+      paymentMethod||null,
+      passengerName||null,
+      passengerMobile||null,
+      passengerEmail||null,
+      pickupText||null,
+      destinationText||null,
+      journeyAt,
+      getSettings().companyName||'Need-A-Cab',
+      'autocab_booking_created',
+      'autocab_webhook_modified',
+      receivedAt,
+      receivedAt
+     );
+
+     payment=db.prepare(`
+      SELECT *
+      FROM customer_payments
+      WHERE booking_id=?
+        AND source='autocab_booking_created'
+      ORDER BY created_at DESC
+      LIMIT 1
+     `).get(bookingId);
+
+     if(payment && stripe && !payment.provider_session_id){
+      await createStripeCustomerPayment(payment);
+
+      const updatedItem=db.prepare(`
+       SELECT *
+       FROM customer_payments
+       WHERE id=?
+       LIMIT 1
+      `).get(payment.id);
+
+      if(updatedItem){
+       await sendCustomerPaymentCommunications(updatedItem);
+       payment=updatedItem;
+      }
+     }
+    }
+   }
+
+   /*
+    * If the payment row exists but Stripe Checkout creation previously
+    * failed, retry it while the payment is still open.
+    */
+   if(
+    payment &&
+    stripe &&
+    payment.status==='open' &&
+    !payment.provider_session_id
+   ){
+    await createStripeCustomerPayment(payment);
+
+    const refreshedPayment=db.prepare(`
+     SELECT *
+     FROM customer_payments
+     WHERE id=?
+     LIMIT 1
+    `).get(payment.id);
+
+    if(refreshedPayment){
+     await sendCustomerPaymentCommunications(refreshedPayment);
+     payment=refreshedPayment;
+    }
+   }
 
    if(payment){
     const result=db.prepare(`
@@ -1597,6 +1777,102 @@ function audit(req,actorType,actorId,action,entityType=null,entityId=null,detail
 const headers=()=>({'Content-Type':'application/json','Cache-Control':'no-cache','Ocp-Apim-Subscription-Key':API_KEY});
 async function putJson(url,body){if(!API_KEY)throw new Error('AUTOCAB_API_KEY is not configured');const r=await fetch(url,{method:'PUT',headers:headers(),body:JSON.stringify(body)});const text=await r.text();if(!r.ok)throw new Error(`Autocab ${r.status}: ${text.slice(0,500)}`);try{return text?JSON.parse(text):{ok:true}}catch{return {ok:true,raw:text}}}
 async function postJson(url,body){if(!API_KEY)throw new Error('AUTOCAB_API_KEY is not configured');const r=await fetch(url,{method:'POST',headers:headers(),body:JSON.stringify(body)});if(!r.ok)throw new Error(`Autocab ${r.status}: ${(await r.text()).slice(0,300)}`);return r.json()}
+
+async function getJson(url){
+ if(!API_KEY)throw new Error('AUTOCAB_API_KEY is not configured');
+ const r=await fetch(url,{method:'GET',headers:headers()});
+ const text=await r.text();
+ if(!r.ok)throw new Error(`Autocab ${r.status}: ${text.slice(0,500)}`);
+ try{return text?JSON.parse(text):{}}
+ catch{throw new Error(`Autocab returned invalid JSON: ${text.slice(0,300)}`)}
+}
+
+async function releaseFleetPayBooking(paymentId){
+ const item=db.prepare('SELECT * FROM customer_payments WHERE id=?').get(paymentId);
+ if(!item)throw new Error(`Customer payment ${paymentId} not found`);
+
+ if(item.source!=='autocab_booking_created'){
+  return {ok:true,skipped:true,reason:'not_autocab'};
+ }
+
+ if(item.payment_status!=='paid' && item.status!=='paid'){
+  return {ok:true,skipped:true,reason:'not_paid'};
+ }
+
+ if(['completed','cancelled','no_fare'].includes(String(item.job_status||''))){
+  return {ok:true,skipped:true,reason:`terminal_${item.job_status}`};
+ }
+
+ if(item.job_status==='ready' || item.job_status==='dispatched'){
+  return {ok:true,skipped:true,reason:item.job_status};
+ }
+
+ const bookingId=String(item.booking_id||'').trim();
+ if(!bookingId)throw new Error(`Customer payment ${paymentId} has no Autocab booking ID`);
+
+ const fareAmount=Math.round(Number(item.fare_amount||0)*100)/100;
+ if(!Number.isFinite(fareAmount) || fareAmount<=0){
+  throw new Error(`Invalid fare amount for booking ${bookingId}: ${item.fare_amount}`);
+ }
+
+ const url=`${BASE_URL}/booking/v1/booking/${encodeURIComponent(bookingId)}`;
+ const booking=await getJson(url);
+
+ if(!booking || typeof booking!=='object'){
+  throw new Error(`Autocab booking ${bookingId} returned no booking object`);
+ }
+
+ if(!booking.pricing || typeof booking.pricing!=='object'){
+  throw new Error(`Autocab booking ${bookingId} has no pricing object`);
+ }
+
+ /*
+  * FleetPay service fee is NOT written to Autocab.
+  * Autocab receives the journey fare only.
+  */
+ booking.customerId=AUTOCAB_FLEETPAY_CUSTOMER_ID;
+ booking.customerDisplayName=AUTOCAB_FLEETPAY_CUSTOMER_NAME;
+ booking.accountCode=AUTOCAB_FLEETPAY_ACCOUNT_CODE;
+ booking.hasSpecialAccount=false;
+ booking.paymentType='Account';
+ booking.paymentMethod='Cash';
+
+ booking.pricing.cost=fareAmount;
+ booking.pricing.price=fareAmount;
+ booking.pricing.accountAmount=fareAmount;
+ booking.pricing.cardAmount=0;
+ booking.pricing.cashAmount=0;
+
+ booking.capabilities=(booking.capabilities||[]).filter(cap=>{
+  const capabilityId=Number(cap?.id ?? cap?.Id ?? cap);
+  return capabilityId!==AUTOCAB_FLEETPAY_CAPABILITY_ID;
+ });
+
+ const response=await postJson(url,booking);
+
+ /*
+  * A terminal webhook may have arrived while the Autocab request
+  * was in flight, so only promote release_pending -> ready.
+  */
+ const now=new Date().toISOString();
+ const result=db.prepare(`
+  UPDATE customer_payments
+  SET job_status='ready',
+      updated_at=?
+  WHERE id=?
+    AND payment_status='paid'
+    AND job_status='release_pending'
+ `).run(now,item.id);
+
+ return {
+  ok:true,
+  bookingId,
+  fareAmount,
+  autocabResponse:response,
+  markedReady:Number(result.changes||0)>0
+ };
+}
+
 async function getActiveDrivers(){
  const groups=await Promise.all(COMPANY_IDS.map(async companyId=>{
   const drivers=await postJson(`${BASE_URL}/driver/v1/drivers/active`,{CompanyId:companyId,ActiveStatusType:'Active'});
