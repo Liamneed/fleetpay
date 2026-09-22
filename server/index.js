@@ -1452,7 +1452,7 @@ app.post('/api/webhooks/twilio/sms-status',express.urlencoded({extended:false}),
  }
 });
 
-app.get('/api/admin/twilio/balance',requireAdmin,async(req,res)=>{
+app.get('/api/admin/twilio/balance',adminAuth,async(req,res)=>{
  try{
   const result=await getTwilioBalance();
 
