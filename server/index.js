@@ -1328,11 +1328,70 @@ async function sendCustomerPaymentCommunications(item){
  if(item.customer_email && !alreadySent('email')){
   try{
    const subject=templateText(settings.customerPaymentEmailSubject,vars);
-   const body=templateText(settings.customerPaymentEmailBody,vars);
+   const esc=(v='')=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+   const pickup=esc(item.pickup||'');
+   const destination=esc(item.destination||'');
+   const bookingId=esc(vars.bookingId);
+   const customer=esc(vars.customer);
+   const paymentLink=esc(vars.paymentLink);
+   const fare=esc(vars.fare);
+   const fee=esc(vars.fee);
+   const total=esc(vars.total);
+
+   const html=`
+    <div style="margin:0;padding:28px 14px;background:#f3f6f5;font-family:Arial,Helvetica,sans-serif;color:#172033">
+     <div style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:18px;overflow:hidden;border:1px solid #e4e9e7">
+      <div style="background:#173b32;padding:24px 28px;color:#ffffff">
+       <div style="font-size:12px;font-weight:700;letter-spacing:1.5px;opacity:.8">FLEETPAY</div>
+       <div style="font-size:25px;font-weight:700;margin-top:7px">Your taxi payment is ready</div>
+      </div>
+
+      <div style="padding:28px">
+       <p style="margin:0 0 20px;font-size:16px;line-height:1.6">Hello ${customer},</p>
+
+       <div style="background:#f7f9f8;border:1px solid #e7ece9;border-radius:14px;padding:20px;margin-bottom:22px">
+        <div style="font-size:13px;color:#66736f;margin-bottom:6px">TOTAL TO PAY</div>
+        <div style="font-size:34px;font-weight:800;color:#173b32">£${total}</div>
+       </div>
+
+       ${(pickup||destination)?`
+       <div style="margin-bottom:22px">
+        <div style="font-size:13px;font-weight:700;color:#66736f;margin-bottom:9px">JOURNEY</div>
+        ${pickup?`<div style="font-size:15px;margin-bottom:6px"><strong>From:</strong> ${pickup}</div>`:''}
+        ${destination?`<div style="font-size:15px"><strong>To:</strong> ${destination}</div>`:''}
+       </div>`:''}
+
+       <table role="presentation" style="width:100%;border-collapse:collapse;margin-bottom:24px;font-size:15px">
+        <tr>
+         <td style="padding:9px 0;border-bottom:1px solid #edf0ef;color:#66736f">Journey fare</td>
+         <td style="padding:9px 0;border-bottom:1px solid #edf0ef;text-align:right;font-weight:700">£${fare}</td>
+        </tr>
+        <tr>
+         <td style="padding:9px 0;border-bottom:1px solid #edf0ef;color:#66736f">FleetPay service fee</td>
+         <td style="padding:9px 0;border-bottom:1px solid #edf0ef;text-align:right;font-weight:700">£${fee}</td>
+        </tr>
+       </table>
+
+       <div style="text-align:center;margin:28px 0">
+        <a href="${paymentLink}" style="display:inline-block;background:#24845b;color:#ffffff;text-decoration:none;font-size:17px;font-weight:700;padding:15px 28px;border-radius:10px">Pay £${total} securely</a>
+       </div>
+
+       ${bookingId?`
+       <div style="text-align:center;font-size:12px;color:#7a8581;margin-top:20px">
+        Booking reference: <strong>${bookingId}</strong>
+       </div>`:''}
+
+       <p style="margin:26px 0 0;font-size:12px;line-height:1.55;color:#7a8581;text-align:center">
+        Secure payment powered by FleetPay. If you were not expecting this payment request, please contact your taxi provider.
+       </p>
+      </div>
+     </div>
+    </div>`;
+
    const out=await sendEmail(
     item.customer_email,
     subject,
-    `<div style="font-family:Arial,sans-serif;line-height:1.55;color:#172033">${body.split('\n').map(x=>x?`<p>${x}</p>`:'').join('')}</div>`
+    html
    );
    if(out.sent){
     logCommunication({
