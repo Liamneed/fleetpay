@@ -4440,3 +4440,149 @@ body {
 .customerPaymentTableV2 .statusPill{
   white-space:nowrap;
 }
+
+
+/* CUSTOMER PAYMENTS POLISH V3 */
+
+.customerPaymentsHeader .rowActions{
+  justify-content:flex-end;
+}
+
+/* Search / status proportions */
+.customerPaymentsToolbar{
+  display:grid !important;
+  grid-template-columns:minmax(360px, 1.45fr) minmax(220px, 1fr) !important;
+  gap:10px !important;
+  align-items:center;
+}
+
+/* Put search icon inside field */
+.customerPaymentsSearch{
+  position:relative !important;
+  display:block !important;
+  width:100%;
+}
+
+.customerPaymentsSearch > svg{
+  position:absolute;
+  left:14px;
+  top:50%;
+  transform:translateY(-50%);
+  width:18px;
+  height:18px;
+  z-index:2;
+  pointer-events:none;
+  color:#64748b;
+}
+
+.customerPaymentsSearch input{
+  width:100%;
+  padding-left:42px !important;
+  padding-right:42px !important;
+}
+
+.customerPaymentsSearch .customerSearchClear{
+  position:absolute !important;
+  right:9px;
+  top:50%;
+  transform:translateY(-50%);
+  width:28px !important;
+  height:28px !important;
+  min-height:28px !important;
+  padding:0 !important;
+  display:grid;
+  place-items:center;
+  border:0;
+  background:transparent;
+  color:#64748b;
+  border-radius:7px;
+}
+
+.customerPaymentsSearch .customerSearchClear:hover{
+  background:#eef2f7;
+  color:#172033;
+}
+
+/* Better operational column balance */
+.customerPaymentsTableV2 table{
+  table-layout:fixed;
+  width:100%;
+}
+
+.customerPaymentsTableV2 th:nth-child(1),
+.customerPaymentsTableV2 td:nth-child(1){
+  width:11%;
+}
+
+.customerPaymentsTableV2 th:nth-child(2),
+.customerPaymentsTableV2 td:nth-child(2){
+  width:16%;
+}
+
+.customerPaymentsTableV2 th:nth-child(3),
+.customerPaymentsTableV2 td:nth-child(3){
+  width:12%;
+}
+
+.customerPaymentsTableV2 th:nth-child(4),
+.customerPaymentsTableV2 td:nth-child(4){
+  width:26%;
+}
+
+.customerPaymentsTableV2 th:nth-child(5),
+.customerPaymentsTableV2 td:nth-child(5){
+  width:9%;
+}
+
+.customerPaymentsTableV2 th:nth-child(6),
+.customerPaymentsTableV2 td:nth-child(6){
+  width:7%;
+}
+
+.customerPaymentsTableV2 th:nth-child(7),
+.customerPaymentsTableV2 td:nth-child(7){
+  width:7%;
+}
+
+.customerPaymentsTableV2 th:nth-child(8),
+.customerPaymentsTableV2 td:nth-child(8){
+  width:8%;
+}
+
+.customerPaymentsTableV2 th:nth-child(9),
+.customerPaymentsTableV2 td:nth-child(9){
+  width:4%;
+}
+
+/* Give journey addresses room while keeping rows compact */
+.customerJourneyV2 b,
+.customerJourneyV2 small{
+  display:block;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.customerPaymentsTableV2 td:nth-child(5) b,
+.customerPaymentsTableV2 td:nth-child(5) small{
+  display:block;
+  line-height:1.25;
+}
+
+.customerPaymentsTableV2 td:nth-child(5) small{
+  margin-top:3px;
+}
+
+.customerPaymentRowV2:hover{
+  background:#f7f9fc;
+}
+
+@media(max-width:1100px){
+  .customerPaymentsToolbar{
+    grid-template-columns:1fr !important;
+  }
+
+  .customerPaymentsTableV2 table{
+    min-width:1050px;
+  }
+}

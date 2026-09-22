@@ -568,10 +568,6 @@ function AdminApp(){
       </div>
 
       <div className="rowActions">
-       <button className="secondary" onClick={loadCustomerAdmin}>
-        <RefreshCw/>Refresh
-       </button>
-
        <button
         className="primary"
         onClick={()=>{
@@ -725,7 +721,13 @@ function AdminApp(){
              {x.bookingId
               ? <>
                  <b>{x.bookingId}</b>
-                 <small>Autocab booking</small>
+                 <small>
+                  {x.source==='autocab_booking_created'
+                   ? 'Autocab booking'
+                   : x.source==='office_manual'
+                   ? 'Manual reference'
+                   : 'Booking reference'}
+                 </small>
                 </>
               : <>
                  <b>Manual payment</b>
