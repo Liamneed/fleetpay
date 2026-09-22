@@ -1109,6 +1109,130 @@ app.post(['/api/webhooks/autocab/booking-modified','/modified'],async(req,res)=>
 });
 
 
+
+function storeAutocabJobEvent(raw,eventType){
+ const b=autocabBookingPayload(raw);
+ const pricing=b.Pricing||b.pricing||{};
+ const pickup=b.Pickup||b.pickup||{};
+ const destination=b.Destination||b.destination||{};
+ const capabilities=Array.isArray(b.Capabilities)
+  ? b.Capabilities
+  : (Array.isArray(b.capabilities)?b.capabilities:[]);
+
+ const bookingId=String(
+  b.Id ??
+  b.id ??
+  b.BookingId ??
+  b.bookingId ??
+  b.bookingID ??
+  raw.BookingId ??
+  raw.bookingId ??
+  raw.bookingID ??
+  ''
+ ).trim();
+
+ const receivedAt=new Date().toISOString();
+ const webhookId=id('autocab_booking');
+
+ db.prepare(`
+  INSERT INTO autocab_booking_webhooks(
+   id,event_type,booking_id,company_id,row_version,
+   passenger_name,passenger_mobile,passenger_email,
+   pickup,destination,pickup_due_time,
+   driver_cost,office_price,payment_method,
+   capabilities_json,has_payment_capability,
+   raw_json,status,received_at
+  )
+  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+ `).run(
+  webhookId,
+  eventType,
+  bookingId||null,
+  Number(b.Company?.Id??b.companyId??0)||null,
+  Number(b.RowVersion??b.rowVersion??0)||null,
+  String(b.Name||b.name||b.passengerName||'').trim(),
+  String(b.TelephoneNumber||b.telephoneNumber||b.mobile||b.passengerMobile||'').trim(),
+  String(b.CustomerEmail||b.customerEmail||b.email||'').trim(),
+  String(pickup.Address||pickup.address||pickup.text||pickup.addressText||'').trim(),
+  String(destination.Address||destination.address||destination.text||destination.addressText||'').trim(),
+  b.PickupDueTimeUtc||b.pickupDueTimeUtc||b.PickupDueTime||b.pickupDueTime||null,
+  Number(pricing.Cost??pricing.cost??0),
+  Number(pricing.Price??pricing.price??0),
+  String(b.PaymentMethod||b.paymentMethod||b.PaymentType||b.paymentType||'').trim(),
+  JSON.stringify(capabilities),
+  hasFleetPayCapability(capabilities)?1:0,
+  JSON.stringify(raw),
+  'received',
+  receivedAt
+ );
+
+ return {bookingId,webhookId,receivedAt,b};
+}
+
+app.post(['/api/webhooks/autocab/booking-complete','/complete'],async(req,res)=>{
+ try{
+  const x=storeAutocabJobEvent(req.body||{},'BookingComplete');
+
+  console.log('[FleetPay] Autocab BookingComplete received',{
+   bookingId:x.bookingId||null
+  });
+
+  res.status(200).json({
+   ok:true,
+   received:true,
+   eventType:'BookingComplete',
+   webhookId:x.webhookId,
+   bookingId:x.bookingId||null
+  });
+ }catch(e){
+  console.error('[FleetPay] BookingComplete webhook error',e);
+  res.status(500).json({ok:false,error:'BookingComplete webhook could not be stored'});
+ }
+});
+
+app.post(['/api/webhooks/autocab/booking-nofare','/nofare'],async(req,res)=>{
+ try{
+  const x=storeAutocabJobEvent(req.body||{},'NoFare');
+
+  console.log('[FleetPay] Autocab NoFare received',{
+   bookingId:x.bookingId||null
+  });
+
+  res.status(200).json({
+   ok:true,
+   received:true,
+   eventType:'NoFare',
+   webhookId:x.webhookId,
+   bookingId:x.bookingId||null
+  });
+ }catch(e){
+  console.error('[FleetPay] NoFare webhook error',e);
+  res.status(500).json({ok:false,error:'NoFare webhook could not be stored'});
+ }
+});
+
+app.post(['/api/webhooks/autocab/booking-cancelled','/cancelled'],async(req,res)=>{
+ try{
+  const x=storeAutocabJobEvent(req.body||{},'BookingCancelled');
+
+  console.log('[FleetPay] Autocab BookingCancelled received',{
+   bookingId:x.bookingId||null
+  });
+
+  res.status(200).json({
+   ok:true,
+   received:true,
+   eventType:'BookingCancelled',
+   webhookId:x.webhookId,
+   bookingId:x.bookingId||null
+  });
+ }catch(e){
+  console.error('[FleetPay] BookingCancelled webhook error',e);
+  res.status(500).json({ok:false,error:'BookingCancelled webhook could not be stored'});
+ }
+});
+
+
 function getSettings(){
  const rows=db.prepare('SELECT key,value FROM settings').all(); const out={...defaultSettings};
  for(const r of rows){ try{out[r.key]=JSON.parse(r.value)}catch{out[r.key]=r.value} } return out;
