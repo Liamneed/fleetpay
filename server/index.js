@@ -27,6 +27,10 @@ const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'FleetPay <payments@e
 const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || '';
 const SENDGRID_FROM_EMAIL = process.env.SENDGRID_FROM_EMAIL || '';
 const SENDGRID_FROM_NAME = process.env.SENDGRID_FROM_NAME || 'FleetPay';
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || '';
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || '';
+const TWILIO_MESSAGING_SERVICE_SID = process.env.TWILIO_MESSAGING_SERVICE_SID || '';
+const TWILIO_FROM_NUMBER = process.env.TWILIO_FROM_NUMBER || '';
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || `http://localhost:5173`).replace(/\/$/, '');
@@ -388,6 +392,16 @@ const defaultSettings = {
  smsMethod: 'POST',
  smsAuthHeader: 'Authorization',
  smsBodyTemplate: '{"to":"{mobile}","message":"{message}"}',
+
+ twilioEnabled: true,
+ orionEnabled: true,
+ paymentSmsProvider: 'twilio',
+ generalSmsProvider: 'orion',
+ smsFallbackEnabled: true,
+ twilioLowBalanceAlertsEnabled: true,
+ twilioLowBalanceThreshold: 20,
+ twilioLowBalanceEmail: 'office@needacab247.com',
+
  smtpHost: '',
  smtpPort: 587,
  smtpSecure: false,
@@ -1150,8 +1164,140 @@ async function sendEmail(to,subject,html){
  }
  if(!RESEND_API_KEY||!RESEND_FROM_EMAIL)return {sent:false,provider:'none'};const r=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${RESEND_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({from:RESEND_FROM_EMAIL,to:[to],subject,html})});if(!r.ok)throw new Error(`Email provider error ${r.status}`);const out=await r.json().catch(()=>({}));return {sent:true,provider:'resend',id:out.id||''}
 }
+let twilioClientPromise=null;
+
+async function getTwilioClient(){
+ if(!TWILIO_ACCOUNT_SID||!TWILIO_AUTH_TOKEN)return null;
+ if(!twilioClientPromise){
+  twilioClientPromise=(async()=>{
+   const mod=await import('twilio');
+   const twilio=mod.default||mod;
+   return twilio(TWILIO_ACCOUNT_SID,TWILIO_AUTH_TOKEN);
+  })();
+ }
+ return twilioClientPromise;
+}
+
+async function getTwilioBalance(){
+ const client=await getTwilioClient();
+ if(!client)return {configured:false,balance:null,currency:null};
+
+ const balance=await client.balance.fetch();
+ return {
+  configured:true,
+  balance:Number(balance.balance),
+  currency:String(balance.currency||'').toUpperCase()
+ };
+}
+
+function normaliseSmsNumber(value=''){
+ let n=String(value||'').trim().replace(/[\s()-]/g,'');
+ if(n.startsWith('00'))n='+'+n.slice(2);
+ if(n.startsWith('0'))n='+44'+n.slice(1);
+ return n;
+}
+
+async function sendTwilioSms(to,message,{templateKey='',entityType='',entityId=''}={}){
+ const client=await getTwilioClient();
+ if(!client)throw new Error('Twilio is not configured');
+
+ const recipient=normaliseSmsNumber(to);
+ if(!recipient.startsWith('+'))throw new Error('SMS recipient must be a valid international number');
+
+ const payload={
+  to:recipient,
+  body:String(message||''),
+  statusCallback:`${PUBLIC_BASE_URL}/api/webhooks/twilio/sms-status`
+ };
+
+ if(TWILIO_MESSAGING_SERVICE_SID){
+  payload.messagingServiceSid=TWILIO_MESSAGING_SERVICE_SID;
+ }else if(TWILIO_FROM_NUMBER){
+  payload.from=TWILIO_FROM_NUMBER;
+ }else{
+  throw new Error('Twilio Messaging Service SID or From Number is required');
+ }
+
+ try{
+  const result=await client.messages.create(payload);
+
+  logCommunication({
+   channel:'sms',
+   recipient,
+   templateKey,
+   entityType,
+   entityId,
+   status:'sent',
+   providerRef:result.sid||''
+  });
+
+  return {
+   sent:true,
+   provider:'twilio',
+   sid:result.sid||'',
+   status:result.status||'queued'
+  };
+ }catch(e){
+  logCommunication({
+   channel:'sms',
+   recipient,
+   templateKey,
+   entityType,
+   entityId,
+   status:'failed',
+   error:`Twilio: ${e.message}`
+  });
+  throw e;
+ }
+}
+
 async function sendConfiguredSms(to,message,{templateKey='',entityType='',entityId=''}={}){
  const settings=getSettings(),endpoint=String(settings.smsEndpoint||'').trim();if(!endpoint)throw new Error('SMS endpoint is not configured');const authValue=getSecureSetting('smsAuthValue');const headers={'Content-Type':'application/json'};if(settings.smsAuthHeader&&authValue)headers[String(settings.smsAuthHeader)]=authValue;let bodyText=templateText(settings.smsBodyTemplate||'{"to":"{mobile}","message":"{message}"}',{mobile:to,message});let body;try{body=JSON.stringify(JSON.parse(bodyText))}catch{throw new Error('SMS body template must produce valid JSON')};try{const r=await fetch(endpoint,{method:String(settings.smsMethod||'POST').toUpperCase(),headers,body});const text=await r.text();if(!r.ok)throw new Error(`SMS endpoint ${r.status}: ${text.slice(0,240)}`);logCommunication({channel:'sms',recipient:to,templateKey,entityType,entityId,status:'sent',providerRef:text.slice(0,120)});return {sent:true,response:text}}catch(e){logCommunication({channel:'sms',recipient:to,templateKey,entityType,entityId,status:'failed',error:e.message});throw e}
+}
+
+async function sendSmsByRoute(to,message,{category='general',templateKey='',entityType='',entityId=''}={}){
+ const settings=getSettings();
+
+ const preferred=String(
+  category==='payment'
+   ? settings.paymentSmsProvider||'twilio'
+   : settings.generalSmsProvider||'orion'
+ ).toLowerCase();
+
+ const fallbackEnabled=Boolean(settings.smsFallbackEnabled);
+
+ const providers={
+  twilio:async()=>{
+   if(!settings.twilioEnabled)throw new Error('Twilio SMS is disabled');
+   return sendTwilioSms(to,message,{templateKey,entityType,entityId});
+  },
+  orion:async()=>{
+   if(!settings.orionEnabled)throw new Error('Orion SMS is disabled');
+   return sendConfiguredSms(to,message,{templateKey,entityType,entityId});
+  }
+ };
+
+ const order=
+  preferred==='orion'
+   ? ['orion','twilio']
+   : ['twilio','orion'];
+
+ let firstError=null;
+
+ for(let i=0;i<order.length;i++){
+  if(i>0&&!fallbackEnabled)break;
+
+  const provider=order[i];
+
+  try{
+   const result=await providers[provider]();
+   return {...result,provider};
+  }catch(e){
+   if(!firstError)firstError=e;
+  }
+ }
+
+ throw firstError||new Error('No SMS provider is available');
 }
 
 async function sendCustomerPaymentCommunications(item){
@@ -1213,13 +1359,14 @@ async function sendCustomerPaymentCommunications(item){
   }
  }
 
- if(item.customer_mobile && String(settings.smsEndpoint||'').trim() && !alreadySent('sms')){
+ if(item.customer_mobile && !alreadySent('sms')){
   try{
    const message=templateText(settings.customerPaymentSmsTemplate,vars);
-   await sendConfiguredSms(
+   await sendSmsByRoute(
     item.customer_mobile,
     message,
     {
+     category:'payment',
      templateKey:'customer_payment_link',
      entityType:'customer_payment',
      entityId:item.id
@@ -1239,6 +1386,92 @@ function addBusinessDays(dateStr,days=1){let d=new Date(`${dateStr}T12:00:00Z`),
 function formatRunDate(dateStr){return new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/London',weekday:'long',day:'numeric',month:'short'}).format(new Date(`${dateStr}T12:00:00Z`))}
 function earlyPayoutTiming(settings){const now=londonWindow(),cut=cutoffParts(settings),requestDayAllowed=['Tue','Wed','Thu','Fri'].includes(now.weekday);const beforeCutoff=now.hour<cut.hour||(now.hour===cut.hour&&now.minute<=cut.minute);let runDate=now.date;if(!beforeCutoff)runDate=addBusinessDays(now.date,1);return {requestDayAllowed,beforeCutoff,afterCutoff:!beforeCutoff,runDate,cutoff:cut.label,runLabel:formatRunDate(runDate)}}
 function earlyPayoutWindowMessage(settings){const t=earlyPayoutTiming(settings);if(!t.requestDayAllowed)return `Early payout requests are available Tuesday to Friday. The same-day cutoff is ${t.cutoff}.`;if(t.beforeCutoff)return `Request by ${t.cutoff} for today's payment run, subject to approval. Requests after ${t.cutoff} are accepted and queued for the next business-day run.`;return `Today's ${t.cutoff} cutoff has passed. You can still request now; if approved, it will be queued for the ${t.runLabel} payment run.`}
+
+app.post('/api/webhooks/twilio/sms-status',express.urlencoded({extended:false}),async(req,res)=>{
+ try{
+  if(TWILIO_AUTH_TOKEN){
+   const mod=await import('twilio');
+   const twilio=mod.default||mod;
+   const signature=String(req.headers['x-twilio-signature']||'');
+   const callbackUrl=`${PUBLIC_BASE_URL}${req.originalUrl}`;
+
+   const valid=twilio.validateRequest(
+    TWILIO_AUTH_TOKEN,
+    signature,
+    callbackUrl,
+    req.body||{}
+   );
+
+   if(!valid){
+    console.warn('[FleetPay] Rejected invalid Twilio SMS status signature');
+    return res.status(403).end();
+   }
+  }
+
+  const sid=String(req.body.MessageSid||req.body.SmsSid||'').trim();
+  const status=String(req.body.MessageStatus||req.body.SmsStatus||'').trim();
+  const errorCode=String(req.body.ErrorCode||'').trim();
+  const errorMessage=String(req.body.ErrorMessage||'').trim();
+
+  if(sid){
+   const comm=db.prepare(`
+    SELECT *
+    FROM communications_log
+    WHERE provider_ref=?
+      AND channel='sms'
+    ORDER BY created_at DESC
+    LIMIT 1
+   `).get(sid);
+
+   if(comm){
+    const mappedStatus=
+     status==='delivered' ? 'delivered' :
+     ['failed','undelivered'].includes(status) ? 'failed' :
+     ['queued','accepted','sending','sent'].includes(status) ? 'sent' :
+     comm.status;
+
+    db.prepare(`
+     UPDATE communications_log
+     SET status=?,
+         error=?
+     WHERE id=?
+    `).run(
+     mappedStatus,
+     errorCode||errorMessage
+      ?`Twilio ${errorCode||''}${errorCode&&errorMessage?': ':''}${errorMessage||''}`
+      :'',
+     comm.id
+    );
+   }
+  }
+
+  res.status(204).end();
+ }catch(e){
+  console.error('[FleetPay] Twilio SMS status webhook error',e);
+  res.status(204).end();
+ }
+});
+
+app.get('/api/admin/twilio/balance',requireAdmin,async(req,res)=>{
+ try{
+  const result=await getTwilioBalance();
+
+  if(!result.configured){
+   return res.json({
+    configured:false,
+    balance:null,
+    currency:null
+   });
+  }
+
+  res.json(result);
+ }catch(e){
+  console.error('[FleetPay] Twilio balance error',e);
+  res.status(502).json({
+   error:'Unable to retrieve Twilio balance'
+  });
+ }
+});
 
 app.get('/api/health',(_q,res)=>res.json({ok:true,configured:Boolean(API_KEY),database:'sqlite',databasePath:'data/fleetpay.sqlite'}));
 ensureBootstrapAdmin();
