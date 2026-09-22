@@ -24,6 +24,9 @@ const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || 'ChangeMe123!');
 const DEV_AUTH_CODES = String(process.env.DEV_AUTH_CODES || 'true').toLowerCase() === 'true';
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'FleetPay <payments@example.com>';
+const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || '';
+const SENDGRID_FROM_EMAIL = process.env.SENDGRID_FROM_EMAIL || '';
+const SENDGRID_FROM_NAME = process.env.SENDGRID_FROM_NAME || 'FleetPay';
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || `http://localhost:5173`).replace(/\/$/, '');
@@ -362,6 +365,9 @@ const defaultSettings = {
 
  customerPaymentFeeType: 'fixed',
  customerPaymentFeeValue: 0.50,
+ customerPaymentSmsTemplate: 'FleetPay: Your taxi journey payment is £{total}. Pay securely here: {paymentLink}',
+ customerPaymentEmailSubject: 'Your taxi journey payment – £{total}',
+ customerPaymentEmailBody: 'Hello {customer},\n\nYour taxi journey payment is ready.\n\nJourney fare: £{fare}\nFleetPay service fee: £{fee}\nTotal to pay: £{total}\n\nPay securely here: {paymentLink}\n\nBooking reference: {bookingId}',
 
  earlyPayoutCutoffTime: '11:00',
  earlyPayoutCutoffHour: 11,
@@ -751,6 +757,17 @@ app.post(['/api/webhooks/autocab/booking-created','/created'],async(req,res)=>{
 
      if(item){
       await createStripeCustomerPayment(item);
+
+      const updatedItem=db.prepare(`
+       SELECT *
+       FROM customer_payments
+       WHERE id=?
+       LIMIT 1
+      `).get(item.id);
+
+      if(updatedItem){
+       await sendCustomerPaymentCommunications(updatedItem);
+      }
      }
     }
    }
@@ -1101,6 +1118,32 @@ async function markPayoutPaid(item, req, source='manual'){
  audit(req,'admin',req?.auth?.email||source,'payout_paid','payout',item.id,{callsign:item.callsign,amount:Number(item.net_amount||item.amount||0),source});
 }
 async function sendEmail(to,subject,html){
+ if(SENDGRID_API_KEY && SENDGRID_FROM_EMAIL){
+  try{
+   const mod=await import('@sendgrid/mail');
+   const sendgrid=mod.default||mod;
+   sendgrid.setApiKey(SENDGRID_API_KEY);
+
+   const [response]=await sendgrid.send({
+    to,
+    from:{
+     email:SENDGRID_FROM_EMAIL,
+     name:SENDGRID_FROM_NAME
+    },
+    subject,
+    html
+   });
+
+   return {
+    sent:true,
+    provider:'sendgrid',
+    id:response?.headers?.['x-message-id']||''
+   };
+  }catch(e){
+   throw new Error(`SendGrid email failed: ${e.message}`);
+  }
+ }
+
  const settings=getSettings(),smtpHost=String(settings.smtpHost||'').trim(),smtpUser=String(settings.smtpUser||'').trim(),smtpPassword=getSecureSetting('smtpPassword');
  if(smtpHost){
   try{const nodemailer=await import('nodemailer');const transporter=nodemailer.default.createTransport({host:smtpHost,port:Number(settings.smtpPort||587),secure:Boolean(settings.smtpSecure),auth:smtpUser?{user:smtpUser,pass:smtpPassword}:undefined});const info=await transporter.sendMail({from:`${settings.smtpFromName||'FleetPay'} <${settings.smtpFromEmail||smtpUser}>`,to,subject,html});return {sent:true,provider:'smtp',id:info.messageId||''}}catch(e){throw new Error(`SMTP email failed: ${e.message}. If nodemailer is not installed, run npm install nodemailer.`)}
@@ -1109,6 +1152,85 @@ async function sendEmail(to,subject,html){
 }
 async function sendConfiguredSms(to,message,{templateKey='',entityType='',entityId=''}={}){
  const settings=getSettings(),endpoint=String(settings.smsEndpoint||'').trim();if(!endpoint)throw new Error('SMS endpoint is not configured');const authValue=getSecureSetting('smsAuthValue');const headers={'Content-Type':'application/json'};if(settings.smsAuthHeader&&authValue)headers[String(settings.smsAuthHeader)]=authValue;let bodyText=templateText(settings.smsBodyTemplate||'{"to":"{mobile}","message":"{message}"}',{mobile:to,message});let body;try{body=JSON.stringify(JSON.parse(bodyText))}catch{throw new Error('SMS body template must produce valid JSON')};try{const r=await fetch(endpoint,{method:String(settings.smsMethod||'POST').toUpperCase(),headers,body});const text=await r.text();if(!r.ok)throw new Error(`SMS endpoint ${r.status}: ${text.slice(0,240)}`);logCommunication({channel:'sms',recipient:to,templateKey,entityType,entityId,status:'sent',providerRef:text.slice(0,120)});return {sent:true,response:text}}catch(e){logCommunication({channel:'sms',recipient:to,templateKey,entityType,entityId,status:'failed',error:e.message});throw e}
+}
+
+async function sendCustomerPaymentCommunications(item){
+ const settings=getSettings();
+ const vars={
+  customer:item.customer_name||'Customer',
+  fare:Number(item.fare_amount||0).toFixed(2),
+  fee:Number(item.fee_amount||0).toFixed(2),
+  total:Number(item.total_amount||0).toFixed(2),
+  paymentLink:item.payment_url||`${PUBLIC_BASE_URL}/pay/${item.id}`,
+  bookingId:item.booking_id||''
+ };
+ const errors=[];
+
+ const alreadySent=(channel)=>Boolean(
+  db.prepare(`
+   SELECT 1
+   FROM communications_log
+   WHERE channel=?
+     AND template_key='customer_payment_link'
+     AND entity_type='customer_payment'
+     AND entity_id=?
+     AND status='sent'
+   LIMIT 1
+  `).get(channel,String(item.id))
+ );
+
+ if(item.customer_email && !alreadySent('email')){
+  try{
+   const subject=templateText(settings.customerPaymentEmailSubject,vars);
+   const body=templateText(settings.customerPaymentEmailBody,vars);
+   const out=await sendEmail(
+    item.customer_email,
+    subject,
+    `<div style="font-family:Arial,sans-serif;line-height:1.55;color:#172033">${body.split('\n').map(x=>x?`<p>${x}</p>`:'').join('')}</div>`
+   );
+   if(out.sent){
+    logCommunication({
+     channel:'email',
+     recipient:item.customer_email,
+     templateKey:'customer_payment_link',
+     entityType:'customer_payment',
+     entityId:item.id,
+     status:'sent',
+     providerRef:out.id||out.provider||''
+    });
+   }
+  }catch(e){
+   errors.push(`Email: ${e.message}`);
+   logCommunication({
+    channel:'email',
+    recipient:item.customer_email,
+    templateKey:'customer_payment_link',
+    entityType:'customer_payment',
+    entityId:item.id,
+    status:'failed',
+    error:e.message
+   });
+  }
+ }
+
+ if(item.customer_mobile && String(settings.smsEndpoint||'').trim() && !alreadySent('sms')){
+  try{
+   const message=templateText(settings.customerPaymentSmsTemplate,vars);
+   await sendConfiguredSms(
+    item.customer_mobile,
+    message,
+    {
+     templateKey:'customer_payment_link',
+     entityType:'customer_payment',
+     entityId:item.id
+    }
+   );
+  }catch(e){
+   errors.push(`SMS: ${e.message}`);
+  }
+ }
+
+ return {errors};
 }
 
 function londonWindow(){const p=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/London',weekday:'short',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).formatToParts(new Date());const v=Object.fromEntries(p.map(x=>[x.type,x.value]));return {weekday:v.weekday,hour:Number(v.hour),minute:Number(v.minute),date:`${v.year}-${v.month}-${v.day}`}}
