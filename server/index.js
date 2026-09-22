@@ -86,6 +86,9 @@ CREATE TABLE IF NOT EXISTS customer_payments (
  fee_amount REAL NOT NULL DEFAULT 0,
  total_amount REAL NOT NULL,
  status TEXT NOT NULL DEFAULT 'open',
+ payment_status TEXT NOT NULL DEFAULT 'open',
+ job_status TEXT NOT NULL DEFAULT 'awaiting_payment',
+ driver_settlement_status TEXT NOT NULL DEFAULT 'not_ready',
  provider TEXT,
  provider_session_id TEXT,
  payment_url TEXT,
@@ -247,6 +250,9 @@ for (const sql of [
   'ALTER TABLE payment_requests ADD COLUMN email_sent_at TEXT',
   'ALTER TABLE payment_requests ADD COLUMN sms_sent_at TEXT',
   'ALTER TABLE payment_requests ADD COLUMN communication_error TEXT',
+  'ALTER TABLE customer_payments ADD COLUMN payment_status TEXT NOT NULL DEFAULT \'open\'',
+  'ALTER TABLE customer_payments ADD COLUMN job_status TEXT NOT NULL DEFAULT \'awaiting_payment\'',
+  'ALTER TABLE customer_payments ADD COLUMN driver_settlement_status TEXT NOT NULL DEFAULT \'not_ready\'',
   'ALTER TABLE customer_payments ADD COLUMN customer_name TEXT',
   'ALTER TABLE customer_payments ADD COLUMN customer_mobile TEXT',
   'ALTER TABLE customer_payments ADD COLUMN customer_email TEXT',
@@ -297,6 +303,9 @@ for (const sql of [
     fee_amount REAL NOT NULL DEFAULT 0,
     total_amount REAL NOT NULL,
     status TEXT NOT NULL DEFAULT 'open',
+    payment_status TEXT NOT NULL DEFAULT 'open',
+    job_status TEXT NOT NULL DEFAULT 'awaiting_payment',
+    driver_settlement_status TEXT NOT NULL DEFAULT 'not_ready',
     provider TEXT,
     provider_session_id TEXT,
     payment_url TEXT,
@@ -324,6 +333,7 @@ for (const sql of [
    INSERT INTO customer_payments(
     id,driver_id,callsign,driver_name,booking_id,
     fare_amount,fee_amount,total_amount,status,
+    payment_status,job_status,driver_settlement_status,
     provider,provider_session_id,payment_url,
     stripe_payment_intent_id,payment_method,
     created_at,updated_at,paid_at,
@@ -335,6 +345,7 @@ for (const sql of [
    SELECT
     id,driver_id,callsign,driver_name,booking_id,
     fare_amount,fee_amount,total_amount,status,
+    payment_status,job_status,driver_settlement_status,
     provider,provider_session_id,payment_url,
     stripe_payment_intent_id,payment_method,
     created_at,updated_at,paid_at,
@@ -356,6 +367,43 @@ for (const sql of [
   `);
  }
 }
+
+
+db.exec(`
+UPDATE customer_payments
+SET payment_status =
+ CASE
+  WHEN status='paid' THEN 'paid'
+  WHEN status='cancelled' THEN 'cancelled'
+  WHEN status='refunded' THEN 'refunded'
+  ELSE 'open'
+ END
+WHERE payment_status IS NULL
+   OR payment_status=''
+   OR (
+    payment_status='open'
+    AND status IN ('paid','cancelled','refunded')
+   );
+
+UPDATE customer_payments
+SET job_status =
+ CASE
+  WHEN source='autocab_booking_created'
+   AND payment_status='paid'
+   THEN 'release_pending'
+  WHEN source='autocab_booking_created'
+   THEN 'awaiting_payment'
+  ELSE 'manual'
+ END
+WHERE job_status IS NULL
+   OR job_status=''
+   OR job_status='awaiting_payment';
+
+UPDATE customer_payments
+SET driver_settlement_status='not_ready'
+WHERE driver_settlement_status IS NULL
+   OR driver_settlement_status='';
+`);
 
 db.exec(`
 CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_payments_autocab_booking
@@ -460,6 +508,12 @@ app.post('/api/stripe/webhook', express.raw({type:'application/json'}), async (r
           db.prepare(`
             UPDATE customer_payments
             SET status=?,
+                payment_status='paid',
+                job_status=CASE
+                 WHEN source='autocab_booking_created'
+                 THEN 'release_pending'
+                 ELSE job_status
+                END,
                 provider=?,
                 provider_session_id=?,
                 stripe_payment_intent_id=?,
@@ -1077,6 +1131,25 @@ app.post(['/api/webhooks/autocab/booking-modified','/modified'],async(req,res)=>
     );
 
     updated=Number(result.changes||0);
+
+    const bookingType=String(
+     b.BookingType ??
+     b.bookingType ??
+     ''
+    ).toLowerCase();
+
+    if(
+     bookingType==='dispatched' ||
+     driverId ||
+     callsign
+    ){
+     db.prepare(`
+      UPDATE customer_payments
+      SET job_status='dispatched',
+          updated_at=?
+      WHERE id=?
+     `).run(receivedAt,payment.id);
+    }
    }
   }
 
@@ -1174,9 +1247,186 @@ function storeAutocabJobEvent(raw,eventType){
  return {bookingId,webhookId,receivedAt,b};
 }
 
+
+function autocabTerminalDriver(b){
+ const driver=
+  b?.DriverDetails?.Driver ||
+  b?.driverDetails?.driver ||
+  b?.Driver ||
+  b?.driver ||
+  {};
+
+ let driverId=Number(
+  driver.Id ??
+  driver.id ??
+  driver.DriverId ??
+  driver.driverId ??
+  0
+ );
+
+ if(!Number.isFinite(driverId) || driverId<=0) driverId=null;
+
+ let callsign=String(
+  driver.Callsign ??
+  driver.callsign ??
+  driver.CallSign ??
+  driver.callSign ??
+  ''
+ ).trim();
+
+ let driverName=String(
+  driver.FullName ??
+  driver.fullName ??
+  driver.Name ??
+  driver.name ??
+  `${driver.Forename ?? driver.forename ?? ''} ${driver.Surname ?? driver.surname ?? ''}`.trim() ??
+  ''
+ ).trim();
+
+ let cached=null;
+
+ if(driverId){
+  cached=cachedDriver(driverId);
+ }
+
+ if(!cached && callsign){
+  cached=cacheRows().find(x=>String(x.callsign)===callsign)||null;
+ }
+
+ if(cached){
+  driverId=Number(cached.driverId)||driverId;
+  callsign=callsign||String(cached.callsign||'');
+  driverName=driverName||String(cached.fullName||'');
+ }
+
+ return {driverId,callsign,driverName};
+}
+
+function applyCustomerJobState(bookingId,b,jobStatus){
+ if(!bookingId)return null;
+
+ const row=db.prepare(`
+  SELECT *
+  FROM customer_payments
+  WHERE booking_id=?
+    AND source='autocab_booking_created'
+  ORDER BY created_at DESC
+  LIMIT 1
+ `).get(bookingId);
+
+ if(!row)return null;
+
+ const now=new Date().toISOString();
+ const driver=autocabTerminalDriver(b);
+
+ const paymentStatus=
+  row.payment_status ||
+  row.status ||
+  'open';
+
+ let settlementStatus='not_ready';
+
+ if(jobStatus==='completed'){
+  settlementStatus=
+   paymentStatus==='paid'
+    ? 'approved'
+    : 'held';
+ }
+
+ if(jobStatus==='no_fare' || jobStatus==='cancelled'){
+  settlementStatus=
+   paymentStatus==='paid'
+    ? 'review'
+    : 'held';
+ }
+
+ let legacyStatus=row.status;
+
+ // An unpaid cancelled booking must not remain payable.
+ if(jobStatus==='cancelled' && paymentStatus!=='paid'){
+  legacyStatus='cancelled';
+ }
+
+ db.prepare(`
+  UPDATE customer_payments
+  SET
+   status=?,
+   payment_status=CASE
+    WHEN ?='cancelled' AND payment_status<>'paid'
+    THEN 'cancelled'
+    ELSE payment_status
+   END,
+   job_status=?,
+   driver_settlement_status=?,
+   driver_id=CASE
+    WHEN ? IS NOT NULL THEN ?
+    ELSE driver_id
+   END,
+   callsign=CASE
+    WHEN ?<>'' THEN ?
+    ELSE callsign
+   END,
+   driver_name=CASE
+    WHEN ?<>'' THEN ?
+    ELSE driver_name
+   END,
+   updated_at=?
+  WHERE id=?
+ `).run(
+  legacyStatus,
+  jobStatus,
+  jobStatus,
+  settlementStatus,
+  driver.driverId,
+  driver.driverId,
+  driver.callsign,
+  driver.callsign,
+  driver.driverName,
+  driver.driverName,
+  now,
+  row.id
+ );
+
+ return db.prepare(`
+  SELECT *
+  FROM customer_payments
+  WHERE id=?
+ `).get(row.id);
+}
+
+async function expireUnpaidCustomerCheckout(row){
+ if(!row || !stripe)return;
+
+ const paymentStatus=
+  row.payment_status ||
+  row.status ||
+  'open';
+
+ if(paymentStatus==='paid')return;
+ if(!row.provider_session_id)return;
+
+ try{
+  await stripe.checkout.sessions.expire(row.provider_session_id);
+ }catch(e){
+  console.warn(
+   '[FleetPay] Stripe checkout expiry skipped/failed',
+   {
+    paymentId:row.id,
+    bookingId:row.booking_id,
+    error:e.message
+   }
+  );
+ }
+}
+
 app.post(['/api/webhooks/autocab/booking-complete','/complete'],async(req,res)=>{
  try{
   const x=storeAutocabJobEvent(req.body||{},'BookingComplete');
+  const payment=applyCustomerJobState(
+   x.bookingId,
+   x.b,
+   'completed'
+  );
 
   console.log('[FleetPay] Autocab BookingComplete received',{
    bookingId:x.bookingId||null
@@ -1198,6 +1448,11 @@ app.post(['/api/webhooks/autocab/booking-complete','/complete'],async(req,res)=>
 app.post(['/api/webhooks/autocab/booking-nofare','/nofare'],async(req,res)=>{
  try{
   const x=storeAutocabJobEvent(req.body||{},'NoFare');
+  const payment=applyCustomerJobState(
+   x.bookingId,
+   x.b,
+   'no_fare'
+  );
 
   console.log('[FleetPay] Autocab NoFare received',{
    bookingId:x.bookingId||null
@@ -1219,6 +1474,27 @@ app.post(['/api/webhooks/autocab/booking-nofare','/nofare'],async(req,res)=>{
 app.post(['/api/webhooks/autocab/booking-cancelled','/cancelled'],async(req,res)=>{
  try{
   const x=storeAutocabJobEvent(req.body||{},'BookingCancelled');
+
+  const existing=x.bookingId
+   ? db.prepare(`
+      SELECT *
+      FROM customer_payments
+      WHERE booking_id=?
+        AND source='autocab_booking_created'
+      ORDER BY created_at DESC
+      LIMIT 1
+     `).get(x.bookingId)
+   : null;
+
+  const payment=applyCustomerJobState(
+   x.bookingId,
+   x.b,
+   'cancelled'
+  );
+
+  if(existing){
+   await expireUnpaidCustomerCheckout(existing);
+  }
 
   console.log('[FleetPay] Autocab BookingCancelled received',{
    bookingId:x.bookingId||null
@@ -2251,7 +2527,14 @@ function publicCustomerPayment(row){
  return {
   id:row.id,bookingId:row.booking_id||'',customerName:row.customer_name||'',pickup:row.pickup||'',destination:row.destination||'',journeyAt:row.journey_at||null,
   taxiCompany:row.taxi_company||getSettings().companyName||'Taxi company',fareAmount:Number(row.fare_amount||0),feeAmount:Number(row.fee_amount||0),totalAmount:Number(row.total_amount||0),
-  status:row.status,createdAt:row.created_at,paidAt:row.paid_at||null,refundStatus:row.refund_status||null,refundedAmount:Number(row.refunded_amount||0)
+  status:row.status,
+  paymentStatus:row.payment_status||row.status||'open',
+  jobStatus:row.job_status||'awaiting_payment',
+  driverSettlementStatus:row.driver_settlement_status||'not_ready',
+  createdAt:row.created_at,
+  paidAt:row.paid_at||null,
+  refundStatus:row.refund_status||null,
+  refundedAmount:Number(row.refunded_amount||0)
  };
 }
 app.get('/api/public/customer-payments/:id',(req,res)=>{
