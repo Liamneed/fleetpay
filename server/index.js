@@ -1120,11 +1120,16 @@ function storeAutocabJobEvent(raw,eventType){
   : (Array.isArray(b.capabilities)?b.capabilities:[]);
 
  const bookingId=String(
+  b.OriginalBookingId ??
+  b.originalBookingId ??
+  b.OriginalBookingID ??
   b.Id ??
   b.id ??
   b.BookingId ??
   b.bookingId ??
   b.bookingID ??
+  raw.OriginalBookingId ??
+  raw.originalBookingId ??
   raw.BookingId ??
   raw.bookingId ??
   raw.bookingID ??
