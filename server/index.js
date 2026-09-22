@@ -813,6 +813,292 @@ app.post(['/api/webhooks/autocab/booking-created','/created'],async(req,res)=>{
  }
 });
 
+
+/*
+ * AUTOCAB BOOKING MODIFIED
+ *
+ * Keep an existing FleetPay customer payment aligned with the latest
+ * operational booking details. Booking ID is the permanent join key.
+ *
+ * Important:
+ * - Does NOT create another payment.
+ * - Does NOT alter payment/Stripe status.
+ * - Does NOT change fare/fee/total because an existing Stripe Checkout
+ *   session may already have been created for the original amount.
+ */
+app.post(['/api/webhooks/autocab/booking-modified','/modified'],async(req,res)=>{
+ try{
+  const raw=req.body||{};
+  const b=autocabBookingPayload(raw);
+
+  const pickup=b.Pickup||b.pickup||{};
+  const destination=b.Destination||b.destination||{};
+  const driver=b.Driver||b.driver||b.AssignedDriver||b.assignedDriver||{};
+
+  const bookingId=String(
+   b.Id ??
+   b.id ??
+   b.BookingId ??
+   b.bookingId ??
+   b.bookingID ??
+   raw.BookingId ??
+   raw.bookingId ??
+   raw.bookingID ??
+   ''
+  ).trim();
+
+  const receivedAt=new Date().toISOString();
+  const webhookId=id('autocab_booking');
+
+  const passengerName=String(
+   b.Name ??
+   b.name ??
+   b.PassengerName ??
+   b.passengerName ??
+   ''
+  ).trim();
+
+  const passengerMobile=String(
+   b.TelephoneNumber ??
+   b.telephoneNumber ??
+   b.Mobile ??
+   b.mobile ??
+   b.PassengerMobile ??
+   b.passengerMobile ??
+   ''
+  ).trim();
+
+  const passengerEmail=String(
+   b.CustomerEmail ??
+   b.customerEmail ??
+   b.Email ??
+   b.email ??
+   ''
+  ).trim();
+
+  const pickupText=String(
+   pickup.Address ??
+   pickup.address ??
+   pickup.text ??
+   pickup.addressText ??
+   ''
+  ).trim();
+
+  const destinationText=String(
+   destination.Address ??
+   destination.address ??
+   destination.text ??
+   destination.addressText ??
+   ''
+  ).trim();
+
+  const journeyAt=
+   b.PickupDueTimeUtc ??
+   b.pickupDueTimeUtc ??
+   b.PickupDueTime ??
+   b.pickupDueTime ??
+   null;
+
+  const paymentMethod=String(
+   b.PaymentMethod ??
+   b.paymentMethod ??
+   b.PaymentType ??
+   b.paymentType ??
+   ''
+  ).trim();
+
+  const driverIdRaw=
+   driver.Id ??
+   driver.id ??
+   driver.DriverId ??
+   driver.driverId ??
+   b.DriverId ??
+   b.driverId ??
+   null;
+
+  let driverId=Number(driverIdRaw);
+  if(!Number.isFinite(driverId) || driverId<=0) driverId=null;
+
+  let callsign=String(
+   driver.Callsign ??
+   driver.callsign ??
+   driver.CallSign ??
+   driver.callSign ??
+   b.DriverCallsign ??
+   b.driverCallsign ??
+   b.Callsign ??
+   b.callsign ??
+   ''
+  ).trim();
+
+  let driverName=String(
+   driver.FullName ??
+   driver.fullName ??
+   driver.Name ??
+   driver.name ??
+   b.DriverName ??
+   b.driverName ??
+   ''
+  ).trim();
+
+  // Resolve missing driver details from FleetPay's Autocab driver cache.
+  let cached=null;
+
+  if(driverId){
+   cached=cachedDriver(driverId);
+  }
+
+  if(!cached && callsign){
+   cached=cacheRows().find(x=>String(x.callsign)===callsign)||null;
+  }
+
+  if(cached){
+   driverId=Number(cached.driverId)||driverId;
+   callsign=callsign||String(cached.callsign||'');
+   driverName=driverName||String(cached.fullName||'');
+  }
+
+  const pricing=b.Pricing||b.pricing||{};
+  const capabilities=Array.isArray(b.Capabilities)
+   ? b.Capabilities
+   : (Array.isArray(b.capabilities)?b.capabilities:[]);
+
+  // Keep a complete audit copy of the modified webhook.
+  db.prepare(`
+   INSERT INTO autocab_booking_webhooks(
+    id,event_type,booking_id,company_id,row_version,
+    passenger_name,passenger_mobile,passenger_email,
+    pickup,destination,pickup_due_time,
+    driver_cost,office_price,payment_method,
+    capabilities_json,has_payment_capability,
+    raw_json,status,received_at
+   )
+   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `).run(
+   webhookId,
+   'BookingModified',
+   bookingId||null,
+   Number(b.Company?.Id??b.companyId??0)||null,
+   Number(b.RowVersion??b.rowVersion??0)||null,
+   passengerName,
+   passengerMobile,
+   passengerEmail,
+   pickupText,
+   destinationText,
+   journeyAt,
+   Number(pricing.Cost??pricing.cost??0),
+   Number(pricing.Price??pricing.price??0),
+   paymentMethod,
+   JSON.stringify(capabilities),
+   hasFleetPayCapability(capabilities)?1:0,
+   JSON.stringify(raw),
+   'received',
+   receivedAt
+  );
+
+  let updated=0;
+
+  if(bookingId){
+   const payment=db.prepare(`
+    SELECT *
+    FROM customer_payments
+    WHERE booking_id=?
+      AND source='autocab_booking_created'
+    ORDER BY created_at DESC
+    LIMIT 1
+   `).get(bookingId);
+
+   if(payment){
+    const result=db.prepare(`
+     UPDATE customer_payments
+     SET
+      driver_id=CASE
+       WHEN ? IS NOT NULL THEN ?
+       ELSE driver_id
+      END,
+      callsign=CASE
+       WHEN ?<>'' THEN ?
+       ELSE callsign
+      END,
+      driver_name=CASE
+       WHEN ?<>'' THEN ?
+       ELSE driver_name
+      END,
+      customer_name=CASE
+       WHEN ?<>'' THEN ?
+       ELSE customer_name
+      END,
+      customer_mobile=CASE
+       WHEN ?<>'' THEN ?
+       ELSE customer_mobile
+      END,
+      customer_email=CASE
+       WHEN ?<>'' THEN ?
+       ELSE customer_email
+      END,
+      pickup=CASE
+       WHEN ?<>'' THEN ?
+       ELSE pickup
+      END,
+      destination=CASE
+       WHEN ?<>'' THEN ?
+       ELSE destination
+      END,
+      journey_at=COALESCE(?,journey_at),
+      payment_method=CASE
+       WHEN ?<>'' THEN ?
+       ELSE payment_method
+      END,
+      updated_at=?
+     WHERE id=?
+    `).run(
+     driverId,driverId,
+     callsign,callsign,
+     driverName,driverName,
+     passengerName,passengerName,
+     passengerMobile,passengerMobile,
+     passengerEmail,passengerEmail,
+     pickupText,pickupText,
+     destinationText,destinationText,
+     journeyAt,
+     paymentMethod,paymentMethod,
+     receivedAt,
+     payment.id
+    );
+
+    updated=Number(result.changes||0);
+   }
+  }
+
+  console.log(
+   '[FleetPay] Autocab BookingModified received',
+   {
+    bookingId:bookingId||null,
+    driverId:driverId||null,
+    callsign:callsign||null,
+    driverName:driverName||null,
+    updated
+   }
+  );
+
+  res.status(200).json({
+   ok:true,
+   received:true,
+   webhookId,
+   bookingId:bookingId||null,
+   updated
+  });
+
+ }catch(e){
+  console.error('[FleetPay] BookingModified webhook error',e);
+  res.status(500).json({
+   ok:false,
+   error:'Modified booking webhook could not be processed'
+  });
+ }
+});
+
+
 function getSettings(){
  const rows=db.prepare('SELECT key,value FROM settings').all(); const out={...defaultSettings};
  for(const r of rows){ try{out[r.key]=JSON.parse(r.value)}catch{out[r.key]=r.value} } return out;
