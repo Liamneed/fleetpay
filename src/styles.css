@@ -3990,3 +3990,453 @@ body {
 .transactionSearch button:hover{
   background:#0f172a;
 }
+
+
+/* CUSTOMER PAYMENTS V2 TABLE VIEW */
+
+.customerPaymentsV2{
+  display:flex;
+  flex-direction:column;
+  gap:18px;
+}
+
+.customerPaymentsHeader{
+  margin-bottom:0;
+}
+
+
+/* SUMMARY */
+
+.customerPaymentStatsV2{
+  display:grid;
+  grid-template-columns:repeat(5,minmax(0,1fr));
+  gap:12px;
+}
+
+.customerPaymentStatsV2 > div{
+  min-width:0;
+  padding:15px 17px;
+  border:1px solid #e2e8f0;
+  border-radius:14px;
+  background:#fff;
+}
+
+.customerPaymentStatsV2 span{
+  display:block;
+  color:#64748b;
+  font-size:11px;
+  font-weight:800;
+  letter-spacing:.04em;
+  text-transform:uppercase;
+}
+
+.customerPaymentStatsV2 b{
+  display:block;
+  margin-top:5px;
+  color:#172033;
+  font-size:21px;
+}
+
+
+/* FILTERS */
+
+.customerPaymentsMainPanel{
+  padding:0;
+  overflow:hidden;
+}
+
+.customerPaymentsToolbar{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  padding:16px;
+  border-bottom:1px solid #e2e8f0;
+}
+
+.customerPaymentsSearch{
+  flex:1;
+  min-width:320px;
+}
+
+.customerPaymentsToolbar select{
+  min-width:190px;
+  min-height:42px;
+}
+
+.customerSearchClear{
+  border:0 !important;
+  background:transparent !important;
+  color:#64748b !important;
+  padding:4px !important;
+  min-height:auto !important;
+}
+
+.customerSearchClear svg{
+  width:16px;
+  height:16px;
+}
+
+
+/* TABLE */
+
+.customerPaymentsTableV2 table{
+  width:100%;
+  min-width:1250px;
+}
+
+.customerPaymentsTableV2 th{
+  white-space:nowrap;
+}
+
+.customerPaymentsTableV2 td{
+  vertical-align:middle;
+}
+
+.customerPaymentsTableV2 td b{
+  display:block;
+}
+
+.customerPaymentsTableV2 td small{
+  display:block;
+  margin-top:4px;
+  color:#718096;
+  line-height:1.35;
+}
+
+.customerPaymentRowV2{
+  cursor:pointer;
+}
+
+.customerPaymentRowV2:hover{
+  background:#f8fafc;
+}
+
+.customerJourneyV2{
+  min-width:260px;
+  max-width:360px;
+}
+
+.customerJourneyV2 b,
+.customerJourneyV2 small{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.customerTotalV2{
+  color:#172033;
+  font-size:15px;
+}
+
+.customerChevronV2{
+  width:34px;
+  text-align:right;
+}
+
+.customerChevronV2 svg{
+  width:18px;
+  height:18px;
+  color:#94a3b8;
+}
+
+
+/* CREATE PAYMENT MODAL */
+
+.customerModalBack{
+  position:fixed;
+  inset:0;
+  z-index:250;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:24px;
+  background:rgba(15,23,42,.54);
+  backdrop-filter:blur(3px);
+}
+
+.customerModal{
+  width:min(760px,100%);
+  max-height:calc(100vh - 48px);
+  overflow:auto;
+  padding:22px;
+  background:#fff;
+  border:1px solid #e2e8f0;
+  border-radius:20px;
+  box-shadow:0 30px 90px rgba(15,23,42,.30);
+}
+
+.customerModalHead{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:20px;
+  margin-bottom:20px;
+}
+
+.customerModalHead > div > span{
+  font-size:11px;
+  font-weight:800;
+  color:#64748b;
+  letter-spacing:.05em;
+}
+
+.customerModalHead h2{
+  margin:5px 0;
+  color:#172033;
+}
+
+.customerModalHead p{
+  max-width:560px;
+  margin:0;
+  color:#64748b;
+}
+
+.customerModalClose{
+  width:38px;
+  height:38px;
+  flex:0 0 auto;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  border:1px solid #e2e8f0;
+  border-radius:10px;
+  background:#fff;
+  color:#475569;
+  cursor:pointer;
+}
+
+.customerModalClose:hover{
+  background:#f8fafc;
+}
+
+.customerModalClose svg{
+  width:18px;
+  height:18px;
+}
+
+.customerCreateFormV2{
+  margin:0;
+}
+
+.customerCreatedV2{
+  margin-top:15px;
+}
+
+.customerModalActions{
+  display:flex;
+  justify-content:flex-end;
+  gap:10px;
+  margin-top:20px;
+}
+
+
+/* PAYMENT DETAIL DRAWER */
+
+.customerPaymentDrawer{
+  width:min(540px,100vw);
+}
+
+.customerPaymentDrawerHead{
+  display:flex;
+  align-items:flex-start;
+  gap:14px;
+  padding-right:35px;
+  margin-bottom:18px;
+}
+
+.customerPaymentDrawerIcon{
+  width:46px;
+  height:46px;
+  flex:0 0 auto;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  border-radius:12px;
+  background:#eff6ff;
+  color:#2563eb;
+}
+
+.customerPaymentDrawerIcon svg{
+  width:23px;
+  height:23px;
+}
+
+.customerPaymentDrawerHead > div:last-child > span{
+  display:block;
+  margin-bottom:3px;
+  color:#64748b;
+  font-size:11px;
+  font-weight:800;
+  letter-spacing:.05em;
+}
+
+.customerPaymentDrawerHead h2{
+  margin:0 0 8px;
+  font-size:22px;
+  color:#172033;
+}
+
+.customerDrawerAmount{
+  margin-bottom:20px;
+  padding:18px;
+  border-radius:14px;
+  background:#172033;
+  color:#fff;
+}
+
+.customerDrawerAmount span{
+  display:block;
+  margin-bottom:3px;
+  font-size:12px;
+  color:#cbd5e1;
+}
+
+.customerDrawerAmount strong{
+  display:block;
+  font-size:30px;
+}
+
+.customerDrawerAmount small{
+  display:block;
+  margin-top:4px;
+  color:#cbd5e1;
+}
+
+.customerDetailSection{
+  margin-top:20px;
+}
+
+.customerDetailTitle{
+  display:block;
+  margin-bottom:8px;
+  color:#64748b;
+  font-size:11px;
+  font-weight:800;
+  letter-spacing:.05em;
+}
+
+.customerPaymentDrawer .detailList{
+  margin-top:0;
+}
+
+.customerPaymentDrawer .detailList > div{
+  align-items:flex-start;
+}
+
+.customerPaymentDrawer .detailList b{
+  max-width:62%;
+  text-align:right;
+  overflow-wrap:anywhere;
+}
+
+.customerDrawerNotes{
+  margin-top:20px;
+  padding:14px;
+  border-radius:12px;
+  background:#f8fafc;
+}
+
+.customerDrawerNotes span{
+  display:block;
+  margin-bottom:6px;
+  color:#64748b;
+  font-size:11px;
+  font-weight:800;
+  letter-spacing:.05em;
+}
+
+.customerDrawerNotes p{
+  margin:0;
+  color:#334155;
+  white-space:pre-wrap;
+}
+
+.customerDrawerActions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  margin-top:22px;
+  padding-top:18px;
+  border-top:1px solid #e2e8f0;
+}
+
+
+/* RESPONSIVE */
+
+@media(max-width:1200px){
+
+  .customerPaymentStatsV2{
+    grid-template-columns:repeat(3,minmax(0,1fr));
+  }
+
+}
+
+@media(max-width:760px){
+
+  .customerPaymentStatsV2{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+
+  .customerPaymentsToolbar{
+    flex-direction:column;
+    align-items:stretch;
+  }
+
+  .customerPaymentsSearch{
+    width:100%;
+    min-width:0;
+  }
+
+  .customerPaymentsToolbar select{
+    width:100%;
+  }
+
+  .customerModalBack{
+    padding:10px;
+  }
+
+  .customerModal{
+    max-height:calc(100vh - 20px);
+    padding:16px;
+    border-radius:16px;
+  }
+
+  .customerModalActions{
+    flex-wrap:wrap;
+  }
+
+}
+
+
+
+/* AUTOCAB BOOKING ID EMPHASIS */
+.customerBookingCell b{
+  display:block;
+  font-weight:800;
+  color:#172033;
+  letter-spacing:-.01em;
+}
+
+.customerBookingCell small{
+  display:block;
+  margin-top:3px;
+  color:#7b8798;
+  font-size:11px;
+}
+
+.customerPaymentTableV2 tbody tr{
+  cursor:pointer;
+  transition:background .15s ease;
+}
+
+.customerPaymentTableV2 tbody tr:hover{
+  background:#f8fafc;
+}
+
+.customerPaymentTableV2 td small{
+  font-weight:500;
+}
+
+.customerPaymentTableV2 .statusPill{
+  white-space:nowrap;
+}

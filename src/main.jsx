@@ -152,6 +152,7 @@ function AdminApp(){
  const[mondayRuns,setMondayRuns]=useState([]),[sett,setSett]=useState({runs:[],payoutRuns:[],payouts:[],paymentRequests:[],earlyPayoutRequests:[]});
  const[outstanding,setOutstanding]=useState([]),[fees,setFees]=useState({fees:[],summary:{}}),[earlySummary,setEarlySummary]=useState(null);
  const[customerAdmin,setCustomerAdmin]=useState({payments:[],summary:{}}),[customerCreate,setCustomerCreate]=useState({bookingId:'',callsign:'',customerName:'',customerMobile:'',customerEmail:'',pickup:'',destination:'',journeyAt:'',fareAmount:'',taxiCompany:'',notes:''}),[createdCustomerLink,setCreatedCustomerLink]=useState(null),[customerCreateBusy,setCustomerCreateBusy]=useState(false);
+ const[customerPayQ,setCustomerPayQ]=useState(''),[customerPayStatus,setCustomerPayStatus]=useState('all'),[showCustomerCreate,setShowCustomerCreate]=useState(false),[selectedCustomerPayment,setSelectedCustomerPayment]=useState(null);
  const[driverUsers,setDriverUsers]=useState([]),[staff,setStaff]=useState([]),[securityLogs,setSecurityLogs]=useState([]);
  const[txQ,setTxQ]=useState(''),[txType,setTxType]=useState('all'),[txStatus,setTxStatus]=useState('all'),[txCategory,setTxCategory]=useState('all'),[txDateFrom,setTxDateFrom]=useState(''),[txDateTo,setTxDateTo]=useState('');
  const[q,setQ]=useState(''),[filter,setFilter]=useState('all'),[selected,setSelected]=useState(null),[selectedTx,setSelectedTx]=useState(null);
@@ -557,29 +558,897 @@ function AdminApp(){
   </table>
  </div>
 </section></>}
-    {view==='customerPayments'&&<div className="customerPaymentsAdmin">
-    <section className="customerPayHero"><div><span className="eyebrow">CUSTOMER PAYMENTS</span><h2>Create and track secure payment links</h2><p>Start manually for testing. FleetPay stores the journey, fare and service-fee breakdown; Autocab automation can be added once this flow is proven.</p></div><div className="customerPayHeroIcon"><CreditCard/></div></section>
-    <div className="customerPayStats"><div><span>Total links</span><b>{customerAdmin.summary?.count||0}</b></div><div><span>Awaiting payment</span><b>{customerAdmin.summary?.open||0}</b></div><div><span>Paid</span><b>{customerAdmin.summary?.paid||0}</b></div><div><span>Customer money received</span><b>{money(customerAdmin.summary?.grossPaid||0)}</b></div><div><span>Service fees</span><b>{money(customerAdmin.summary?.feesPaid||0)}</b></div><div><span>FleetPay / taxi split</span><b>{money(customerAdmin.summary?.fleetPayShare||0)} / {money(customerAdmin.summary?.taxiCompanyShare||0)}</b></div></div>
-    <div className="customerPayGrid">
-     <section className="panel customerCreatePanel"><div className="panelHead"><div><h3>Create payment link</h3><p>Manual test workflow. No Autocab booking is changed by this action.</p></div><Pill tone="warn">Manual</Pill></div>
-      <form className="customerCreateForm" onSubmit={createOfficeCustomerPayment}>
-       <div className="customerFormGrid"><label>Booking / job reference<input value={customerCreate.bookingId} onChange={e=>setCustomerCreate({...customerCreate,bookingId:e.target.value})} placeholder="e.g. 12345678"/></label><label>Driver callsign <small>optional</small><input value={customerCreate.callsign} onChange={e=>setCustomerCreate({...customerCreate,callsign:e.target.value})} placeholder="e.g. 168"/></label></div>
-       <div className="customerFormGrid"><label>Customer name<input value={customerCreate.customerName} onChange={e=>setCustomerCreate({...customerCreate,customerName:e.target.value})} placeholder="Passenger name"/></label><label>Journey date / time<input type="datetime-local" value={customerCreate.journeyAt} onChange={e=>setCustomerCreate({...customerCreate,journeyAt:e.target.value})}/></label></div>
-       <div className="customerFormGrid"><label>Customer mobile<input value={customerCreate.customerMobile} onChange={e=>setCustomerCreate({...customerCreate,customerMobile:e.target.value})} placeholder="07..."/></label><label>Customer email<input type="email" value={customerCreate.customerEmail} onChange={e=>setCustomerCreate({...customerCreate,customerEmail:e.target.value})} placeholder="optional@email.com"/></label></div>
-       <label>Pickup<input value={customerCreate.pickup} onChange={e=>setCustomerCreate({...customerCreate,pickup:e.target.value})} placeholder="Pickup address / location"/></label>
-       <label>Destination<input value={customerCreate.destination} onChange={e=>setCustomerCreate({...customerCreate,destination:e.target.value})} placeholder="Destination address / location"/></label>
-       <div className="customerFormGrid"><label>Journey fare (£)<input type="number" inputMode="decimal" min="0.01" step="0.01" required value={customerCreate.fareAmount} onChange={e=>setCustomerCreate({...customerCreate,fareAmount:e.target.value})} placeholder="0.00"/></label><label>Taxi company<input value={customerCreate.taxiCompany} onChange={e=>setCustomerCreate({...customerCreate,taxiCompany:e.target.value})} placeholder={settings?.companyName||'Taxi company'}/></label></div>
-       <label>Notes <small>office only</small><textarea rows="3" value={customerCreate.notes} onChange={e=>setCustomerCreate({...customerCreate,notes:e.target.value})} placeholder="Optional notes"/></label>
-       <button className="primary full" disabled={customerCreateBusy}>{customerCreateBusy?'Creating…':'Create secure payment link'}</button>
-      </form>
-      {createdCustomerLink&&<div className="createdPaymentLink"><CheckCircle2/><div><b>Payment link ready</b><span>{createdCustomerLink.paymentUrl}</span></div><button className="secondary" onClick={()=>copyCustomerLink(createdCustomerLink.paymentUrl)}>Copy link</button><button className="secondary" onClick={()=>window.open(createdCustomerLink.paymentUrl,'_blank')}>Preview</button></div>}
+    {view==='customerPayments'&&<div className="customerPaymentsAdmin customerPaymentsV2">
+
+     <section className="officePageIntro customerPaymentsHeader">
+      <div>
+       <span>CUSTOMER PAYMENTS</span>
+       <h2>Customer payments</h2>
+       <p>Track payments against the booking, passenger, journey and driver from one operational view.</p>
+      </div>
+
+      <div className="rowActions">
+       <button className="secondary" onClick={loadCustomerAdmin}>
+        <RefreshCw/>Refresh
+       </button>
+
+       <button
+        className="primary"
+        onClick={()=>{
+         setCreatedCustomerLink(null);
+         setShowCustomerCreate(true);
+        }}
+       >
+        <CreditCard/>New payment
+       </button>
+      </div>
      </section>
-     <section className="panel customerPaymentListPanel"><div className="panelHead"><div><h3>Payment links</h3><p>Live status, journey value and fee split.</p></div><button className="mini" onClick={loadCustomerAdmin}><RefreshCw/>Refresh</button></div>
-      <div className="customerPaymentTable"><div className="customerPaymentTableHead"><span>Payment</span><span>Journey</span><span>Breakdown</span><span>Status</span><span></span></div>{(customerAdmin.payments||[]).length===0?<div className="emptyState">No customer payment links yet.</div>:(customerAdmin.payments||[]).map(x=><div className="customerPaymentAdminRow" key={x.id}><div><b>{x.customerName||x.bookingId||'Customer payment'}</b><span>{x.bookingId?`Booking ${x.bookingId}`:x.id}</span><small>{dt(x.createdAt)}</small></div><div><b>{x.pickup||'Pickup not entered'}</b><span>{x.destination?`→ ${x.destination}`:'Destination not entered'}</span></div><div><b>{money(x.totalAmount)}</b><span>{money(x.fareAmount)} fare + {money(x.feeAmount)} fee</span>{x.status==='paid'&&<small>Split: {money(x.fleetPayFeeShare)} FleetPay · {money(x.taxiCompanyFeeShare)} taxi company</small>}</div><div><Pill tone={x.status==='paid'?'good':x.status==='cancelled'?'bad':'warn'}>{x.status}</Pill></div><div className="customerPaymentRowActions"><button className="mini" onClick={()=>window.open(x.paymentUrl,'_blank')}>Open</button><button className="mini" onClick={()=>copyCustomerLink(x.paymentUrl)}>Copy</button>{x.status==='open'&&<button className="mini danger" onClick={()=>cancelCustomerPayment(x.id)}>Cancel</button>}</div></div>)}</div>
-      <div className="customerRefundComing"><ShieldCheck/><div><b>Refund workflow</b><span>The payment data model now reserves refund status/amount fields. Stripe refund controls are the next phase after manual-link testing.</span></div></div>
+
+
+     <section className="customerPaymentStatsV2">
+      <div>
+       <span>Total payments</span>
+       <b>{customerAdmin.summary?.count||0}</b>
+      </div>
+
+      <div>
+       <span>Awaiting payment</span>
+       <b>{customerAdmin.summary?.open||0}</b>
+      </div>
+
+      <div>
+       <span>Paid</span>
+       <b>{customerAdmin.summary?.paid||0}</b>
+      </div>
+
+      <div>
+       <span>Money received</span>
+       <b>{money(customerAdmin.summary?.grossPaid||0)}</b>
+      </div>
+
+      <div>
+       <span>Service fees</span>
+       <b>{money(customerAdmin.summary?.feesPaid||0)}</b>
+      </div>
      </section>
-    </div>
-   </div>}
+
+
+     <section className="panel customerPaymentsMainPanel">
+
+      <div className="customerPaymentsToolbar">
+
+       <div className="searchBox customerPaymentsSearch">
+        <Search/>
+
+        <input
+         value={customerPayQ}
+         onChange={e=>setCustomerPayQ(e.target.value)}
+         placeholder="Search Autocab booking ID, customer, mobile, pickup, destination or driver…"
+        />
+
+        {customerPayQ&&
+         <button
+          type="button"
+          className="customerSearchClear"
+          onClick={()=>setCustomerPayQ('')}
+          aria-label="Clear search"
+         >
+          <X/>
+         </button>
+        }
+       </div>
+
+       <select
+        value={customerPayStatus}
+        onChange={e=>setCustomerPayStatus(e.target.value)}
+       >
+        <option value="all">All statuses</option>
+        <option value="open">Awaiting payment</option>
+        <option value="paid">Paid</option>
+        <option value="cancelled">Cancelled</option>
+        <option value="refunded">Refunded</option>
+       </select>
+
+      </div>
+
+
+      <div className="tableWrap proTable customerPaymentsTableV2">
+       <table>
+
+        <thead>
+         <tr>
+          <th>Date</th>
+          <th>Autocab Booking ID</th>
+          <th>Customer</th>
+          <th>Journey</th>
+          <th>Driver</th>
+          <th>Fare</th>
+          <th>Total</th>
+          <th>Status</th>
+          <th></th>
+         </tr>
+        </thead>
+
+        <tbody>
+
+         {(customerAdmin.payments||[])
+          .filter(x=>{
+
+           if(
+            customerPayStatus!=='all' &&
+            x.status!==customerPayStatus
+           ) return false;
+
+           const search=customerPayQ.trim().toLowerCase();
+
+           if(!search)return true;
+
+           return [
+            x.bookingId,
+            x.customerName,
+            x.customerMobile,
+            x.customerEmail,
+            x.pickup,
+            x.destination,
+            x.callsign,
+            x.driverName,
+            x.id
+           ]
+           .filter(Boolean)
+           .some(v=>
+            String(v).toLowerCase().includes(search)
+           );
+
+          })
+          .map(x=>
+
+           <tr
+            key={x.id}
+            className="customerPaymentRowV2"
+            onClick={()=>setSelectedCustomerPayment(x)}
+           >
+
+            <td>
+             <b>
+              {x.journeyAt
+               ? dt(x.journeyAt)
+               : dt(x.createdAt)}
+             </b>
+
+             <small>
+              {x.journeyAt?'Journey':'Created'}
+             </small>
+            </td>
+
+
+            <td className="customerBookingCell">
+             {x.bookingId
+              ? <>
+                 <b>{x.bookingId}</b>
+                 <small>Autocab booking</small>
+                </>
+              : <>
+                 <b>Manual payment</b>
+                 <small>{x.id}</small>
+                </>
+             }
+            </td>
+
+
+            <td>
+             <b>
+              {x.customerName||'Customer not entered'}
+             </b>
+
+             <small>
+              {x.customerMobile||
+               x.customerEmail||
+               'No contact details'}
+             </small>
+            </td>
+
+
+            <td className="customerJourneyV2">
+             <b>
+              {x.pickup||'Pickup not entered'}
+             </b>
+
+             <small>
+              {x.destination
+               ? `→ ${x.destination}`
+               : 'Destination not entered'}
+             </small>
+            </td>
+
+
+            <td>
+             <b>
+              {x.callsign&&x.callsign!=='OFFICE'
+               ? `Callsign ${x.callsign}`
+               : 'Office'}
+             </b>
+
+             <small>
+              {x.driverName||'No driver assigned'}
+             </small>
+            </td>
+
+
+            <td>
+             <b>{money(x.fareAmount)}</b>
+
+             <small>
+              + {money(x.feeAmount)} fee
+             </small>
+            </td>
+
+
+            <td>
+             <b className="customerTotalV2">
+              {money(x.totalAmount)}
+             </b>
+            </td>
+
+
+            <td>
+             <Pill
+              tone={
+               x.status==='paid'
+                ? 'good'
+                : x.status==='cancelled'
+                ? 'bad'
+                : x.status==='refunded'
+                ? 'neutral'
+                : 'warn'
+              }
+             >
+              {x.status}
+             </Pill>
+            </td>
+
+
+            <td className="customerChevronV2">
+             <ChevronRight/>
+            </td>
+
+           </tr>
+
+          )}
+
+
+         {(customerAdmin.payments||[])
+          .filter(x=>{
+
+           if(
+            customerPayStatus!=='all' &&
+            x.status!==customerPayStatus
+           ) return false;
+
+           const search=customerPayQ.trim().toLowerCase();
+
+           if(!search)return true;
+
+           return [
+            x.bookingId,
+            x.customerName,
+            x.customerMobile,
+            x.customerEmail,
+            x.pickup,
+            x.destination,
+            x.callsign,
+            x.driverName,
+            x.id
+           ]
+           .filter(Boolean)
+           .some(v=>
+            String(v).toLowerCase().includes(search)
+           );
+
+          }).length===0&&
+
+          <tr>
+           <td colSpan="9">
+            <div className="emptyTransactionState">
+             No customer payments match the selected filters.
+            </div>
+           </td>
+          </tr>
+         }
+
+        </tbody>
+
+       </table>
+      </div>
+
+     </section>
+
+
+     {showCustomerCreate&&
+      <div
+       className="customerModalBack"
+       onMouseDown={e=>{
+        if(e.target===e.currentTarget){
+         setShowCustomerCreate(false);
+        }
+       }}
+      >
+
+       <section className="customerModal">
+
+        <div className="customerModalHead">
+
+         <div>
+          <span>NEW CUSTOMER PAYMENT</span>
+          <h2>Create payment link</h2>
+          <p>
+           Enter the booking and journey information.
+           Creating the link does not alter the Autocab booking.
+          </p>
+         </div>
+
+         <button
+          type="button"
+          className="customerModalClose"
+          onClick={()=>setShowCustomerCreate(false)}
+         >
+          <X/>
+         </button>
+
+        </div>
+
+
+        <form
+         className="customerCreateForm customerCreateFormV2"
+         onSubmit={createOfficeCustomerPayment}
+        >
+
+         <div className="customerFormGrid">
+
+          <label>
+           Booking / job reference
+
+           <input
+            value={customerCreate.bookingId}
+            onChange={e=>setCustomerCreate({
+             ...customerCreate,
+             bookingId:e.target.value
+            })}
+            placeholder="e.g. 12345678"
+           />
+          </label>
+
+
+          <label>
+           Driver callsign <small>optional</small>
+
+           <input
+            value={customerCreate.callsign}
+            onChange={e=>setCustomerCreate({
+             ...customerCreate,
+             callsign:e.target.value
+            })}
+            placeholder="e.g. 168"
+           />
+          </label>
+
+         </div>
+
+
+         <div className="customerFormGrid">
+
+          <label>
+           Customer name
+
+           <input
+            value={customerCreate.customerName}
+            onChange={e=>setCustomerCreate({
+             ...customerCreate,
+             customerName:e.target.value
+            })}
+            placeholder="Passenger name"
+           />
+          </label>
+
+
+          <label>
+           Journey date / time
+
+           <input
+            type="datetime-local"
+            value={customerCreate.journeyAt}
+            onChange={e=>setCustomerCreate({
+             ...customerCreate,
+             journeyAt:e.target.value
+            })}
+           />
+          </label>
+
+         </div>
+
+
+         <div className="customerFormGrid">
+
+          <label>
+           Customer mobile
+
+           <input
+            value={customerCreate.customerMobile}
+            onChange={e=>setCustomerCreate({
+             ...customerCreate,
+             customerMobile:e.target.value
+            })}
+            placeholder="07..."
+           />
+          </label>
+
+
+          <label>
+           Customer email
+
+           <input
+            type="email"
+            value={customerCreate.customerEmail}
+            onChange={e=>setCustomerCreate({
+             ...customerCreate,
+             customerEmail:e.target.value
+            })}
+            placeholder="optional@email.com"
+           />
+          </label>
+
+         </div>
+
+
+         <label>
+          Pickup
+
+          <input
+           value={customerCreate.pickup}
+           onChange={e=>setCustomerCreate({
+            ...customerCreate,
+            pickup:e.target.value
+           })}
+           placeholder="Pickup address / location"
+          />
+         </label>
+
+
+         <label>
+          Destination
+
+          <input
+           value={customerCreate.destination}
+           onChange={e=>setCustomerCreate({
+            ...customerCreate,
+            destination:e.target.value
+           })}
+           placeholder="Destination address / location"
+          />
+         </label>
+
+
+         <div className="customerFormGrid">
+
+          <label>
+           Journey fare (£)
+
+           <input
+            type="number"
+            inputMode="decimal"
+            min="0.01"
+            step="0.01"
+            required
+            value={customerCreate.fareAmount}
+            onChange={e=>setCustomerCreate({
+             ...customerCreate,
+             fareAmount:e.target.value
+            })}
+            placeholder="0.00"
+           />
+          </label>
+
+
+          <label>
+           Taxi company
+
+           <input
+            value={customerCreate.taxiCompany}
+            onChange={e=>setCustomerCreate({
+             ...customerCreate,
+             taxiCompany:e.target.value
+            })}
+            placeholder={
+             settings?.companyName||'Taxi company'
+            }
+           />
+          </label>
+
+         </div>
+
+
+         <label>
+          Notes <small>office only</small>
+
+          <textarea
+           rows="3"
+           value={customerCreate.notes}
+           onChange={e=>setCustomerCreate({
+            ...customerCreate,
+            notes:e.target.value
+           })}
+           placeholder="Optional notes"
+          />
+         </label>
+
+
+         {createdCustomerLink&&
+          <div className="createdPaymentLink customerCreatedV2">
+
+           <CheckCircle2/>
+
+           <div>
+            <b>Payment link ready</b>
+            <span>
+             {createdCustomerLink.paymentUrl}
+            </span>
+           </div>
+
+           <button
+            type="button"
+            className="secondary"
+            onClick={()=>
+             copyCustomerLink(
+              createdCustomerLink.paymentUrl
+             )
+            }
+           >
+            Copy
+           </button>
+
+           <button
+            type="button"
+            className="secondary"
+            onClick={()=>
+             window.open(
+              createdCustomerLink.paymentUrl,
+              '_blank'
+             )
+            }
+           >
+            Open
+           </button>
+
+          </div>
+         }
+
+
+         <div className="customerModalActions">
+
+          <button
+           type="button"
+           className="secondary"
+           onClick={()=>setShowCustomerCreate(false)}
+          >
+           Close
+          </button>
+
+          <button
+           className="primary"
+           disabled={customerCreateBusy}
+          >
+           {customerCreateBusy
+            ? 'Creating…'
+            : 'Create secure payment link'}
+          </button>
+
+         </div>
+
+        </form>
+
+       </section>
+
+      </div>
+     }
+
+
+     {selectedCustomerPayment&&
+      <div
+       className="drawerBack"
+       onClick={()=>setSelectedCustomerPayment(null)}
+      >
+
+       <aside
+        className="drawer customerPaymentDrawer"
+        onClick={e=>e.stopPropagation()}
+       >
+
+        <button
+         className="drawerClose"
+         onClick={()=>setSelectedCustomerPayment(null)}
+        >
+         <X/>
+        </button>
+
+
+        <div className="customerPaymentDrawerHead">
+
+         <div className="customerPaymentDrawerIcon">
+          <CreditCard/>
+         </div>
+
+         <div>
+          <span>CUSTOMER PAYMENT</span>
+
+          <h2>
+           {selectedCustomerPayment.bookingId
+            ? `Booking ${selectedCustomerPayment.bookingId}`
+            : 'Manual payment'}
+          </h2>
+
+          <Pill
+           tone={
+            selectedCustomerPayment.status==='paid'
+             ? 'good'
+             : selectedCustomerPayment.status==='cancelled'
+             ? 'bad'
+             : selectedCustomerPayment.status==='refunded'
+             ? 'neutral'
+             : 'warn'
+           }
+          >
+           {selectedCustomerPayment.status}
+          </Pill>
+         </div>
+
+        </div>
+
+
+        <div className="customerDrawerAmount">
+
+         <span>Customer total</span>
+
+         <strong>
+          {money(selectedCustomerPayment.totalAmount)}
+         </strong>
+
+         <small>
+          {money(selectedCustomerPayment.fareAmount)}
+          {' fare + '}
+          {money(selectedCustomerPayment.feeAmount)}
+          {' service fee'}
+         </small>
+
+        </div>
+
+
+        <div className="customerDetailSection">
+         <span className="customerDetailTitle">
+          BOOKING & JOURNEY
+         </span>
+
+         <div className="detailList">
+
+          <div>
+           <span>Booking / job</span>
+           <b>
+            {selectedCustomerPayment.bookingId||'—'}
+           </b>
+          </div>
+
+          <div>
+           <span>Journey date / time</span>
+           <b>
+            {selectedCustomerPayment.journeyAt
+             ? dt(selectedCustomerPayment.journeyAt)
+             : '—'}
+           </b>
+          </div>
+
+          <div>
+           <span>Pickup</span>
+           <b>
+            {selectedCustomerPayment.pickup||'—'}
+           </b>
+          </div>
+
+          <div>
+           <span>Destination</span>
+           <b>
+            {selectedCustomerPayment.destination||'—'}
+           </b>
+          </div>
+
+         </div>
+        </div>
+
+
+        <div className="customerDetailSection">
+         <span className="customerDetailTitle">
+          CUSTOMER
+         </span>
+
+         <div className="detailList">
+
+          <div>
+           <span>Name</span>
+           <b>
+            {selectedCustomerPayment.customerName||'—'}
+           </b>
+          </div>
+
+          <div>
+           <span>Mobile</span>
+           <b>
+            {selectedCustomerPayment.customerMobile||'—'}
+           </b>
+          </div>
+
+          <div>
+           <span>Email</span>
+           <b>
+            {selectedCustomerPayment.customerEmail||'—'}
+           </b>
+          </div>
+
+         </div>
+        </div>
+
+
+        <div className="customerDetailSection">
+         <span className="customerDetailTitle">
+          DRIVER & PAYMENT
+         </span>
+
+         <div className="detailList">
+
+          <div>
+           <span>Callsign</span>
+           <b>
+            {selectedCustomerPayment.callsign||'—'}
+           </b>
+          </div>
+
+          <div>
+           <span>Driver</span>
+           <b>
+            {selectedCustomerPayment.driverName||'—'}
+           </b>
+          </div>
+
+          <div>
+           <span>Journey fare</span>
+           <b>
+            {money(selectedCustomerPayment.fareAmount)}
+           </b>
+          </div>
+
+          <div>
+           <span>Service fee</span>
+           <b>
+            {money(selectedCustomerPayment.feeAmount)}
+           </b>
+          </div>
+
+          <div>
+           <span>Customer paid</span>
+           <b>
+            {money(selectedCustomerPayment.totalAmount)}
+           </b>
+          </div>
+
+          {selectedCustomerPayment.status==='paid'&&
+           <div>
+            <span>FleetPay fee share</span>
+            <b>
+             {money(
+              selectedCustomerPayment.fleetPayFeeShare||0
+             )}
+            </b>
+           </div>
+          }
+
+          {selectedCustomerPayment.status==='paid'&&
+           <div>
+            <span>Taxi company fee share</span>
+            <b>
+             {money(
+              selectedCustomerPayment.taxiCompanyFeeShare||0
+             )}
+            </b>
+           </div>
+          }
+
+          <div>
+           <span>Created</span>
+           <b>
+            {dt(selectedCustomerPayment.createdAt)}
+           </b>
+          </div>
+
+          <div>
+           <span>Source</span>
+           <b>
+            {selectedCustomerPayment.source||
+             'FleetPay'}
+           </b>
+          </div>
+
+          <div>
+           <span>FleetPay ID</span>
+           <b>
+            {selectedCustomerPayment.id}
+           </b>
+          </div>
+
+         </div>
+        </div>
+
+
+        {selectedCustomerPayment.notes&&
+         <div className="customerDrawerNotes">
+          <span>OFFICE NOTES</span>
+          <p>{selectedCustomerPayment.notes}</p>
+         </div>
+        }
+
+
+        <div className="customerDrawerActions">
+
+         {selectedCustomerPayment.paymentUrl&&
+          <button
+           className="secondary"
+           onClick={()=>
+            copyCustomerLink(
+             selectedCustomerPayment.paymentUrl
+            )
+           }
+          >
+           Copy payment link
+          </button>
+         }
+
+
+         {selectedCustomerPayment.paymentUrl&&
+          <button
+           className="secondary"
+           onClick={()=>
+            window.open(
+             selectedCustomerPayment.paymentUrl,
+             '_blank'
+            )
+           }
+          >
+           Open payment
+          </button>
+         }
+
+
+         {selectedCustomerPayment.status==='open'&&
+          <button
+           className="dangerAction"
+           onClick={async()=>{
+
+            await cancelCustomerPayment(
+             selectedCustomerPayment.id
+            );
+
+            setSelectedCustomerPayment(null);
+
+           }}
+          >
+           Cancel payment
+          </button>
+         }
+
+        </div>
+
+       </aside>
+
+      </div>
+     }
+
+    </div>}
+
    {view==='monday'&&<><section className="officePageIntro"><div><span>WEEKLY SETTLEMENT</span><h2>Monday payment run</h2><p>Run Rent Sheets in Autocab first. FleetPay then syncs and uses <b>Previous Balance</b>, showing both drivers to pay and drivers who owe before any payment run is released.</p></div>{canMoney&&<button className="primary" onClick={createMonday}><PlayCircle/>Create Monday draft</button>}</section>{activeMonday?<><section className="runControlHero"><div><span>{activeMonday.runDate||'Monday run'}</span><h3>{activeMonday.status==='batched'?'Payment batch created':'Monday settlement active'}</h3><p>{activeMonday.id}</p></div><div className="mondayFinanceSummary">
 <div className="mondayFinanceRow">
 <div className="mondayFinanceLabel"><span>OUTGOING</span><b>Driver payouts</b></div>

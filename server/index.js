@@ -21,6 +21,7 @@ const BASE_URL = 'https://autocab-api.azure-api.net';
 const TOKEN_SECRET = process.env.PORTAL_TOKEN_SECRET || 'change-me-in-production';
 const ADMIN_EMAIL = String(process.env.ADMIN_EMAIL || 'admin@fleetpay.local').toLowerCase();
 const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || 'ChangeMe123!');
+const APP_ENV_LABEL = String(process.env.APP_ENV_LABEL || 'LOCAL').trim().toUpperCase();
 const DEV_AUTH_CODES = String(process.env.DEV_AUTH_CODES || 'true').toLowerCase() === 'true';
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'FleetPay <payments@example.com>';
@@ -871,7 +872,11 @@ function totpCode(secret,time=Date.now(),stepOffset=0){
 function verifyTotp(secret,code){const c=String(code||'').replace(/\D/g,'');if(c.length!==6)return false;return [-1,0,1].some(o=>{const expected=totpCode(secret,Date.now(),o);return crypto.timingSafeEqual(Buffer.from(expected),Buffer.from(c))})}
 function newMfaSecret(){return base32Encode(crypto.randomBytes(20))}
 function staffSafe(u){return {id:u.id,email:u.email,name:u.name,role:u.role,mfaEnabled:Boolean(u.mfa_enabled),active:Boolean(u.active),createdAt:u.created_at,updatedAt:u.updated_at,lastLoginAt:u.last_login_at}}
-function makeOtpAuth(email,secret){const issuer='FleetPay';return `otpauth://totp/${encodeURIComponent(issuer+':'+email)}?secret=${encodeURIComponent(secret)}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`}
+function makeOtpAuth(email,secret){
+ const issuer=`FleetPay ${APP_ENV_LABEL}`;
+ const label=`${issuer}:${email}`;
+ return `otpauth://totp/${encodeURIComponent(label)}?secret=${encodeURIComponent(secret)}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`
+}
 function ensureBootstrapAdmin(){
  const email=safeEmail(ADMIN_EMAIL);if(!email||!ADMIN_PASSWORD)return;
  const existing=db.prepare('SELECT id FROM staff_users WHERE email=?').get(email);if(existing)return;
