@@ -872,6 +872,7 @@ function AdminApp(){
 
               {customerJobStatus(x) &&
                customerJobStatus(x)!=='manual' &&
+               customerJobStatus(x)!==customerPaymentStatus(x) &&
                !(
                 customerPaymentStatus(x)==='open' &&
                 customerJobStatus(x)==='awaiting_payment'
@@ -1291,6 +1292,7 @@ function AdminApp(){
 
            {customerJobStatus(selectedCustomerPayment)&&
             customerJobStatus(selectedCustomerPayment)!=='manual'&&
+            customerJobStatus(selectedCustomerPayment)!==customerPaymentStatus(selectedCustomerPayment)&&
             <Pill tone={customerJobTone(customerJobStatus(selectedCustomerPayment))}>
              {customerJobLabel(customerJobStatus(selectedCustomerPayment))}
             </Pill>
