@@ -153,6 +153,7 @@ function AdminApp(){
  const[outstanding,setOutstanding]=useState([]),[fees,setFees]=useState({fees:[],summary:{}}),[earlySummary,setEarlySummary]=useState(null);
  const[customerAdmin,setCustomerAdmin]=useState({payments:[],summary:{}}),[customerCreate,setCustomerCreate]=useState({bookingId:'',callsign:'',customerName:'',customerMobile:'',customerEmail:'',pickup:'',destination:'',journeyAt:'',fareAmount:'',taxiCompany:'',notes:''}),[createdCustomerLink,setCreatedCustomerLink]=useState(null),[customerCreateBusy,setCustomerCreateBusy]=useState(false);
  const[customerPayQ,setCustomerPayQ]=useState(''),[customerPayStatus,setCustomerPayStatus]=useState('all'),[showCustomerCreate,setShowCustomerCreate]=useState(false),[selectedCustomerPayment,setSelectedCustomerPayment]=useState(null),[customerReleaseRetryBusy,setCustomerReleaseRetryBusy]=useState(false);
+ const[customerSettlementReview,setCustomerSettlementReview]=useState({decision:'full',amount:'',note:''}),[customerSettlementReviewBusy,setCustomerSettlementReviewBusy]=useState(false);
  const[driverUsers,setDriverUsers]=useState([]),[staff,setStaff]=useState([]),[securityLogs,setSecurityLogs]=useState([]);
  const[txQ,setTxQ]=useState(''),[txType,setTxType]=useState('all'),[txStatus,setTxStatus]=useState('all'),[txCategory,setTxCategory]=useState('all'),[txDateFrom,setTxDateFrom]=useState(''),[txDateTo,setTxDateTo]=useState('');
  const[q,setQ]=useState(''),[filter,setFilter]=useState('all'),[selected,setSelected]=useState(null),[selectedTx,setSelectedTx]=useState(null);
@@ -347,6 +348,69 @@ function AdminApp(){
  }
  async function copyCustomerLink(url){try{await navigator.clipboard.writeText(url);alert('Payment link copied.')}catch{prompt('Copy this payment link:',url)}}
  async function cancelCustomerPayment(id){if(!confirm('Cancel this unpaid payment link?'))return;try{await api(`/api/admin/customer-payments/${id}/cancel`,{method:'POST'});await loadCustomerAdmin()}catch(e){alert(e.message)}}
+ async function submitCustomerSettlementReview(payment){
+  if(!payment?.id)return;
+
+  const decision=customerSettlementReview.decision;
+  const amount=Number(customerSettlementReview.amount||0);
+  const note=customerSettlementReview.note.trim();
+
+  if(decision==='reduced'){
+   if(!Number.isFinite(amount)||amount<0||amount>Number(payment.fareAmount||0)){
+    return alert(`Enter an amount between £0.00 and ${money(payment.fareAmount)}.`);
+   }
+   if(!note)return alert('Enter an office note explaining the reduced payment.');
+  }
+
+  if(decision==='hold'&&!note){
+   return alert('Enter an office note explaining why the driver payment is being held.');
+  }
+
+  const wording=
+   decision==='full'
+    ? `Approve the full fare of ${money(payment.fareAmount)} for the driver?`
+    : decision==='reduced'
+    ? `Approve ${money(amount)} for the driver instead of the full ${money(payment.fareAmount)} fare?`
+    : `Hold this driver settlement at £0.00?`;
+
+  if(!confirm(wording))return;
+
+  setCustomerSettlementReviewBusy(true);
+
+  try{
+   const j=await api(
+    `/api/admin/customer-payments/${payment.id}/settlement-review`,
+    {
+     method:'POST',
+     body:JSON.stringify({
+      decision,
+      amount:decision==='reduced'?amount:undefined,
+      note
+     })
+    }
+   );
+
+   setSelectedCustomerPayment(prev=>(
+    prev?.id===payment.id
+     ? {...prev,...j.payment}
+     : prev
+   ));
+
+   setCustomerSettlementReview({
+    decision:'full',
+    amount:'',
+    note:''
+   });
+
+   await loadCustomerAdmin();
+
+  }catch(e){
+   alert(e.message);
+  }finally{
+   setCustomerSettlementReviewBusy(false);
+  }
+ }
+
  async function retryCustomerAutocabRelease(payment){
   if(!payment?.id)return;
 
@@ -1408,15 +1472,140 @@ function AdminApp(){
         }
 
         {customerSettlementStatus(selectedCustomerPayment)==='review'&&
-         <div className="customerLifecycleWarning">
-          <AlertTriangle/>
+         <div className="customerSettlementReviewCard">
+
+          <div className="customerSettlementReviewHead">
+           <AlertTriangle/>
+           <div>
+            <b>Driver settlement review required</b>
+            <span>
+             The customer has paid, but this job ended as {
+              customerJobLabel(customerJobStatus(selectedCustomerPayment))
+             }. Decide what amount should be released to the driver.
+            </span>
+           </div>
+          </div>
+
+          <div className="customerSettlementChoices">
+
+           <button
+            type="button"
+            className={customerSettlementReview.decision==='full'?'active':''}
+            onClick={()=>setCustomerSettlementReview(x=>({
+             ...x,
+             decision:'full'
+            }))}
+           >
+            <b>Full fare</b>
+            <span>{money(selectedCustomerPayment.fareAmount)}</span>
+           </button>
+
+           <button
+            type="button"
+            className={customerSettlementReview.decision==='reduced'?'active':''}
+            onClick={()=>setCustomerSettlementReview(x=>({
+             ...x,
+             decision:'reduced'
+            }))}
+           >
+            <b>Reduced</b>
+            <span>Enter amount</span>
+           </button>
+
+           <button
+            type="button"
+            className={customerSettlementReview.decision==='hold'?'active danger':''}
+            onClick={()=>setCustomerSettlementReview(x=>({
+             ...x,
+             decision:'hold'
+            }))}
+           >
+            <b>Hold</b>
+            <span>£0.00</span>
+           </button>
+
+          </div>
+
+          {customerSettlementReview.decision==='reduced'&&
+           <label className="customerSettlementAmount">
+            Driver payment
+            <div>
+             <span>£</span>
+             <input
+              type="number"
+              min="0"
+              max={Number(selectedCustomerPayment.fareAmount||0)}
+              step="0.01"
+              value={customerSettlementReview.amount}
+              onChange={e=>setCustomerSettlementReview(x=>({
+               ...x,
+               amount:e.target.value
+              }))}
+              placeholder="0.00"
+             />
+            </div>
+           </label>
+          }
+
+          {(customerSettlementReview.decision==='reduced'||
+            customerSettlementReview.decision==='hold')&&
+           <label className="customerSettlementNote">
+            Office note
+            <textarea
+             rows="3"
+             value={customerSettlementReview.note}
+             onChange={e=>setCustomerSettlementReview(x=>({
+              ...x,
+              note:e.target.value
+             }))}
+             placeholder="Explain the settlement decision…"
+            />
+           </label>
+          }
+
+          <button
+           type="button"
+           className="customerSettlementApproveButton"
+           disabled={customerSettlementReviewBusy}
+           onClick={()=>submitCustomerSettlementReview(selectedCustomerPayment)}
+          >
+           <ShieldCheck/>
+           {customerSettlementReviewBusy
+            ? 'Saving decision…'
+            : customerSettlementReview.decision==='hold'
+            ? 'Hold driver payment'
+            : 'Approve driver payment'}
+          </button>
+
+         </div>
+        }
+
+        {['approved','held'].includes(customerSettlementStatus(selectedCustomerPayment))&&
+         selectedCustomerPayment.driverSettlementAmount!==null&&
+         <div className={`customerSettlementDecision ${customerSettlementStatus(selectedCustomerPayment)}`}>
+          <ShieldCheck/>
           <div>
-           <b>Driver settlement review required</b>
-           <span>
-            The customer payment remains paid, but this job ended as {
-             customerJobLabel(customerJobStatus(selectedCustomerPayment))
-            }. Review the driver payment before settlement.
-           </span>
+           <b>
+            {customerSettlementStatus(selectedCustomerPayment)==='held'
+             ? 'Driver payment held'
+             : `Driver payment approved: ${money(selectedCustomerPayment.driverSettlementAmount)}`}
+           </b>
+
+           {selectedCustomerPayment.driverSettlementNote&&
+            <span>{selectedCustomerPayment.driverSettlementNote}</span>
+           }
+
+           {selectedCustomerPayment.driverSettlementReviewedAt&&
+            <small>
+             Reviewed {
+              dt(selectedCustomerPayment.driverSettlementReviewedAt)
+             }{
+              selectedCustomerPayment.driverSettlementReviewedBy
+               ? ` · ${selectedCustomerPayment.driverSettlementReviewedBy}`
+               : ''
+             }
+            </small>
+           }
           </div>
          </div>
         }

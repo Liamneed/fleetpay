@@ -5106,3 +5106,203 @@ body {
   width:16px;
   height:16px;
 }
+
+
+/* ============================================================
+   CUSTOMER PAYMENT · DRIVER SETTLEMENT REVIEW
+   ============================================================ */
+
+.customerSettlementReviewCard{
+  margin:16px 0;
+  padding:16px;
+  border:1px solid rgba(217,119,6,.24);
+  border-radius:14px;
+  background:#fffaf0;
+}
+
+.customerSettlementReviewHead{
+  display:flex;
+  gap:11px;
+  align-items:flex-start;
+}
+
+.customerSettlementReviewHead > svg{
+  width:20px;
+  height:20px;
+  flex:0 0 auto;
+  margin-top:1px;
+}
+
+.customerSettlementReviewHead > div{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+
+.customerSettlementReviewHead b{
+  font-size:13px;
+}
+
+.customerSettlementReviewHead span{
+  font-size:12px;
+  line-height:1.45;
+  opacity:.78;
+}
+
+.customerSettlementChoices{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:8px;
+  margin-top:14px;
+}
+
+.customerSettlementChoices button{
+  display:flex;
+  flex-direction:column;
+  align-items:flex-start;
+  gap:2px;
+  padding:11px 12px;
+  border:1px solid #dedfe3;
+  border-radius:10px;
+  background:white;
+  cursor:pointer;
+  text-align:left;
+}
+
+.customerSettlementChoices button b{
+  font-size:12px;
+}
+
+.customerSettlementChoices button span{
+  font-size:11px;
+  opacity:.68;
+}
+
+.customerSettlementChoices button.active{
+  border-color:#4a74e8;
+  box-shadow:0 0 0 2px rgba(74,116,232,.11);
+  background:#f7f9ff;
+}
+
+.customerSettlementChoices button.active.danger{
+  border-color:#d87c85;
+  background:#fff5f5;
+  box-shadow:0 0 0 2px rgba(198,56,69,.08);
+}
+
+.customerSettlementAmount,
+.customerSettlementNote{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  margin-top:12px;
+  font-size:11px;
+  font-weight:800;
+}
+
+.customerSettlementAmount > div{
+  display:flex;
+  align-items:center;
+  border:1px solid #d9dce3;
+  border-radius:9px;
+  background:#fff;
+  overflow:hidden;
+}
+
+.customerSettlementAmount > div span{
+  padding-left:11px;
+  font-weight:800;
+}
+
+.customerSettlementAmount input{
+  width:100%;
+  border:0;
+  outline:0;
+  padding:10px 9px;
+  background:transparent;
+}
+
+.customerSettlementNote textarea{
+  width:100%;
+  resize:vertical;
+  border:1px solid #d9dce3;
+  border-radius:9px;
+  padding:10px;
+  font:inherit;
+  font-weight:500;
+  background:#fff;
+}
+
+.customerSettlementApproveButton{
+  width:100%;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  gap:8px;
+  margin-top:12px;
+  padding:11px 14px;
+  border:0;
+  border-radius:10px;
+  background:#172a46;
+  color:#fff;
+  font-weight:800;
+  cursor:pointer;
+}
+
+.customerSettlementApproveButton:disabled{
+  opacity:.6;
+  cursor:not-allowed;
+}
+
+.customerSettlementApproveButton svg{
+  width:16px;
+  height:16px;
+}
+
+.customerSettlementDecision{
+  display:flex;
+  gap:11px;
+  align-items:flex-start;
+  margin:16px 0;
+  padding:14px 15px;
+  border-radius:12px;
+}
+
+.customerSettlementDecision.approved{
+  border:1px solid rgba(16,130,91,.22);
+  background:rgba(16,130,91,.07);
+}
+
+.customerSettlementDecision.held{
+  border:1px solid rgba(194,91,38,.22);
+  background:rgba(194,91,38,.07);
+}
+
+.customerSettlementDecision > svg{
+  width:19px;
+  height:19px;
+  flex:0 0 auto;
+}
+
+.customerSettlementDecision > div{
+  display:flex;
+  flex-direction:column;
+  gap:3px;
+}
+
+.customerSettlementDecision b{
+  font-size:13px;
+}
+
+.customerSettlementDecision span,
+.customerSettlementDecision small{
+  font-size:11px;
+  line-height:1.4;
+  opacity:.76;
+}
+
+@media(max-width:600px){
+  .customerSettlementChoices{
+    grid-template-columns:1fr;
+  }
+}

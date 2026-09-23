@@ -94,6 +94,10 @@ CREATE TABLE IF NOT EXISTS customer_payments (
  payment_status TEXT NOT NULL DEFAULT 'open',
  job_status TEXT NOT NULL DEFAULT 'awaiting_payment',
  driver_settlement_status TEXT NOT NULL DEFAULT 'not_ready',
+ driver_settlement_amount REAL,
+ driver_settlement_note TEXT,
+ driver_settlement_reviewed_by TEXT,
+ driver_settlement_reviewed_at TEXT,
  provider TEXT,
  provider_session_id TEXT,
  payment_url TEXT,
@@ -266,6 +270,10 @@ for (const sql of [
   'ALTER TABLE customer_payments ADD COLUMN payment_status TEXT NOT NULL DEFAULT \'open\'',
   'ALTER TABLE customer_payments ADD COLUMN job_status TEXT NOT NULL DEFAULT \'awaiting_payment\'',
   'ALTER TABLE customer_payments ADD COLUMN driver_settlement_status TEXT NOT NULL DEFAULT \'not_ready\'',
+  'ALTER TABLE customer_payments ADD COLUMN driver_settlement_amount REAL',
+  'ALTER TABLE customer_payments ADD COLUMN driver_settlement_note TEXT',
+  'ALTER TABLE customer_payments ADD COLUMN driver_settlement_reviewed_by TEXT',
+  'ALTER TABLE customer_payments ADD COLUMN driver_settlement_reviewed_at TEXT',
   'ALTER TABLE customer_payments ADD COLUMN customer_name TEXT',
   'ALTER TABLE customer_payments ADD COLUMN customer_mobile TEXT',
   'ALTER TABLE customer_payments ADD COLUMN customer_email TEXT',
@@ -2848,6 +2856,13 @@ function publicCustomerPayment(row){
   paymentStatus:row.payment_status||row.status||'open',
   jobStatus:row.job_status||'awaiting_payment',
   driverSettlementStatus:row.driver_settlement_status||'not_ready',
+  driverSettlementAmount:
+   row.driver_settlement_amount===null || row.driver_settlement_amount===undefined
+    ? null
+    : Number(row.driver_settlement_amount),
+  driverSettlementNote:row.driver_settlement_note||'',
+  driverSettlementReviewedBy:row.driver_settlement_reviewed_by||null,
+  driverSettlementReviewedAt:row.driver_settlement_reviewed_at||null,
   autocabReleaseStatus:row.autocab_release_status||'not_required',
   autocabReleaseAttempts:Number(row.autocab_release_attempts||0),
   autocabReleaseError:row.autocab_release_error||null,
@@ -2911,6 +2926,122 @@ app.post('/api/admin/customer-payments/:id/cancel',adminAuth,requireStaffRole('a
  const row=db.prepare('SELECT * FROM customer_payments WHERE id=?').get(req.params.id);if(!row)return res.status(404).json({error:'Payment not found'});if(row.status==='paid')return res.status(400).json({error:'Paid payments cannot be cancelled. Use the refund workflow when enabled.'});
  db.prepare('UPDATE customer_payments SET status=?,updated_at=? WHERE id=?').run('cancelled',new Date().toISOString(),row.id);audit(req,'admin',req.auth.email,'customer_payment_cancelled','customer_payment',row.id,{});res.json({ok:true});
 });
+
+app.post(
+ '/api/admin/customer-payments/:id/settlement-review',
+ adminAuth,
+ requireStaffRole('administrator','finance','office'),
+ (req,res)=>{
+  try{
+   const row=db.prepare(
+    'SELECT * FROM customer_payments WHERE id=?'
+   ).get(req.params.id);
+
+   if(!row)return res.status(404).json({error:'Payment not found'});
+
+   if(row.payment_status!=='paid' && row.status!=='paid'){
+    return res.status(400).json({
+     error:'Only paid customer payments can be reviewed.'
+    });
+   }
+
+   if(!['no_fare','cancelled'].includes(String(row.job_status||''))){
+    return res.status(400).json({
+     error:'Settlement review is only available for paid No Fare or Cancelled jobs.'
+    });
+   }
+
+   const decision=String(req.body.decision||'').trim();
+   const note=String(req.body.note||'').trim();
+   const fare=Math.round(Number(row.fare_amount||0)*100)/100;
+
+   let amount=null;
+   let nextStatus='review';
+
+   if(decision==='full'){
+    amount=fare;
+    nextStatus='approved';
+
+   }else if(decision==='reduced'){
+    amount=Math.round(Number(req.body.amount||0)*100)/100;
+
+    if(!Number.isFinite(amount) || amount<0 || amount>fare){
+     return res.status(400).json({
+      error:`Enter a driver payment between £0.00 and £${fare.toFixed(2)}.`
+     });
+    }
+
+    nextStatus=amount>0?'approved':'held';
+
+   }else if(decision==='hold'){
+    amount=0;
+    nextStatus='held';
+
+   }else{
+    return res.status(400).json({
+     error:'Choose full, reduced or hold.'
+    });
+   }
+
+   if((decision==='reduced'||decision==='hold') && !note){
+    return res.status(400).json({
+     error:'Enter an office note explaining this settlement decision.'
+    });
+   }
+
+   const now=new Date().toISOString();
+
+   db.prepare(`
+    UPDATE customer_payments
+    SET driver_settlement_status=?,
+        driver_settlement_amount=?,
+        driver_settlement_note=?,
+        driver_settlement_reviewed_by=?,
+        driver_settlement_reviewed_at=?,
+        updated_at=?
+    WHERE id=?
+   `).run(
+    nextStatus,
+    amount,
+    note||null,
+    req.auth.email,
+    now,
+    now,
+    row.id
+   );
+
+   audit(
+    req,
+    'admin',
+    req.auth.email,
+    'customer_payment_settlement_reviewed',
+    'customer_payment',
+    row.id,
+    {
+     bookingId:row.booking_id||null,
+     jobStatus:row.job_status,
+     decision,
+     fareAmount:fare,
+     approvedDriverAmount:amount,
+     settlementStatus:nextStatus,
+     note:note||null
+    }
+   );
+
+   const updated=db.prepare(
+    'SELECT * FROM customer_payments WHERE id=?'
+   ).get(row.id);
+
+   res.json({
+    ok:true,
+    payment:publicCustomerPayment(updated)
+   });
+
+  }catch(e){
+   res.status(500).json({error:e.message});
+  }
+ }
+);
 
 app.post(
  '/api/admin/customer-payments/:id/retry-autocab-release',
