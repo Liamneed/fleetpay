@@ -4637,3 +4637,375 @@ body {
 .customerLifecycleSection .detailList b {
   text-transform: none;
 }
+
+
+/* ============================================================
+   CUSTOMER PAYMENTS · STATUS + TABLE POLISH
+   ============================================================ */
+
+/* Give the lifecycle column enough room to stay horizontal */
+.customerPaymentsTableV2 th:nth-child(1),
+.customerPaymentsTableV2 td:nth-child(1){
+  width:11%;
+}
+
+.customerPaymentsTableV2 th:nth-child(2),
+.customerPaymentsTableV2 td:nth-child(2){
+  width:15%;
+}
+
+.customerPaymentsTableV2 th:nth-child(3),
+.customerPaymentsTableV2 td:nth-child(3){
+  width:11%;
+}
+
+.customerPaymentsTableV2 th:nth-child(4),
+.customerPaymentsTableV2 td:nth-child(4){
+  width:23%;
+}
+
+.customerPaymentsTableV2 th:nth-child(5),
+.customerPaymentsTableV2 td:nth-child(5){
+  width:9%;
+}
+
+.customerPaymentsTableV2 th:nth-child(6),
+.customerPaymentsTableV2 td:nth-child(6){
+  width:7%;
+}
+
+.customerPaymentsTableV2 th:nth-child(7),
+.customerPaymentsTableV2 td:nth-child(7){
+  width:7%;
+}
+
+.customerPaymentsTableV2 th:nth-child(8),
+.customerPaymentsTableV2 td:nth-child(8){
+  width:14%;
+}
+
+.customerPaymentsTableV2 th:nth-child(9),
+.customerPaymentsTableV2 td:nth-child(9){
+  width:3%;
+}
+
+/* Cleaner, easier-to-scan rows */
+.customerPaymentsTableV2 tbody td{
+  padding-top:15px;
+  padding-bottom:15px;
+}
+
+.customerPaymentsTableV2 tbody tr{
+  transition:
+    background-color .15s ease,
+    box-shadow .15s ease;
+}
+
+.customerPaymentsTableV2 tbody tr:hover{
+  background:#f8fafc;
+  box-shadow:inset 3px 0 0 #d7e4ff;
+}
+
+.customerPaymentsTableV2 td:nth-child(2) b{
+  color:#16233b;
+  font-weight:800;
+  letter-spacing:-.01em;
+}
+
+.customerPaymentsTableV2 td:nth-child(3) b{
+  color:#26344d;
+  font-weight:750;
+}
+
+.customerPaymentsTableV2 td:nth-child(6) b{
+  font-weight:750;
+}
+
+.customerPaymentsTableV2 .customerTotalV2{
+  font-size:15px;
+  font-weight:850;
+  letter-spacing:-.015em;
+  color:#111c30;
+}
+
+.customerPaymentsTableV2 td small{
+  color:#7b8799;
+  font-size:12px;
+}
+
+/* Journey remains useful without dominating the row */
+.customerJourneyV2 b{
+  font-weight:750;
+  color:#26344d;
+}
+
+.customerJourneyV2 small{
+  color:#728096;
+}
+
+/* Lifecycle badge container */
+.customerLifecycleBadges{
+  display:flex;
+  align-items:center;
+  align-content:center;
+  gap:5px;
+  flex-wrap:wrap;
+  min-width:0;
+}
+
+/* New lifecycle chip */
+.customerStatusBadge{
+  --status-bg:#f1f5f9;
+  --status-fg:#475569;
+  --status-border:#e2e8f0;
+  --status-dot:#94a3b8;
+
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+
+  min-height:24px;
+  padding:4px 8px;
+
+  border:1px solid var(--status-border);
+  border-radius:999px;
+
+  background:var(--status-bg);
+  color:var(--status-fg);
+
+  font-size:10.5px;
+  line-height:1;
+  font-weight:800;
+  letter-spacing:.005em;
+  white-space:nowrap;
+}
+
+.customerStatusBadge i{
+  width:6px;
+  height:6px;
+  flex:0 0 auto;
+  border-radius:50%;
+  background:var(--status-dot);
+  box-shadow:0 0 0 2px rgba(255,255,255,.68);
+}
+
+/* Payment states */
+.customerStatusBadge.payment.open{
+  --status-bg:#fff8e8;
+  --status-fg:#9a5b05;
+  --status-border:#f7dfaa;
+  --status-dot:#d99012;
+}
+
+.customerStatusBadge.payment.paid{
+  --status-bg:#eaf8f2;
+  --status-fg:#087a58;
+  --status-border:#cbeadd;
+  --status-dot:#16a374;
+}
+
+.customerStatusBadge.payment.cancelled{
+  --status-bg:#fff0f0;
+  --status-fg:#b4232f;
+  --status-border:#f5d1d5;
+  --status-dot:#dc4b59;
+}
+
+.customerStatusBadge.payment.refunded{
+  --status-bg:#f1f5f9;
+  --status-fg:#536273;
+  --status-border:#dce4ec;
+  --status-dot:#8291a3;
+}
+
+/* Job states */
+.customerStatusBadge.job.release-pending{
+  --status-bg:#f5edff;
+  --status-fg:#7137a8;
+  --status-border:#e4d3f8;
+  --status-dot:#9b5bd1;
+}
+
+.customerStatusBadge.job.ready{
+  --status-bg:#edf5ff;
+  --status-fg:#1f66b1;
+  --status-border:#d2e5fb;
+  --status-dot:#3d8bd8;
+}
+
+.customerStatusBadge.job.dispatched{
+  --status-bg:#eef0ff;
+  --status-fg:#4f54a6;
+  --status-border:#d9dcfa;
+  --status-dot:#6d70c8;
+}
+
+.customerStatusBadge.job.completed{
+  --status-bg:#eff9f3;
+  --status-fg:#26764f;
+  --status-border:#d2eadb;
+  --status-dot:#4aa875;
+}
+
+.customerStatusBadge.job.cancelled{
+  --status-bg:#fff1f1;
+  --status-fg:#b8323d;
+  --status-border:#f3d4d7;
+  --status-dot:#dc5660;
+}
+
+.customerStatusBadge.job.no-fare{
+  --status-bg:#fff0f5;
+  --status-fg:#ad315e;
+  --status-border:#f2d0dc;
+  --status-dot:#d5537d;
+}
+
+.customerStatusBadge.job.awaiting-payment{
+  --status-bg:#fff8e8;
+  --status-fg:#9a5b05;
+  --status-border:#f7dfaa;
+  --status-dot:#d99012;
+}
+
+/* Settlement states */
+.customerStatusBadge.settlement.review{
+  --status-bg:#fff4df;
+  --status-fg:#a15b00;
+  --status-border:#f1d5a0;
+  --status-dot:#e08a13;
+}
+
+.customerStatusBadge.settlement.held{
+  --status-bg:#fff0ed;
+  --status-fg:#a43c2b;
+  --status-border:#f3d3cb;
+  --status-dot:#d65d48;
+}
+
+.customerStatusBadge.settlement.approved{
+  --status-bg:#eaf8f2;
+  --status-fg:#087a58;
+  --status-border:#cbeadd;
+  --status-dot:#16a374;
+}
+
+.customerStatusBadge.settlement.paid{
+  --status-bg:#e8f8f7;
+  --status-fg:#08746f;
+  --status-border:#c7e8e5;
+  --status-dot:#159c94;
+}
+
+.customerStatusBadge.settlement.not-ready{
+  --status-bg:#f3f5f7;
+  --status-fg:#667382;
+  --status-border:#e1e6eb;
+  --status-dot:#9ba6b2;
+}
+
+/* Slight distinction between payment and operational status */
+.customerLifecycleBadges .customerStatusBadge.payment{
+  font-weight:850;
+}
+
+.customerLifecycleBadges .customerStatusBadge.job{
+  opacity:.96;
+}
+
+/* Drawer can show the full lifecycle */
+.customerDrawerLifecycleBadges{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  flex-wrap:wrap;
+  margin-top:9px;
+}
+
+.customerDrawerLifecycleBadges .customerStatusBadge{
+  min-height:26px;
+  padding:5px 9px;
+  font-size:11px;
+}
+
+/* Make review warning feel intentional rather than alarming */
+.customerLifecycleWarning{
+  border-color:#f0d6a5;
+  background:#fff9ed;
+  box-shadow:0 1px 2px rgba(122,78,10,.04);
+}
+
+.customerLifecycleWarning > svg{
+  color:#c77909;
+}
+
+.customerLifecycleWarning b{
+  color:#7f4b05;
+}
+
+.customerLifecycleWarning span{
+  color:#756447;
+  opacity:1;
+}
+
+/* Better chevron affordance */
+.customerChevronV2{
+  text-align:center;
+}
+
+.customerChevronV2 svg{
+  width:16px;
+  height:16px;
+  padding:5px;
+  box-sizing:content-box;
+  border-radius:50%;
+  color:#8b98aa;
+  transition:
+    background .15s ease,
+    color .15s ease,
+    transform .15s ease;
+}
+
+.customerPaymentRowV2:hover .customerChevronV2 svg{
+  background:#eef3f9;
+  color:#3b5f8d;
+  transform:translateX(2px);
+}
+
+@media(max-width:1100px){
+  .customerPaymentsTableV2 table{
+    min-width:1180px;
+  }
+}
+
+/* Final customer payment status polish */
+
+.customerStatusBadge{
+  min-height:26px;
+  padding:5px 9px;
+  font-size:11px;
+}
+
+.customerStatusBadge i{
+  width:7px;
+  height:7px;
+}
+
+.customerPaymentsTableV2 th:nth-child(8),
+.customerPaymentsTableV2 td:nth-child(8){
+  width:15%;
+}
+
+.customerPaymentsTableV2 th:nth-child(4),
+.customerPaymentsTableV2 td:nth-child(4){
+  width:22%;
+}
+
+.customerStatusBadge.settlement.review{
+  font-weight:900;
+  box-shadow:0 0 0 1px rgba(224,138,19,.08);
+}
+
+.customerStatusBadge.settlement.review i{
+  box-shadow:0 0 0 3px rgba(224,138,19,.13);
+}

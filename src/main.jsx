@@ -856,19 +856,15 @@ function AdminApp(){
 
             <td>
              <div className="customerLifecycleBadges">
-              <Pill
-               tone={
-                customerPaymentStatus(x)==='paid'
-                 ? 'good'
-                 : customerPaymentStatus(x)==='cancelled'
-                 ? 'bad'
-                 : customerPaymentStatus(x)==='refunded'
-                 ? 'neutral'
-                 : 'warn'
-               }
+
+              <span
+               className={`customerStatusBadge payment ${String(
+                customerPaymentStatus(x)
+               ).replaceAll('_','-')}`}
               >
+               <i/>
                {customerPaymentLabel(customerPaymentStatus(x))}
-              </Pill>
+              </span>
 
               {customerJobStatus(x) &&
                customerJobStatus(x)!=='manual' &&
@@ -877,14 +873,29 @@ function AdminApp(){
                 customerPaymentStatus(x)==='open' &&
                 customerJobStatus(x)==='awaiting_payment'
                ) &&
-               <Pill tone={customerJobTone(customerJobStatus(x))}>
+               <span
+                className={`customerStatusBadge job ${String(
+                 customerJobStatus(x)
+                ).replaceAll('_','-')}`}
+               >
+                <i/>
                 {customerJobLabel(customerJobStatus(x))}
-               </Pill>
+               </span>
               }
 
-              {customerSettlementStatus(x)==='review'&&
-               <Pill tone="warn">Review</Pill>
+              {['review','held'].includes(customerSettlementStatus(x))&&
+               <span
+                className={`customerStatusBadge settlement ${String(
+                 customerSettlementStatus(x)
+                ).replaceAll('_','-')}`}
+               >
+                <i/>
+                {customerSettlementStatus(x)==='review'
+                 ? 'Review'
+                 : customerSettlementLabel(customerSettlementStatus(x))}
+               </span>
               }
+
              </div>
             </td>
 
@@ -1276,31 +1287,44 @@ function AdminApp(){
           </h2>
 
           <div className="customerDrawerLifecycleBadges">
-           <Pill
-            tone={
-             customerPaymentStatus(selectedCustomerPayment)==='paid'
-              ? 'good'
-              : customerPaymentStatus(selectedCustomerPayment)==='cancelled'
-              ? 'bad'
-              : customerPaymentStatus(selectedCustomerPayment)==='refunded'
-              ? 'neutral'
-              : 'warn'
-            }
+
+           <span
+            className={`customerStatusBadge payment ${String(
+             customerPaymentStatus(selectedCustomerPayment)
+            ).replaceAll('_','-')}`}
            >
-            {customerPaymentLabel(customerPaymentStatus(selectedCustomerPayment))}
-           </Pill>
+            <i/>
+            {customerPaymentLabel(
+             customerPaymentStatus(selectedCustomerPayment)
+            )}
+           </span>
 
            {customerJobStatus(selectedCustomerPayment)&&
             customerJobStatus(selectedCustomerPayment)!=='manual'&&
             customerJobStatus(selectedCustomerPayment)!==customerPaymentStatus(selectedCustomerPayment)&&
-            <Pill tone={customerJobTone(customerJobStatus(selectedCustomerPayment))}>
-             {customerJobLabel(customerJobStatus(selectedCustomerPayment))}
-            </Pill>
+            <span
+             className={`customerStatusBadge job ${String(
+              customerJobStatus(selectedCustomerPayment)
+             ).replaceAll('_','-')}`}
+            >
+             <i/>
+             {customerJobLabel(
+              customerJobStatus(selectedCustomerPayment)
+             )}
+            </span>
            }
 
-           {customerSettlementStatus(selectedCustomerPayment)==='review'&&
-            <Pill tone="warn">Review required</Pill>
-           }
+           <span
+            className={`customerStatusBadge settlement ${String(
+             customerSettlementStatus(selectedCustomerPayment)
+            ).replaceAll('_','-')}`}
+           >
+            <i/>
+            {customerSettlementLabel(
+             customerSettlementStatus(selectedCustomerPayment)
+            )}
+           </span>
+
           </div>
          </div>
 
