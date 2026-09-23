@@ -5009,3 +5009,100 @@ body {
 .customerStatusBadge.settlement.review i{
   box-shadow:0 0 0 3px rgba(224,138,19,.13);
 }
+
+
+/* ============================================================
+   CUSTOMER PAYMENT · AUTOCAB RELEASE FAILURE
+   ============================================================ */
+
+.customerStatusBadge.autocab-failed{
+  --status-bg:#fff0f0;
+  --status-fg:#a61f2b;
+  --status-border:#f1c9ce;
+  --status-dot:#dc3545;
+  font-weight:900;
+}
+
+.customerAutocabReleaseWarning{
+  display:flex;
+  gap:12px;
+  align-items:flex-start;
+  margin:16px 0;
+  padding:15px 16px;
+  border:1px solid #efc6cb;
+  border-radius:12px;
+  background:#fff4f4;
+}
+
+.customerAutocabReleaseWarning > svg{
+  width:20px;
+  height:20px;
+  flex:0 0 auto;
+  margin-top:1px;
+  color:#c52b38;
+}
+
+.customerAutocabReleaseWarning > div{
+  display:flex;
+  flex-direction:column;
+  gap:5px;
+  min-width:0;
+}
+
+.customerAutocabReleaseWarning b{
+  color:#8f1f29;
+  font-size:13px;
+}
+
+.customerAutocabReleaseWarning span{
+  color:#6e4b4e;
+  font-size:12px;
+  line-height:1.45;
+}
+
+.customerAutocabReleaseWarning small{
+  margin-top:3px;
+  padding:8px 10px;
+  border-radius:8px;
+  background:rgba(255,255,255,.75);
+  color:#8b3740;
+  font-size:11px;
+  line-height:1.4;
+  overflow-wrap:anywhere;
+}
+
+.customerAutocabReleaseWarning em{
+  color:#8b6a6d;
+  font-size:11px;
+  font-style:normal;
+  font-weight:700;
+}
+
+.customerRetryAutocabButton{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  border:1px solid #d9a7ad;
+  border-radius:10px;
+  padding:10px 14px;
+  background:#fff3f4;
+  color:#9f2430;
+  font-weight:800;
+  cursor:pointer;
+}
+
+.customerRetryAutocabButton:hover:not(:disabled){
+  background:#ffe8ea;
+  border-color:#c9878f;
+}
+
+.customerRetryAutocabButton:disabled{
+  opacity:.65;
+  cursor:not-allowed;
+}
+
+.customerRetryAutocabButton svg{
+  width:16px;
+  height:16px;
+}

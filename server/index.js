@@ -99,6 +99,10 @@ CREATE TABLE IF NOT EXISTS customer_payments (
  payment_url TEXT,
  stripe_payment_intent_id TEXT,
  payment_method TEXT,
+ autocab_release_status TEXT NOT NULL DEFAULT 'not_required',
+ autocab_release_attempts INTEGER NOT NULL DEFAULT 0,
+ autocab_release_error TEXT,
+ autocab_released_at TEXT,
  created_at TEXT NOT NULL,
  updated_at TEXT,
  paid_at TEXT
@@ -251,6 +255,10 @@ for (const sql of [
   'ALTER TABLE payment_requests ADD COLUMN paid_at TEXT',
   'ALTER TABLE driver_cache ADD COLUMN payout_excluded INTEGER NOT NULL DEFAULT 0',
   'ALTER TABLE driver_cache ADD COLUMN payout_exclusion_reason TEXT',
+  "ALTER TABLE customer_payments ADD COLUMN autocab_release_status TEXT NOT NULL DEFAULT 'not_required'",
+  'ALTER TABLE customer_payments ADD COLUMN autocab_release_attempts INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE customer_payments ADD COLUMN autocab_release_error TEXT',
+  'ALTER TABLE customer_payments ADD COLUMN autocab_released_at TEXT',
   'ALTER TABLE payment_requests ADD COLUMN due_at TEXT',
   'ALTER TABLE payment_requests ADD COLUMN email_sent_at TEXT',
   'ALTER TABLE payment_requests ADD COLUMN sms_sent_at TEXT',
@@ -519,6 +527,12 @@ app.post('/api/stripe/webhook', express.raw({type:'application/json'}), async (r
                  THEN 'release_pending'
                  ELSE job_status
                 END,
+                autocab_release_status=CASE
+                 WHEN source='autocab_booking_created'
+                 THEN 'pending'
+                 ELSE autocab_release_status
+                END,
+                autocab_release_error=NULL,
                 provider=?,
                 provider_session_id=?,
                 stripe_payment_intent_id=?,
@@ -597,6 +611,19 @@ app.post('/api/stripe/webhook', express.raw({type:'application/json'}), async (r
             console.error(
               `FleetPay Autocab release failed for payment ${customerPaymentId}:`,
               e.message
+            );
+
+            db.prepare(`
+              UPDATE customer_payments
+              SET autocab_release_status='failed',
+                  autocab_release_error=?,
+                  updated_at=?
+              WHERE id=?
+                AND job_status='release_pending'
+            `).run(
+              String(e.message||'Autocab release failed').slice(0,1000),
+              new Date().toISOString(),
+              customerPaymentId
             );
 
             audit(
@@ -1815,6 +1842,17 @@ async function releaseFleetPayBooking(paymentId){
   throw new Error(`Invalid fare amount for booking ${bookingId}: ${item.fare_amount}`);
  }
 
+ const attemptAt=new Date().toISOString();
+
+ db.prepare(`
+  UPDATE customer_payments
+  SET autocab_release_status='pending',
+      autocab_release_attempts=COALESCE(autocab_release_attempts,0)+1,
+      autocab_release_error=NULL,
+      updated_at=?
+  WHERE id=?
+ `).run(attemptAt,item.id);
+
  const url=`${BASE_URL}/booking/v1/booking/${encodeURIComponent(bookingId)}`;
  const booking=await getJson(url);
 
@@ -1858,11 +1896,14 @@ async function releaseFleetPayBooking(paymentId){
  const result=db.prepare(`
   UPDATE customer_payments
   SET job_status='ready',
+      autocab_release_status='completed',
+      autocab_release_error=NULL,
+      autocab_released_at=?,
       updated_at=?
   WHERE id=?
     AND payment_status='paid'
     AND job_status='release_pending'
- `).run(now,item.id);
+ `).run(now,now,item.id);
 
  return {
   ok:true,
@@ -2807,6 +2848,10 @@ function publicCustomerPayment(row){
   paymentStatus:row.payment_status||row.status||'open',
   jobStatus:row.job_status||'awaiting_payment',
   driverSettlementStatus:row.driver_settlement_status||'not_ready',
+  autocabReleaseStatus:row.autocab_release_status||'not_required',
+  autocabReleaseAttempts:Number(row.autocab_release_attempts||0),
+  autocabReleaseError:row.autocab_release_error||null,
+  autocabReleasedAt:row.autocab_released_at||null,
   createdAt:row.created_at,
   paidAt:row.paid_at||null,
   refundStatus:row.refund_status||null,
@@ -2866,6 +2911,92 @@ app.post('/api/admin/customer-payments/:id/cancel',adminAuth,requireStaffRole('a
  const row=db.prepare('SELECT * FROM customer_payments WHERE id=?').get(req.params.id);if(!row)return res.status(404).json({error:'Payment not found'});if(row.status==='paid')return res.status(400).json({error:'Paid payments cannot be cancelled. Use the refund workflow when enabled.'});
  db.prepare('UPDATE customer_payments SET status=?,updated_at=? WHERE id=?').run('cancelled',new Date().toISOString(),row.id);audit(req,'admin',req.auth.email,'customer_payment_cancelled','customer_payment',row.id,{});res.json({ok:true});
 });
+
+app.post(
+ '/api/admin/customer-payments/:id/retry-autocab-release',
+ adminAuth,
+ requireStaffRole('administrator','finance','office'),
+ async(req,res)=>{
+  const row=db.prepare(
+   'SELECT * FROM customer_payments WHERE id=?'
+  ).get(req.params.id);
+
+  if(!row)return res.status(404).json({error:'Payment not found'});
+
+  if(row.source!=='autocab_booking_created'){
+   return res.status(400).json({error:'This payment was not created from an Autocab booking.'});
+  }
+
+  if(row.payment_status!=='paid' && row.status!=='paid'){
+   return res.status(400).json({error:'The customer payment has not been paid.'});
+  }
+
+  if(row.job_status!=='release_pending'){
+   return res.status(400).json({
+    error:`Autocab release cannot be retried while the job status is ${row.job_status||'unknown'}.`
+   });
+  }
+
+  try{
+   const result=await releaseFleetPayBooking(row.id);
+
+   audit(
+    req,
+    'admin',
+    req.auth.email,
+    'customer_payment_booking_release_retried',
+    'customer_payment',
+    row.id,
+    {
+     bookingId:row.booking_id||null,
+     result
+    }
+   );
+
+   const updated=db.prepare(
+    'SELECT * FROM customer_payments WHERE id=?'
+   ).get(row.id);
+
+   return res.json({
+    ok:true,
+    result,
+    payment:publicCustomerPayment(updated)
+   });
+
+  }catch(e){
+   const now=new Date().toISOString();
+   const message=String(
+    e.message||'Autocab release failed'
+   ).slice(0,1000);
+
+   db.prepare(`
+    UPDATE customer_payments
+    SET autocab_release_status='failed',
+        autocab_release_error=?,
+        updated_at=?
+    WHERE id=?
+      AND job_status='release_pending'
+   `).run(message,now,row.id);
+
+   audit(
+    req,
+    'admin',
+    req.auth.email,
+    'customer_payment_booking_release_retry_failed',
+    'customer_payment',
+    row.id,
+    {
+     bookingId:row.booking_id||null,
+     error:message
+    }
+   );
+
+   return res.status(502).json({
+    error:`Autocab release failed: ${message}`
+   });
+  }
+ }
+);
 
 app.get('/api/admin/autocab-booking-webhooks',adminAuth,requireStaffRole('administrator','finance','office'),(req,res)=>{
  const rows=db.prepare(`

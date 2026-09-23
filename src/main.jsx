@@ -152,7 +152,7 @@ function AdminApp(){
  const[mondayRuns,setMondayRuns]=useState([]),[sett,setSett]=useState({runs:[],payoutRuns:[],payouts:[],paymentRequests:[],earlyPayoutRequests:[]});
  const[outstanding,setOutstanding]=useState([]),[fees,setFees]=useState({fees:[],summary:{}}),[earlySummary,setEarlySummary]=useState(null);
  const[customerAdmin,setCustomerAdmin]=useState({payments:[],summary:{}}),[customerCreate,setCustomerCreate]=useState({bookingId:'',callsign:'',customerName:'',customerMobile:'',customerEmail:'',pickup:'',destination:'',journeyAt:'',fareAmount:'',taxiCompany:'',notes:''}),[createdCustomerLink,setCreatedCustomerLink]=useState(null),[customerCreateBusy,setCustomerCreateBusy]=useState(false);
- const[customerPayQ,setCustomerPayQ]=useState(''),[customerPayStatus,setCustomerPayStatus]=useState('all'),[showCustomerCreate,setShowCustomerCreate]=useState(false),[selectedCustomerPayment,setSelectedCustomerPayment]=useState(null);
+ const[customerPayQ,setCustomerPayQ]=useState(''),[customerPayStatus,setCustomerPayStatus]=useState('all'),[showCustomerCreate,setShowCustomerCreate]=useState(false),[selectedCustomerPayment,setSelectedCustomerPayment]=useState(null),[customerReleaseRetryBusy,setCustomerReleaseRetryBusy]=useState(false);
  const[driverUsers,setDriverUsers]=useState([]),[staff,setStaff]=useState([]),[securityLogs,setSecurityLogs]=useState([]);
  const[txQ,setTxQ]=useState(''),[txType,setTxType]=useState('all'),[txStatus,setTxStatus]=useState('all'),[txCategory,setTxCategory]=useState('all'),[txDateFrom,setTxDateFrom]=useState(''),[txDateTo,setTxDateTo]=useState('');
  const[q,setQ]=useState(''),[filter,setFilter]=useState('all'),[selected,setSelected]=useState(null),[selectedTx,setSelectedTx]=useState(null);
@@ -347,6 +347,32 @@ function AdminApp(){
  }
  async function copyCustomerLink(url){try{await navigator.clipboard.writeText(url);alert('Payment link copied.')}catch{prompt('Copy this payment link:',url)}}
  async function cancelCustomerPayment(id){if(!confirm('Cancel this unpaid payment link?'))return;try{await api(`/api/admin/customer-payments/${id}/cancel`,{method:'POST'});await loadCustomerAdmin()}catch(e){alert(e.message)}}
+ async function retryCustomerAutocabRelease(payment){
+  if(!payment?.id)return;
+
+  if(!confirm(
+   `Retry Autocab release for booking ${payment.bookingId||'unknown'}?\n\n`+
+   `The customer payment is already marked paid. This will only retry the Autocab booking update.`
+  ))return;
+
+  setCustomerReleaseRetryBusy(true);
+
+  try{
+   await api(
+    `/api/admin/customer-payments/${payment.id}/retry-autocab-release`,
+    {method:'POST'}
+   );
+
+   await loadCustomerAdmin();
+
+   alert('Autocab release completed successfully.');
+  }catch(e){
+   await loadCustomerAdmin();
+   alert(e.message);
+  }finally{
+   setCustomerReleaseRetryBusy(false);
+  }
+ }
  async function syncNow(){setLoading(true);try{await api('/api/admin/sync',{method:'POST'});await refreshCore()}catch(e){alert(e.message)}finally{setLoading(false)}}
  async function setDriverPayoutExclusion(driver){
   const excluding=!driver.payoutExcluded;
@@ -1325,6 +1351,13 @@ function AdminApp(){
             )}
            </span>
 
+           {selectedCustomerPayment.autocabReleaseStatus==='failed'&&
+            <span className="customerStatusBadge autocab-failed">
+             <i/>
+             Release failed
+            </span>
+           }
+
           </div>
          </div>
 
@@ -1348,6 +1381,31 @@ function AdminApp(){
 
         </div>
 
+
+        {selectedCustomerPayment.autocabReleaseStatus==='failed'&&
+         <div className="customerAutocabReleaseWarning">
+          <AlertTriangle/>
+          <div>
+           <b>Autocab release failed — action required</b>
+           <span>
+            The customer payment is safely recorded as paid, but the booking
+            has not yet been released in Autocab.
+           </span>
+
+           {selectedCustomerPayment.autocabReleaseError&&
+            <small>
+             {selectedCustomerPayment.autocabReleaseError}
+            </small>
+           }
+
+           <em>
+            Attempt{Number(selectedCustomerPayment.autocabReleaseAttempts||0)===1?'':'s'}: {
+             Number(selectedCustomerPayment.autocabReleaseAttempts||0)
+            }
+           </em>
+          </div>
+         </div>
+        }
 
         {customerSettlementStatus(selectedCustomerPayment)==='review'&&
          <div className="customerLifecycleWarning">
@@ -1564,6 +1622,20 @@ function AdminApp(){
 
 
         <div className="customerDrawerActions">
+
+         {selectedCustomerPayment.autocabReleaseStatus==='failed'&&
+          customerJobStatus(selectedCustomerPayment)==='release_pending'&&
+          <button
+           className="customerRetryAutocabButton"
+           disabled={customerReleaseRetryBusy}
+           onClick={()=>retryCustomerAutocabRelease(selectedCustomerPayment)}
+          >
+           <RefreshCw className={customerReleaseRetryBusy?'spin':''}/>
+           {customerReleaseRetryBusy
+            ? 'Retrying Autocab…'
+            : 'Retry Autocab release'}
+          </button>
+         }
 
          {selectedCustomerPayment.paymentUrl&&
           <button
