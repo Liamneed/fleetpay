@@ -152,7 +152,7 @@ function AdminApp(){
  const[mondayRuns,setMondayRuns]=useState([]),[sett,setSett]=useState({runs:[],payoutRuns:[],payouts:[],paymentRequests:[],earlyPayoutRequests:[]});
  const[outstanding,setOutstanding]=useState([]),[fees,setFees]=useState({fees:[],summary:{}}),[earlySummary,setEarlySummary]=useState(null);
  const[customerAdmin,setCustomerAdmin]=useState({payments:[],summary:{}}),[customerCreate,setCustomerCreate]=useState({bookingId:'',callsign:'',customerName:'',customerMobile:'',customerEmail:'',pickup:'',destination:'',journeyAt:'',fareAmount:'',taxiCompany:'',notes:''}),[createdCustomerLink,setCreatedCustomerLink]=useState(null),[customerCreateBusy,setCustomerCreateBusy]=useState(false);
- const[customerPayQ,setCustomerPayQ]=useState(''),[customerPayStatus,setCustomerPayStatus]=useState('all'),[showCustomerCreate,setShowCustomerCreate]=useState(false),[selectedCustomerPayment,setSelectedCustomerPayment]=useState(null),[customerReleaseRetryBusy,setCustomerReleaseRetryBusy]=useState(false);
+ const[customerPayQ,setCustomerPayQ]=useState(''),[customerPayStatus,setCustomerPayStatus]=useState('needs_review'),[showCustomerCreate,setShowCustomerCreate]=useState(false),[selectedCustomerPayment,setSelectedCustomerPayment]=useState(null),[customerReleaseRetryBusy,setCustomerReleaseRetryBusy]=useState(false);
  const[customerSettlementReview,setCustomerSettlementReview]=useState({decision:'full',amount:'',note:''}),[customerSettlementReviewBusy,setCustomerSettlementReviewBusy]=useState(false);
  const[driverUsers,setDriverUsers]=useState([]),[staff,setStaff]=useState([]),[securityLogs,setSecurityLogs]=useState([]);
  const[txQ,setTxQ]=useState(''),[txType,setTxType]=useState('all'),[txStatus,setTxStatus]=useState('all'),[txCategory,setTxCategory]=useState('all'),[txDateFrom,setTxDateFrom]=useState(''),[txDateTo,setTxDateTo]=useState('');
@@ -776,6 +776,7 @@ function AdminApp(){
         value={customerPayStatus}
         onChange={e=>setCustomerPayStatus(e.target.value)}
        >
+        <option value="needs_review">Needs review</option>
         <option value="all">All statuses</option>
         <option value="open">Awaiting payment</option>
         <option value="paid">Paid</option>
@@ -783,9 +784,11 @@ function AdminApp(){
         <option value="ready">Ready</option>
         <option value="dispatched">Dispatched</option>
         <option value="completed">Completed</option>
+        <option value="approved">Approved</option>
         <option value="no_fare">No Fare</option>
         <option value="cancelled">Cancelled</option>
         <option value="review">Settlement review</option>
+        <option value="held">Held</option>
         <option value="refunded">Refunded</option>
        </select>
 
@@ -814,7 +817,16 @@ function AdminApp(){
          {(customerAdmin.payments||[])
           .filter(x=>{
 
-           if(customerPayStatus!=='all'){
+           if(customerPayStatus==='needs_review'){
+            const needsReview=
+             customerSettlementStatus(x)==='review' ||
+             x.autocabReleaseStatus==='failed';
+
+            if(!needsReview){
+             return false;
+            }
+
+           }else if(customerPayStatus!=='all'){
             const lifecycleStatuses=[
              x.status,
              customerPaymentStatus(x),
@@ -1002,7 +1014,16 @@ function AdminApp(){
          {(customerAdmin.payments||[])
           .filter(x=>{
 
-           if(customerPayStatus!=='all'){
+           if(customerPayStatus==='needs_review'){
+            const needsReview=
+             customerSettlementStatus(x)==='review' ||
+             x.autocabReleaseStatus==='failed';
+
+            if(!needsReview){
+             return false;
+            }
+
+           }else if(customerPayStatus!=='all'){
             const lifecycleStatuses=[
              x.status,
              customerPaymentStatus(x),
