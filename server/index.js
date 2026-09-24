@@ -3015,8 +3015,46 @@ app.get('/api/admin/customer-payments',adminAuth,(req,res)=>{
   FROM customer_payments cp LEFT JOIN fee_ledger fl ON fl.source_type='customer_payment' AND fl.source_id=cp.id
   ORDER BY cp.created_at DESC LIMIT 500`).all();
  const payments=rows.map(r=>({...publicCustomerPayment(r),driverId:r.driver_id,callsign:r.callsign,driverName:r.driver_name,customerMobile:r.customer_mobile||'',customerEmail:r.customer_email||'',notes:r.notes||'',source:r.source||'driver',createdBy:r.created_by||'',paymentUrl:r.payment_url||`${PUBLIC_BASE_URL}/pay/${r.id}`,provider:r.provider||'stripe',providerRef:r.stripe_payment_intent_id||r.provider_session_id||'',fleetPayFeeShare:Number(r.fleetpay_share||0),taxiCompanyFeeShare:Number(r.taxi_company_share||0),grossFee:Number(r.gross_fee||r.fee_amount||0)}));
- const paid=payments.filter(x=>x.status==='paid');
- res.json({payments,summary:{count:payments.length,open:payments.filter(x=>x.status==='open').length,paid:paid.length,grossPaid:Number(paid.reduce((a,x)=>a+x.totalAmount,0).toFixed(2)),feesPaid:Number(paid.reduce((a,x)=>a+x.feeAmount,0).toFixed(2)),fleetPayShare:Number(paid.reduce((a,x)=>a+x.fleetPayFeeShare,0).toFixed(2)),taxiCompanyShare:Number(paid.reduce((a,x)=>a+x.taxiCompanyFeeShare,0).toFixed(2))}});
+ const paid=payments.filter(
+  x=>x.paymentStatus==='paid'||x.status==='paid'
+ );
+
+ const open=payments.filter(
+  x=>x.paymentStatus==='open'||x.status==='open'
+ );
+
+ const needsReview=payments.filter(
+  x=>
+   x.driverSettlementStatus==='review' ||
+   x.autocabReleaseStatus==='failed'
+ );
+
+ const releaseFailed=payments.filter(
+  x=>x.autocabReleaseStatus==='failed'
+ );
+
+ res.json({
+  payments,
+  summary:{
+   count:payments.length,
+   open:open.length,
+   paid:paid.length,
+   needsReview:needsReview.length,
+   releaseFailed:releaseFailed.length,
+   grossPaid:Number(
+    paid.reduce((a,x)=>a+x.totalAmount,0).toFixed(2)
+   ),
+   feesPaid:Number(
+    paid.reduce((a,x)=>a+x.feeAmount,0).toFixed(2)
+   ),
+   fleetPayShare:Number(
+    paid.reduce((a,x)=>a+x.fleetPayFeeShare,0).toFixed(2)
+   ),
+   taxiCompanyShare:Number(
+    paid.reduce((a,x)=>a+x.taxiCompanyFeeShare,0).toFixed(2)
+   )
+  }
+ });
 });
 app.post('/api/admin/customer-payments',adminAuth,requireStaffRole('administrator','finance','office'),(req,res)=>{
  try{

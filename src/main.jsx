@@ -721,8 +721,13 @@ function AdminApp(){
 
      <section className="customerPaymentStatsV2">
       <div>
-       <span>Total payments</span>
-       <b>{customerAdmin.summary?.count||0}</b>
+       <span>Needs review</span>
+       <b>{customerAdmin.summary?.needsReview||0}</b>
+      </div>
+
+      <div>
+       <span>Release failed</span>
+       <b>{customerAdmin.summary?.releaseFailed||0}</b>
       </div>
 
       <div>
@@ -738,11 +743,6 @@ function AdminApp(){
       <div>
        <span>Money received</span>
        <b>{money(customerAdmin.summary?.grossPaid||0)}</b>
-      </div>
-
-      <div>
-       <span>Service fees</span>
-       <b>{money(customerAdmin.summary?.feesPaid||0)}</b>
       </div>
      </section>
 
