@@ -720,15 +720,23 @@ function AdminApp(){
 
 
      <section className="customerPaymentStatsV2">
-      <div>
+      <button
+       type="button"
+       className="customerPaymentStatButton"
+       onClick={()=>setCustomerPayStatus('needs_review')}
+      >
        <span>Needs review</span>
        <b>{customerAdmin.summary?.needsReview||0}</b>
-      </div>
+      </button>
 
-      <div>
+      <button
+       type="button"
+       className="customerPaymentStatButton"
+       onClick={()=>setCustomerPayStatus('release_failed')}
+      >
        <span>Release failed</span>
        <b>{customerAdmin.summary?.releaseFailed||0}</b>
-      </div>
+      </button>
 
       <div>
        <span>Awaiting payment</span>
@@ -777,6 +785,7 @@ function AdminApp(){
         onChange={e=>setCustomerPayStatus(e.target.value)}
        >
         <option value="needs_review">Needs review</option>
+        <option value="release_failed">Release failed</option>
         <option value="all">All statuses</option>
         <option value="open">Awaiting payment</option>
         <option value="paid">Paid</option>
@@ -823,6 +832,11 @@ function AdminApp(){
              x.autocabReleaseStatus==='failed';
 
             if(!needsReview){
+             return false;
+            }
+
+           }else if(customerPayStatus==='release_failed'){
+            if(x.autocabReleaseStatus!=='failed'){
              return false;
             }
 
@@ -1020,6 +1034,11 @@ function AdminApp(){
              x.autocabReleaseStatus==='failed';
 
             if(!needsReview){
+             return false;
+            }
+
+           }else if(customerPayStatus==='release_failed'){
+            if(x.autocabReleaseStatus!=='failed'){
              return false;
             }
 
