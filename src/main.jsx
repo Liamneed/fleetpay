@@ -626,7 +626,7 @@ function AdminApp(){
  async function demoAction(path,confirmText='',body={}){if(confirmText&&!confirm(confirmText))return;try{setDemo(await api(path,{method:'POST',body:JSON.stringify(body)}))}catch(e){alert(e.message)}}
  async function launchReset(){if(resetPhrase!=='RESET FLEETPAY FOR LIVE LAUNCH')return alert('Type the confirmation phrase exactly.');if(!confirm('FINAL CHECK: create a backup and clear FleetPay operational data for live launch?'))return;try{const j=await api('/api/admin/launch-reset',{method:'POST',body:JSON.stringify({phrase:resetPhrase,includeDriverAccounts:resetDrivers})});setResetPhrase('');alert(`Launch reset complete. Backup: ${j.backupFile}`);await refreshCore()}catch(e){alert(e.message)}}
  const LiveRunCard=({r})=>{const idx=r.status==='ready'?3:r.status==='funding_pending'?4:r.status==='funded'?5:['submitted_sandbox','submitted','processing'].includes(r.status)?6:r.status==='paid'?7:r.status==='cancelled'?-1:3;const steps=r.runType==='weekly'?['Rent Sheets','Sync & approve','Lock run','Funding','Funds cleared','Release','Autocab','Reconciled']:['Sync balance','Approve','Lock run','Funding','Funds cleared','Release','Autocab','Reconciled'];const canCancel=['ready','funding_pending','funded'].includes(r.status)&&!r.providerRef&&!r.releasedAt;return <div className={`liveWorkflowCard ${r.status==='cancelled'?'cancelled':''}`}><div className="liveWorkflowHead"><div><span>{r.runType==='weekly'?'WEEKLY PAYMENT RUN':'EARLY PAYOUT RUN'} · {dt(r.createdAt)}</span><h3>{money(r.totalAmount)}</h3><p>{r.itemCount} drivers · {r.id}</p></div><Pill tone={statusTone(r.status)}>{String(r.status).replaceAll('_',' ')}</Pill></div><div className="liveSteps">{steps.map((x,i)=><div key={x} className={`${idx>=0&&i<=idx?'done':''} ${i===idx?'current':''}`}><span>{i<idx?'✓':i+1}</span><b>{x}</b></div>)}</div>{r.status==='ready'&&<div className="operatorWarning"><AlertTriangle/><div><b>Funding required before release</b><span>Approved drivers are locked into this run. Transfer the required funds, then record that the transfer has been sent.</span></div></div>}{r.status==='funding_pending'&&<div className="operatorWarning blue"><Clock3/><div><b>Waiting for cleared funds</b><span>Do not release the payment run until the funds are visible as cleared in the payout account.</span></div></div>}{r.status==='funded'&&<div className="operatorWarning green"><CheckCircle2/><div><b>Funding gate passed</b><span>Cleared funds have been confirmed. One final operator check is required before release.</span></div></div>}<div className="runCardActions liveRunActions">{canCancel&&canMoney&&<button className="dangerOutline" onClick={()=>cancelPayoutRun(r)}><X/>Cancel run</button>}{r.status==='ready'&&canMoney&&<button className="secondary" onClick={()=>confirmFundingSent(r)}><Banknote/>Funding transfer sent</button>}{r.status==='funding_pending'&&canMoney&&<button className="primary" onClick={()=>confirmFundsCleared(r)}><CheckCircle2/>Confirm funds cleared</button>}{r.status==='funded'&&integrations?.wise?.environment==='sandbox'&&canMoney&&<button className="primary" onClick={()=>sendWiseSandbox(r)}><Send/>Release to Wise sandbox</button>}{r.status==='funded'&&integrations?.wise?.environment!=='sandbox'&&<span className="tinyNote">Live provider release will unlock when Wise production payout API is connected.</span>}{['submitted_sandbox','submitted','processing'].includes(r.status)&&canMoney&&<button className="primary" onClick={()=>markRunPaid(r)}><ShieldCheck/>Confirm paid & update Autocab</button>}</div>{r.status==='paid'&&<div className="demoComplete"><CheckCircle2/><div><b>Run reconciled</b><span>Provider payment confirmed and matching Autocab updates completed.</span></div></div>}{r.status==='cancelled'&&<div className="cancelledRunNote"><X/><span>Cancelled before release. Included drivers were returned to Approved.</span></div>}</div>};
-   const txTypes=[['all','All activity'],['customer_payment','Customer payments'],['driver_payment','Driver payments'],['weekly_payout','Weekly payouts'],['early_payout','Early payouts'],['fee','Fees']];
+   const txTypes=[['all','All activity'],['customer_payment','Customer payments'],['customer_refund','Customer refunds'],['driver_payment','Driver payments'],['weekly_payout','Weekly payouts'],['early_payout','Early payouts'],['fee','Fees']];
  return <div className="shell officeV2">
   <aside className={`sidebar officeSidebar ${mobileNav?'open':''}`}>
    <div className="sideTop"><Logo/><button className="mobileClose" onClick={()=>setMobileNav(false)}><X/></button></div>
@@ -651,7 +651,7 @@ function AdminApp(){
       </div></div>
       <form className="panel manualPanel" onSubmit={postManual}><div className="panelHead"><div><span className="sectionKicker">MANUAL MONEY MOVEMENT</span><h3>Post directly to Autocab</h3><p>Use for cash paid into the office or a manual payout. Confirmation and audit logging are mandatory.</p></div><ShieldCheck/></div><div className="manualFormGrid"><label>Driver callsign<input required value={manual.callsign} onChange={e=>setManual({...manual,callsign:e.target.value})} placeholder="e.g. 168"/></label><label>Transaction<select value={manual.type} onChange={e=>setManual({...manual,type:e.target.value})}><option value="pay_in">Pay in / money received</option><option value="payout">Payout / money sent</option></select></label><label>Amount<div className="moneyField"><span>£</span><input required type="number" min="0.01" step="0.01" value={manual.amount} onChange={e=>setManual({...manual,amount:e.target.value})}/></div></label><label className="wide">Reason<input value={manual.reason} onChange={e=>setManual({...manual,reason:e.target.value})} placeholder={manual.type==='pay_in'?(settings?.manualPayInReasonDefault||'FleetPay Manual Pay In'):(settings?.manualPayoutReasonDefault||'FleetPay Manual Payout')}/></label></div><button className="primary full" disabled={manualBusy||!canMoney}><Banknote/>{manualBusy?'Posting…':'Review & post to Autocab'}</button><small className="formHint">Autocab writes must be enabled on the server. The transaction is recorded in FleetPay's audit trail.</small></form>
      </section>
-     <section className="panel"><div className="panelHead"><div><h3>Recent money movement</h3><p>The latest customer payments, driver payments, payouts and fees.</p></div><button className="mini" onClick={()=>go('transactions')}>View all</button></div><div className="transactionList">{recentTx.map(x=><button key={x.ref} className="txRow" onClick={()=>setSelectedTx(x)}><div className={`txIcon ${x.direction}`}><CreditCard/></div><div className="txMain"><b>{x.typeLabel}</b><span>{x.callsign?`Callsign ${x.callsign}`:'FleetPay'}{x.bookingId?` · Booking ${x.bookingId}`:''}</span></div><div className="txMeta"><b className={x.direction==='out'?'out':''}>{x.direction==='out'?'-':'+'}{money(x.amount)}</b>{Number(x.refundedAmount||0)>0&&<small>{money(x.refundedAmount)} refunded</small>}<span>{dt(x.createdAt)}</span></div><Pill tone={statusTone(x.status)}>{x.status}</Pill></button>)}</div></section>
+     <section className="panel"><div className="panelHead"><div><h3>Recent money movement</h3><p>The latest customer payments, driver payments, payouts and fees.</p></div><button className="mini" onClick={()=>go('transactions')}>View all</button></div><div className="transactionList">{recentTx.map(x=><button key={x.ref} className="txRow" onClick={()=>setSelectedTx(x)}><div className={`txIcon ${x.direction}`}><CreditCard/></div><div className="txMain"><b>{x.typeLabel}</b><span>{x.callsign?`Callsign ${x.callsign}`:'FleetPay'}{x.bookingId?` · Booking ${x.bookingId}`:''}</span></div><div className="txMeta"><b className={x.direction==='out'?'out':''}>{x.direction==='out'?'-':'+'}{money(x.amount)}</b>{x.type==='customer_payment'&&Number(x.refundedAmount||0)>0&&<small>{money(x.refundedAmount)} refunded separately</small>}{x.type==='customer_refund'&&<small>Customer refund</small>}<span>{dt(x.createdAt)}</span></div><Pill tone={statusTone(x.status)}>{x.status}</Pill></button>)}</div></section>
     </>}
     {view==='transactions'&&<><section className="officePageIntro"><div><span>MASTER LEDGER</span><h2>Transaction history</h2><p>Search and filter driver payments, payouts, customer payments and fees.</p></div></section>
 
@@ -660,7 +660,7 @@ function AdminApp(){
   ['all','All transactions'],
   ['driver_in','Driver pay-ins'],
   ['driver_out','Driver payouts'],
-  ['customer','Customer payments'],
+  ['customer','Customer activity'],
   ['fees','Fees']
  ].map(([v,l])=><button key={v} className={txCategory===v?'active':''} onClick={()=>setTxCategory(v)}>{l}</button>)}
 </section>
@@ -698,6 +698,7 @@ function AdminApp(){
     <option value="cancelled">Cancelled</option>
     <option value="failed">Failed</option>
     <option value="completed">Completed</option>
+    <option value="succeeded">Succeeded</option>
     <option value="uninvoiced">Uninvoiced</option>
     <option value="invoiced">Invoiced</option>
    </select>
@@ -755,9 +756,14 @@ function AdminApp(){
       <b className={x.direction==='out'?'transactionAmountOut':'transactionAmountIn'}>
        {x.direction==='out'?'-':'+'}{money(x.amount)}
       </b>
-      {Number(x.refundedAmount||0)>0&&
+      {x.type==='customer_payment'&&Number(x.refundedAmount||0)>0&&
        <small>
-        Received {money(x.originalAmount)} · Refunded {money(x.refundedAmount)}
+        Refunded separately: {money(x.refundedAmount)}
+       </small>
+      }
+      {x.type==='customer_refund'&&
+       <small>
+        Original payment: {money(x.originalAmount)}
        </small>
       }
      </td>
@@ -2221,7 +2227,12 @@ function AdminApp(){
    <div>
     <span>{selectedTx.typeLabel}</span>
     <h2>{selectedTx.direction==='out'?'-':'+'}{money(selectedTx.amount)}</h2>
-    {Number(selectedTx.refundedAmount||0)>0&&<small>Net after customer refund</small>}
+    {selectedTx.type==='customer_payment'&&Number(selectedTx.refundedAmount||0)>0&&
+     <small>{money(selectedTx.refundedAmount)} refunded as separate transaction</small>
+    }
+    {selectedTx.type==='customer_refund'&&
+     <small>Refund issued to customer</small>
+    }
     <Pill tone={statusTone(selectedTx.status)}>{selectedTx.status}</Pill>
    </div>
   </div>
@@ -2233,11 +2244,25 @@ function AdminApp(){
     ['Callsign',selectedTx.callsign||'—'],
     ['Driver',selectedTx.driverName||'—'],
     ['Booking',selectedTx.bookingId||'—'],
-    ...(Number(selectedTx.refundedAmount||0)>0
+    ...(selectedTx.type==='customer_payment'&&Number(selectedTx.refundedAmount||0)>0
      ?[
        ['Originally received',money(selectedTx.originalAmount)],
-       ['Customer refunded',money(selectedTx.refundedAmount)],
-       ['Net retained',money(selectedTx.amount)]
+       ['Refunded separately',money(selectedTx.refundedAmount)]
+      ]
+     :[]
+    ),
+    ...(selectedTx.type==='customer_refund'
+     ?[
+       ['Original customer payment',money(selectedTx.originalAmount)],
+       ['Refund amount',money(selectedTx.amount)],
+       ['Refund source',
+        selectedTx.refundSource==='fleetpay'
+         ? 'FleetPay'
+         : selectedTx.refundSource==='stripe_external'
+         ? 'Stripe dashboard / external'
+         : selectedTx.refundSource||'—'
+       ],
+       ['Processed by',selectedTx.processedBy||'—']
       ]
      :[]
     ),

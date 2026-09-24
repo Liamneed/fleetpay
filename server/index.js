@@ -117,6 +117,29 @@ ON customer_payments(driver_id, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_customer_payments_booking
 ON customer_payments(booking_id);
+
+CREATE TABLE IF NOT EXISTS customer_refunds (
+ id TEXT PRIMARY KEY,
+ customer_payment_id TEXT NOT NULL,
+ booking_id TEXT,
+ stripe_refund_id TEXT NOT NULL UNIQUE,
+ stripe_payment_intent_id TEXT,
+ amount REAL NOT NULL,
+ currency TEXT NOT NULL DEFAULT 'gbp',
+ status TEXT NOT NULL,
+ reason TEXT,
+ source TEXT NOT NULL,
+ processed_by TEXT,
+ stripe_created_at TEXT,
+ created_at TEXT NOT NULL,
+ updated_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_customer_refunds_payment
+ON customer_refunds(customer_payment_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_customer_refunds_booking
+ON customer_refunds(booking_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS autocab_booking_webhooks (
  id TEXT PRIMARY KEY,
  event_type TEXT NOT NULL,
@@ -506,6 +529,132 @@ app.post('/api/stripe/webhook', express.raw({type:'application/json'}), async (r
   }
 
   try{
+    /*
+     * STRIPE REFUND RECONCILIATION
+     *
+     * Refund events may originate in FleetPay or directly in Stripe.
+     * Stripe remains the authority for the final refund status and amount.
+     */
+    if([
+      'refund.created',
+      'refund.updated',
+      'refund.failed'
+    ].includes(event.type)){
+      const refund=event.data.object;
+
+      const paymentIntentId=String(
+       refund?.payment_intent||''
+      ).trim();
+
+      if(paymentIntentId){
+       const item=db.prepare(`
+        SELECT *
+        FROM customer_payments
+        WHERE stripe_payment_intent_id=?
+        LIMIT 1
+       `).get(paymentIntentId);
+
+       if(item){
+        /*
+         * Always re-read all refunds for this PaymentIntent. A single
+         * webhook event only describes one refund, while FleetPay's
+         * current-state fields represent the cumulative Stripe outcome.
+         */
+        const stripeRefunds=await stripe.refunds.list({
+         payment_intent:paymentIntentId,
+         limit:100
+        });
+
+        const refundRows=stripeRefunds.data||[];
+
+        syncStripeRefundsToLedger(
+         item,
+         refundRows
+        );
+
+        const succeededRows=refundRows.filter(
+         r=>String(r.status||'')==='succeeded'
+        );
+
+        const pendingRows=refundRows.filter(
+         r=>[
+          'pending',
+          'requires_action'
+         ].includes(String(r.status||''))
+        );
+
+        const succeededPence=succeededRows.reduce(
+         (sum,r)=>sum+Number(r.amount||0),
+         0
+        );
+
+        const pendingPence=pendingRows.reduce(
+         (sum,r)=>sum+Number(r.amount||0),
+         0
+        );
+
+        const refundedAmount=
+         Math.round((succeededPence/100)*100)/100;
+
+        const pendingAmount=
+         Math.round((pendingPence/100)*100)/100;
+
+        const total=
+         Math.round(Number(item.total_amount||0)*100)/100;
+
+        const refundStatus=
+         pendingAmount>0
+          ? 'pending'
+          : refundedAmount>=total
+          ? 'full'
+          : refundedAmount>0
+          ? 'partial'
+          : 'none';
+
+        const latestSucceededAt=succeededRows
+         .map(r=>Number(r.created||0))
+         .filter(Boolean)
+         .sort((a,b)=>b-a)[0];
+
+        const refundedAt=
+         latestSucceededAt
+          ? new Date(latestSucceededAt*1000).toISOString()
+          : item.refunded_at||null;
+
+        const now=new Date().toISOString();
+
+        db.prepare(`
+         UPDATE customer_payments
+         SET refund_status=?,
+             refunded_amount=?,
+             refunded_at=?,
+             updated_at=?
+         WHERE id=?
+        `).run(
+         refundStatus,
+         refundedAmount,
+         refundedAt,
+         now,
+         item.id
+        );
+
+        console.log(
+         '[FleetPay] Stripe refund reconciled',
+         {
+          eventType:event.type,
+          paymentId:item.id,
+          bookingId:item.booking_id||null,
+          paymentIntentId,
+          stripeRefundId:refund?.id||null,
+          refundStatus,
+          refundedAmount,
+          pendingAmount
+         }
+        );
+       }
+      }
+    }
+
     if(
       event.type==='checkout.session.completed' ||
       event.type==='checkout.session.async_payment_succeeded'
@@ -2896,13 +3045,13 @@ app.get('/api/admin/office-overview',adminAuth,(req,res)=>{
   c:customerRows.length,
   total:Number(
    customerRows.reduce(
-    (a,x)=>a+customerPaymentNetAmounts(x).netReceived,
+    (a,x)=>a+Number(x.total_amount||0),
     0
    ).toFixed(2)
   ),
   fees:Number(
    customerRows.reduce(
-    (a,x)=>a+customerPaymentNetAmounts(x).netFee,
+    (a,x)=>a+Number(x.fee_amount||0),
     0
    ).toFixed(2)
   )
@@ -2919,8 +3068,6 @@ function officeTransactions(limit=250){
  for(const x of db.prepare(
   'SELECT * FROM customer_payments ORDER BY created_at DESC LIMIT ?'
  ).all(limit)){
-  const net=customerPaymentNetAmounts(x);
-
   rows.push({
    id:x.id,
    ref:`customer_payment:${x.id}`,
@@ -2930,12 +3077,12 @@ function officeTransactions(limit=250){
    callsign:x.callsign,
    driverName:x.driver_name,
    bookingId:x.booking_id,
-   amount:net.netReceived,
+   amount:Number(x.total_amount||0),
    originalAmount:Number(x.total_amount||0),
-   refundedAmount:net.refunded,
+   refundedAmount:Number(x.refunded_amount||0),
    refundStatus:x.refund_status||null,
    fareAmount:Number(x.fare_amount||0),
-   feeAmount:net.netFee,
+   feeAmount:Number(x.fee_amount||0),
    originalFeeAmount:Number(x.fee_amount||0),
    status:x.status,
    provider:x.provider||'stripe',
@@ -2943,8 +3090,56 @@ function officeTransactions(limit=250){
     x.stripe_payment_intent_id||
     x.provider_session_id||
     '',
-   createdAt:x.created_at,
+   createdAt:x.paid_at||x.created_at,
    completedAt:x.paid_at
+  });
+ }
+
+ const refundRows=db.prepare(`
+  SELECT
+   r.*,
+   cp.callsign,
+   cp.driver_name,
+   cp.booking_id,
+   cp.total_amount,
+   cp.fee_amount
+  FROM customer_refunds r
+  JOIN customer_payments cp
+   ON cp.id=r.customer_payment_id
+  WHERE r.status='succeeded'
+  ORDER BY COALESCE(r.stripe_created_at,r.created_at) DESC
+  LIMIT ?
+ `).all(limit);
+
+ for(const x of refundRows){
+  rows.push({
+   id:x.id,
+   ref:`customer_refund:${x.id}`,
+   type:'customer_refund',
+   typeLabel:'Customer refund',
+   direction:'out',
+   callsign:x.callsign,
+   driverName:x.driver_name,
+   bookingId:x.booking_id,
+   amount:Number(x.amount||0),
+   originalAmount:Number(x.total_amount||0),
+   refundedAmount:Number(x.amount||0),
+   refundStatus:'succeeded',
+   fareAmount:0,
+   feeAmount:0,
+   originalFeeAmount:Number(x.fee_amount||0),
+   status:'succeeded',
+   provider:'stripe',
+   providerRef:x.stripe_refund_id||'',
+   createdAt:
+    x.stripe_created_at||
+    x.created_at,
+   completedAt:
+    x.stripe_created_at||
+    x.updated_at||
+    x.created_at,
+   refundSource:x.source||null,
+   processedBy:x.processed_by||null
   });
  }
 
@@ -3126,7 +3321,10 @@ app.get('/api/admin/transactions',adminAuth,(req,res)=>{
   (x.type==='manual_adjustment' && x.direction==='out')
  );
 
- if(category==='customer')rows=rows.filter(x=>x.type==='customer_payment');
+ if(category==='customer')rows=rows.filter(x=>
+  x.type==='customer_payment' ||
+  x.type==='customer_refund'
+ );
  if(category==='fees')rows=rows.filter(x=>x.type==='fee');
 
  if(type!=='all')rows=rows.filter(x=>x.type===type);
@@ -3325,6 +3523,79 @@ app.post('/api/admin/customer-payments/:id/cancel',adminAuth,requireStaffRole('a
 });
 
 
+function syncStripeRefundsToLedger(paymentRow,refundRows=[]){
+ const now=new Date().toISOString();
+
+ for(const refund of refundRows||[]){
+  const stripeRefundId=String(refund?.id||'').trim();
+
+  if(!stripeRefundId)continue;
+
+  const amount=
+   Math.round((Number(refund?.amount||0)/100)*100)/100;
+
+  const stripeCreatedAt=
+   Number(refund?.created||0)>0
+    ? new Date(Number(refund.created)*1000).toISOString()
+    : now;
+
+  const fleetPayCreated=
+   String(
+    refund?.metadata?.fleetpay_customer_payment_id||''
+   )===String(paymentRow.id);
+
+  const source=
+   fleetPayCreated
+    ? 'fleetpay'
+    : 'stripe_external';
+
+  const processedBy=
+   String(refund?.metadata?.processed_by||'').trim()||null;
+
+  db.prepare(`
+   INSERT INTO customer_refunds(
+    id,
+    customer_payment_id,
+    booking_id,
+    stripe_refund_id,
+    stripe_payment_intent_id,
+    amount,
+    currency,
+    status,
+    reason,
+    source,
+    processed_by,
+    stripe_created_at,
+    created_at,
+    updated_at
+   )
+   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+   ON CONFLICT(stripe_refund_id)
+   DO UPDATE SET
+    status=excluded.status,
+    updated_at=excluded.updated_at
+  `).run(
+   `customerrefund_${stripeRefundId}`,
+   paymentRow.id,
+   paymentRow.booking_id||null,
+   stripeRefundId,
+   refund?.payment_intent
+    ? String(refund.payment_intent)
+    : String(paymentRow.stripe_payment_intent_id||'')||null,
+   amount,
+   String(refund?.currency||'gbp').toLowerCase(),
+   String(refund?.status||'unknown'),
+   refund?.reason ? String(refund.reason) : null,
+   source,
+   processedBy,
+   stripeCreatedAt,
+   stripeCreatedAt,
+   now
+  );
+ }
+}
+
+
 app.post(
  '/api/admin/customer-payments/:id/refund',
  adminAuth,
@@ -3386,6 +3657,11 @@ app.post(
    });
 
    const stripeRefundRows=stripeRefunds.data||[];
+
+   syncStripeRefundsToLedger(
+    row,
+    stripeRefundRows
+   );
 
    const refundedPence=stripeRefundRows
     .filter(r=>String(r.status||'')==='succeeded')
@@ -3520,6 +3796,11 @@ app.post(
    });
 
    const verifiedRefundRows=verifiedRefunds.data||[];
+
+   syncStripeRefundsToLedger(
+    row,
+    verifiedRefundRows
+   );
 
    const verifiedPence=verifiedRefundRows
     .filter(r=>String(r.status||'')==='succeeded')
