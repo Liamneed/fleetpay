@@ -3040,6 +3040,7 @@ app.patch('/api/admin/staff/:id',adminAuth,requireStaffRole('administrator'),(re
 
 app.get('/api/admin/office-overview',adminAuth,(req,res)=>{
  const today=londonWindow().date;
+
  const customerRows=db.prepare(
   "SELECT * FROM customer_payments WHERE status='paid' AND substr(paid_at,1,10)=?"
  ).all(today);
@@ -3059,10 +3060,229 @@ app.get('/api/admin/office-overview',adminAuth,(req,res)=>{
    ).toFixed(2)
   )
  };
- const payouts=db.prepare("SELECT COUNT(*) c,COALESCE(SUM(COALESCE(net_amount,amount)),0) total FROM payouts WHERE status='paid' AND substr(paid_at,1,10)=?").get(today);
- const actionNeeded=Number(db.prepare("SELECT COUNT(*) c FROM payouts WHERE status IN ('requested','approved','batched')").get().c)+Number(db.prepare("SELECT COUNT(*) c FROM payment_requests WHERE status='open'").get().c);
- const failedAdjustments=Number(db.prepare("SELECT COUNT(*) c FROM autocab_adjustments WHERE status='failed'").get().c);
- res.json({today,customerPayments:{count:Number(customer.c),total:Number(customer.total),fees:Number(customer.fees)},payouts:{count:Number(payouts.c),total:Number(payouts.total)},actionNeeded,failedAdjustments});
+
+ const payouts=db.prepare(`
+  SELECT
+   COUNT(*) c,
+   COALESCE(SUM(COALESCE(net_amount,amount)),0) total
+  FROM payouts
+  WHERE status='paid'
+   AND substr(paid_at,1,10)=?
+ `).get(today);
+
+ /*
+  * Paylinks created today.
+  * Paid value is kept separate from created value because a link may
+  * be created on one day and paid on another.
+  */
+ const paylinks=db.prepare(`
+  SELECT
+   COUNT(*) created,
+   COALESCE(SUM(total_amount),0) created_value,
+   SUM(CASE
+    WHEN COALESCE(NULLIF(payment_status,''),status)='open'
+    THEN 1 ELSE 0
+   END) open,
+   SUM(CASE
+    WHEN COALESCE(NULLIF(payment_status,''),status)='paid'
+    THEN 1 ELSE 0
+   END) paid
+  FROM customer_payments
+  WHERE substr(created_at,1,10)=?
+ `).get(today);
+
+ const refunds=db.prepare(`
+  SELECT
+   COUNT(*) c,
+   COALESCE(SUM(amount),0) total
+  FROM customer_refunds
+  WHERE status='succeeded'
+   AND substr(COALESCE(stripe_created_at,created_at),1,10)=?
+ `).get(today);
+
+ const earlyToday=db.prepare(`
+  SELECT
+   COUNT(*) requested,
+   COALESCE(SUM(COALESCE(net_amount,amount)),0) requested_total,
+   SUM(CASE WHEN status='approved' THEN 1 ELSE 0 END) approved,
+   COALESCE(SUM(CASE
+    WHEN status='approved'
+    THEN COALESCE(net_amount,amount)
+    ELSE 0
+   END),0) approved_total,
+   SUM(CASE WHEN status='paid' THEN 1 ELSE 0 END) paid,
+   COALESCE(SUM(CASE
+    WHEN status='paid'
+    THEN COALESCE(net_amount,amount)
+    ELSE 0
+   END),0) paid_total
+  FROM payouts
+  WHERE type='early'
+   AND substr(created_at,1,10)=?
+ `).get(today);
+
+ const customerAttention=db.prepare(`
+  SELECT
+   SUM(CASE
+    WHEN driver_settlement_status='review'
+    THEN 1 ELSE 0
+   END) settlement_review,
+   SUM(CASE
+    WHEN autocab_release_status='failed'
+    THEN 1 ELSE 0
+   END) release_failed,
+   SUM(CASE
+    WHEN refund_status='pending'
+    THEN 1 ELSE 0
+   END) refund_pending
+  FROM customer_payments
+ `).get();
+
+ const openRequests=db.prepare(`
+  SELECT
+   COUNT(*) open,
+   COALESCE(SUM(amount),0) total
+  FROM payment_requests
+  WHERE status='open'
+ `).get();
+
+ const outstandingNow=new Date().toISOString().slice(0,16);
+
+ const overdueRequests=db.prepare(`
+  SELECT
+   COUNT(*) overdue,
+   COALESCE(SUM(amount),0) total
+  FROM payment_requests
+  WHERE status='open'
+   AND due_at IS NOT NULL
+   AND substr(due_at,1,16)<?
+ `).get(outstandingNow);
+
+ const failedAdjustments=Number(
+  db.prepare(
+   "SELECT COUNT(*) c FROM autocab_adjustments WHERE status='failed'"
+  ).get().c
+ );
+
+ const activity=db.prepare(`
+  SELECT
+   SUM(CASE
+    WHEN job_status='completed'
+    THEN 1 ELSE 0
+   END) completed,
+   SUM(CASE
+    WHEN job_status='cancelled'
+    THEN 1 ELSE 0
+   END) cancelled,
+   SUM(CASE
+    WHEN job_status='no_fare'
+    THEN 1 ELSE 0
+   END) no_fare,
+   SUM(CASE
+    WHEN autocab_release_status='released'
+    THEN 1 ELSE 0
+   END) released
+  FROM customer_payments
+  WHERE substr(COALESCE(updated_at,created_at),1,10)=?
+ `).get(today);
+
+ const sevenDayCustomer=db.prepare(`
+  SELECT
+   COUNT(*) c,
+   COALESCE(SUM(total_amount),0) total,
+   COALESCE(SUM(fee_amount),0) fees
+  FROM customer_payments
+  WHERE status='paid'
+   AND substr(paid_at,1,10)>=date(?,'-6 days')
+   AND substr(paid_at,1,10)<=?
+ `).get(today,today);
+
+ const sevenDayRefunds=db.prepare(`
+  SELECT
+   COUNT(*) c,
+   COALESCE(SUM(amount),0) total
+  FROM customer_refunds
+  WHERE status='succeeded'
+   AND substr(COALESCE(stripe_created_at,created_at),1,10)>=date(?,'-6 days')
+   AND substr(COALESCE(stripe_created_at,created_at),1,10)<=?
+ `).get(today,today);
+
+ const actionNeeded=
+  Number(customerAttention.settlement_review||0)+
+  Number(customerAttention.release_failed||0)+
+  Number(customerAttention.refund_pending||0)+
+  Number(overdueRequests.overdue||0)+
+  failedAdjustments;
+
+ res.json({
+  today,
+
+  customerPayments:{
+   count:Number(customer.c),
+   total:Number(customer.total),
+   fees:Number(customer.fees)
+  },
+
+  payouts:{
+   count:Number(payouts.c||0),
+   total:Number(Number(payouts.total||0).toFixed(2))
+  },
+
+  paylinks:{
+   created:Number(paylinks.created||0),
+   createdValue:Number(Number(paylinks.created_value||0).toFixed(2)),
+   open:Number(paylinks.open||0),
+   paid:Number(paylinks.paid||0)
+  },
+
+  refunds:{
+   count:Number(refunds.c||0),
+   total:Number(Number(refunds.total||0).toFixed(2))
+  },
+
+  early:{
+   requested:Number(earlyToday.requested||0),
+   requestedTotal:Number(Number(earlyToday.requested_total||0).toFixed(2)),
+   approved:Number(earlyToday.approved||0),
+   approvedTotal:Number(Number(earlyToday.approved_total||0).toFixed(2)),
+   paid:Number(earlyToday.paid||0),
+   paidTotal:Number(Number(earlyToday.paid_total||0).toFixed(2))
+  },
+
+  attention:{
+   total:actionNeeded,
+   settlementReview:Number(customerAttention.settlement_review||0),
+   releaseFailed:Number(customerAttention.release_failed||0),
+   refundPending:Number(customerAttention.refund_pending||0),
+   openPaymentRequests:Number(openRequests.open||0),
+   openPaymentRequestTotal:Number(Number(openRequests.total||0).toFixed(2)),
+   overduePaymentRequests:Number(overdueRequests.overdue||0),
+   overduePaymentRequestTotal:Number(Number(overdueRequests.total||0).toFixed(2)),
+   failedAdjustments
+  },
+
+  activity:{
+   completed:Number(activity.completed||0),
+   cancelled:Number(activity.cancelled||0),
+   noFare:Number(activity.no_fare||0),
+   released:Number(activity.released||0)
+  },
+
+  sevenDay:{
+   customerPayments:{
+    count:Number(sevenDayCustomer.c||0),
+    total:Number(Number(sevenDayCustomer.total||0).toFixed(2)),
+    fees:Number(Number(sevenDayCustomer.fees||0).toFixed(2))
+   },
+   refunds:{
+    count:Number(sevenDayRefunds.c||0),
+    total:Number(Number(sevenDayRefunds.total||0).toFixed(2))
+   }
+  },
+
+  actionNeeded,
+  failedAdjustments
+ });
 });
 
 function officeTransactions(limit=250){

@@ -647,19 +647,544 @@ function AdminApp(){
    <div className="content officeContent">
     {err&&<div className="inlineError"><AlertTriangle/>{err}</div>}
     {view==='dashboard'&&<>
-     <section className="officeHero premiumHero"><div><span>PAYMENT OPERATIONS</span><h2>Everything that needs attention, in one place.</h2><p>Clear controls for driver balances, payouts, money in, fees and reconciliation. Every money action is traceable.</p></div><div className="heroSync"><Database/><span>Autocab last synced</span><b>{meta.lastSync?dt(meta.lastSync):'Not synced'}</b><button className="mini light" onClick={syncNow}>Sync now</button></div></section>
-     <section className="officeStats four"><Stat icon={CreditCard} label="Customer payments today" value={money(overview?.customerPayments?.total||0)} sub={`${overview?.customerPayments?.count||0} payments`}/><Stat icon={ArrowUpRight} label="Payouts today" value={money(overview?.payouts?.total||0)} sub={`${overview?.payouts?.count||0} completed`}/><Stat icon={AlertTriangle} label="Outstanding" value={openOutstanding.length} sub={`${overdueOutstanding.length} overdue`}/><Stat icon={BadgePoundSterling} label="FleetPay fees uninvoiced" value={money(fees?.summary?.uninvoiced||0)} sub={`${money(fees?.summary?.uninvoicedGross||0)} gross fees`}/></section>
-     <section className="dashboardGridV2">
-      <div className="panel actionPanel"><div className="panelHead"><div><span className="sectionKicker">TODAY'S CONTROL PANEL</span><h3>Operational checklist</h3><p>Work from the top down. FleetPay keeps each stage separate so money cannot be moved accidentally.</p></div></div><div className="taskStack">
-       <button onClick={()=>go('monday')}><div className="taskIcon"><CalendarDays/></div><div><b>Monday settlement</b><span>{activeMonday?`${weeklyPending.length} pending approval · ${weeklyApproved.length} approved`:'No active draft'}</span></div><ChevronRight/></button>
-       <button onClick={()=>go('early')}><div className="taskIcon"><ArrowUpRight/></div><div><b>Early payouts</b><span>{dueEarly.length} due today · {money(dueEarly.reduce((a,x)=>a+Number(x.netAmount||x.amount||0),0))}</span></div><ChevronRight/></button>
-       <button onClick={()=>go('outstanding')}><div className="taskIcon warning"><AlertTriangle/></div><div><b>Outstanding driver payments</b><span>{openOutstanding.length} open · {overdueOutstanding.length} overdue</span></div><ChevronRight/></button>
-       <button onClick={()=>go('fees')}><div className="taskIcon"><BadgePoundSterling/></div><div><b>Fees awaiting invoice</b><span>{money(fees?.summary?.uninvoiced||0)} FleetPay share</span></div><ChevronRight/></button>
-      </div></div>
-      <form className="panel manualPanel" onSubmit={postManual}><div className="panelHead"><div><span className="sectionKicker">MANUAL MONEY MOVEMENT</span><h3>Post directly to Autocab</h3><p>Use for cash paid into the office or a manual payout. Confirmation and audit logging are mandatory.</p></div><ShieldCheck/></div><div className="manualFormGrid"><label>Driver callsign<input required value={manual.callsign} onChange={e=>setManual({...manual,callsign:e.target.value})} placeholder="e.g. 168"/></label><label>Transaction<select value={manual.type} onChange={e=>setManual({...manual,type:e.target.value})}><option value="pay_in">Pay in / money received</option><option value="payout">Payout / money sent</option></select></label><label>Amount<div className="moneyField"><span>£</span><input required type="number" min="0.01" step="0.01" value={manual.amount} onChange={e=>setManual({...manual,amount:e.target.value})}/></div></label><label className="wide">Reason<input value={manual.reason} onChange={e=>setManual({...manual,reason:e.target.value})} placeholder={manual.type==='pay_in'?(settings?.manualPayInReasonDefault||'FleetPay Manual Pay In'):(settings?.manualPayoutReasonDefault||'FleetPay Manual Payout')}/></label></div><button className="primary full" disabled={manualBusy||!canMoney}><Banknote/>{manualBusy?'Posting…':'Review & post to Autocab'}</button><small className="formHint">Autocab writes must be enabled on the server. The transaction is recorded in FleetPay's audit trail.</small></form>
+     <section className="dashboardHeroV3">
+      <div className="dashboardHeroMain">
+       <span className="dashboardEyebrow">TODAY AT A GLANCE</span>
+       <h2>FleetPay operations</h2>
+       <p>
+        {new Intl.DateTimeFormat('en-GB',{
+         weekday:'long',
+         day:'numeric',
+         month:'long'
+        }).format(new Date())}
+        {' · '}
+        Everything requiring attention today, in one place.
+       </p>
+      </div>
+
+      <div className="dashboardHeroStatus">
+       <div>
+        <Database/>
+        <span>Autocab sync</span>
+        <b>{meta.lastSync?dt(meta.lastSync):'Not synced'}</b>
+       </div>
+       <button className="mini light" onClick={syncNow}>
+        <RefreshCw/>
+        Sync now
+       </button>
+      </div>
      </section>
-     <section className="panel"><div className="panelHead"><div><h3>Recent money movement</h3><p>The latest customer payments, driver payments, payouts and fees.</p></div><button className="mini" onClick={()=>go('transactions')}>View all</button></div><div className="transactionList">{recentTx.map(x=><button key={x.ref} className="txRow" onClick={()=>setSelectedTx(x)}><div className={`txIcon ${x.direction}`}><CreditCard/></div><div className="txMain"><b>{x.typeLabel}</b><span>{x.callsign?`Callsign ${x.callsign}`:'FleetPay'}{x.bookingId?` · Booking ${x.bookingId}`:''}</span></div><div className="txMeta"><b className={x.direction==='out'?'out':''}>{x.direction==='out'?'-':'+'}{money(x.amount)}</b>{x.type==='customer_payment'&&Number(x.refundedAmount||0)>0&&<small>{money(x.refundedAmount)} refunded separately</small>}{x.type==='customer_refund'&&<small>Customer refund</small>}<span>{dt(x.createdAt)}</span></div><Pill tone={statusTone(x.status)}>{x.status}</Pill></button>)}</div></section>
+
+     <section className="dashboardKpis">
+
+      <button className="dashboardKpi" onClick={()=>go('customerPayments')}>
+       <div className="dashboardKpiIcon"><CreditCard/></div>
+       <div>
+        <span>Customer payments</span>
+        <strong>{money(overview?.customerPayments?.total||0)}</strong>
+        <small>{overview?.customerPayments?.count||0} paid today</small>
+       </div>
+      </button>
+
+      <button className="dashboardKpi" onClick={()=>go('customerPayments')}>
+       <div className="dashboardKpiIcon"><CreditCard/></div>
+       <div>
+        <span>Paylinks today</span>
+        <strong>{overview?.paylinks?.created||0}</strong>
+        <small>
+         {overview?.paylinks?.paid||0} paid · {overview?.paylinks?.open||0} open · {money(overview?.paylinks?.createdValue||0)}
+        </small>
+       </div>
+      </button>
+
+      <button className="dashboardKpi" onClick={()=>go('early')}>
+       <div className="dashboardKpiIcon"><ArrowUpRight/></div>
+       <div>
+        <span>Early payout requests</span>
+        <strong>{overview?.early?.requested||0}</strong>
+        <small>{money(overview?.early?.requestedTotal||0)} requested today</small>
+       </div>
+      </button>
+
+      <button className="dashboardKpi" onClick={()=>go('fees')}>
+       <div className="dashboardKpiIcon"><BadgePoundSterling/></div>
+       <div>
+        <span>FleetPay fees today</span>
+        <strong>{money(overview?.customerPayments?.fees||0)}</strong>
+        <small>From today's customer payments</small>
+       </div>
+      </button>
+
+     </section>
+
+     <section className="dashboardMainGrid">
+
+      <div className="dashboardPrimaryColumn">
+
+       {new Date(
+        `${overview?.today||new Date().toISOString().slice(0,10)}T12:00:00`
+       ).getDay()===1
+
+        ? <section className="panel dashboardFeatureCard mondayFeature">
+
+           <div className="dashboardFeatureHead">
+            <div>
+             <span className="sectionKicker">MONDAY PAYMENT RUN</span>
+             <h3>Weekly settlement</h3>
+             <p>
+              Review today's Monday run, approvals and payment progress.
+             </p>
+            </div>
+
+            <Pill tone={activeMonday?'warn':'neutral'}>
+             {activeMonday
+              ? String(activeMonday.status||'active').replaceAll('_',' ')
+              : 'Not started'}
+            </Pill>
+           </div>
+
+           <div className="dashboardFeatureAmount">
+            <span>Approved for payout</span>
+            <strong>
+             {money(
+              weeklyApproved.reduce(
+               (a,x)=>a+Number(x.amount||0),
+               0
+              )
+             )}
+            </strong>
+           </div>
+
+           <div className="dashboardFeatureStats">
+            <div>
+             <span>Approved</span>
+             <b>{weeklyApproved.length}</b>
+            </div>
+
+            <div>
+             <span>Awaiting decision</span>
+             <b className={weeklyPending.length?'attentionText':''}>
+              {weeklyPending.length}
+             </b>
+            </div>
+
+            <div>
+             <span>Run status</span>
+             <b>
+              {activeMonday
+               ? String(activeMonday.status||'active').replaceAll('_',' ')
+               : 'Not started'}
+             </b>
+            </div>
+           </div>
+
+           <button
+            className="dashboardFeatureAction"
+            onClick={()=>go('monday')}
+           >
+            Open Monday Run
+            <ChevronRight/>
+           </button>
+
+          </section>
+
+        : <section className="panel dashboardFeatureCard earlyFeature">
+
+           <div className="dashboardFeatureHead">
+            <div>
+             <span className="sectionKicker">TODAY'S EARLY PAYOUTS</span>
+             <h3>Early payout overview</h3>
+             <p>
+              Requests received today and their current approval position.
+             </p>
+            </div>
+
+            <Pill tone={(dueEarly.length||overview?.early?.requested)?'warn':'good'}>
+             {dueEarly.length||overview?.early?.requested
+              ? 'Action'
+              : 'Clear'}
+            </Pill>
+           </div>
+
+           <div className="dashboardFeatureAmount">
+            <span>Requested today</span>
+            <strong>{money(overview?.early?.requestedTotal||0)}</strong>
+           </div>
+
+           <div className="dashboardFeatureStats">
+            <div>
+             <span>Requests</span>
+             <b>{overview?.early?.requested||0}</b>
+            </div>
+
+            <div>
+             <span>Approved</span>
+             <b>{overview?.early?.approved||0}</b>
+            </div>
+
+            <div>
+             <span>Paid</span>
+             <b>{overview?.early?.paid||0}</b>
+            </div>
+           </div>
+
+           <button
+            className="dashboardFeatureAction"
+            onClick={()=>go('early')}
+           >
+            Open Early Payouts
+            <ChevronRight/>
+           </button>
+
+          </section>
+       }
+
+       <section
+        className={`panel dashboardAttention ${
+         Number(overview?.attention?.total||0)>0
+          ? 'hasAttention'
+          : 'allClear'
+        }`}
+       >
+
+        <div className="panelHead">
+         <div>
+          <span className="sectionKicker">ATTENTION REQUIRED</span>
+          <h3>
+           {Number(overview?.attention?.total||0)>0
+            ? `${overview.attention.total} item${
+               Number(overview.attention.total)===1?'':'s'
+              } need attention`
+            : 'Everything is under control'}
+          </h3>
+          <p>
+           Exceptions and outstanding work that may need an office decision.
+          </p>
+         </div>
+
+         <div className="dashboardAttentionBadge">
+          {overview?.attention?.total||0}
+         </div>
+        </div>
+
+        <div className="attentionGrid">
+
+         <button onClick={()=>go('customerPayments')}>
+          <span>Settlement reviews</span>
+          <b>{overview?.attention?.settlementReview||0}</b>
+         </button>
+
+         <button onClick={()=>go('customerPayments')}>
+          <span>Autocab release failures</span>
+          <b>{overview?.attention?.releaseFailed||0}</b>
+         </button>
+
+         <button onClick={()=>go('customerPayments')}>
+          <span>Refunds pending</span>
+          <b>{overview?.attention?.refundPending||0}</b>
+         </button>
+
+         <button onClick={()=>go('outstanding')}>
+          <span>Overdue driver payments</span>
+          <b>{overview?.attention?.overduePaymentRequests||0}</b>
+         </button>
+
+         <button onClick={()=>go('transactions')}>
+          <span>Failed adjustments</span>
+          <b>{overview?.attention?.failedAdjustments||0}</b>
+         </button>
+
+        </div>
+       </section>
+
+      </div>
+
+      <div className="dashboardSideColumn">
+
+       <section className="panel dashboardMoneyCard">
+        <div className="panelHead">
+         <div>
+          <span className="sectionKicker">MONEY TODAY</span>
+          <h3>Financial movement</h3>
+         </div>
+        </div>
+
+        <div className="dashboardMoneyRows">
+
+         <div>
+          <span>Customer payments</span>
+          <div>
+           <b>{money(overview?.customerPayments?.total||0)}</b>
+           <small>{overview?.customerPayments?.count||0} payments</small>
+          </div>
+         </div>
+
+         <div>
+          <span>Customer refunds</span>
+          <div>
+           <b className={Number(overview?.refunds?.total||0)>0?'negative':''}>
+            {Number(overview?.refunds?.total||0)>0?'-':''}
+            {money(overview?.refunds?.total||0)}
+           </b>
+           <small>{overview?.refunds?.count||0} refunds</small>
+          </div>
+         </div>
+
+         <div>
+          <span>Driver payouts</span>
+          <div>
+           <b className={Number(overview?.payouts?.total||0)>0?'negative':''}>
+            {Number(overview?.payouts?.total||0)>0?'-':''}
+            {money(overview?.payouts?.total||0)}
+           </b>
+           <small>{overview?.payouts?.count||0} completed</small>
+          </div>
+         </div>
+
+         <div>
+          <span>FleetPay fees</span>
+          <div>
+           <b>{money(overview?.customerPayments?.fees||0)}</b>
+           <small>Generated today</small>
+          </div>
+         </div>
+
+        </div>
+       </section>
+
+       <section className="panel dashboardQuickCard">
+        <div className="panelHead">
+         <div>
+          <span className="sectionKicker">QUICK ACTIONS</span>
+          <h3>Go straight to work</h3>
+         </div>
+        </div>
+
+        <div className="dashboardQuickActions">
+
+         <button onClick={()=>go('customerPayments')}>
+          <CreditCard/>
+          <span>Create / manage paylinks</span>
+          <ChevronRight/>
+         </button>
+
+         <button onClick={()=>go('transactions')}>
+          <Banknote/>
+          <span>View transactions</span>
+          <ChevronRight/>
+         </button>
+
+         <button onClick={()=>go('early')}>
+          <ArrowUpRight/>
+          <span>Review early payouts</span>
+          <ChevronRight/>
+         </button>
+
+         <button onClick={()=>go('fees')}>
+          <BadgePoundSterling/>
+          <span>Fees & billing</span>
+          <ChevronRight/>
+         </button>
+
+        </div>
+       </section>
+
+      </div>
+
+     </section>
+
+     <section className="panel dashboardTransactions">
+
+      <div className="panelHead">
+       <div>
+        <span className="sectionKicker">LATEST ACTIVITY</span>
+        <h3>Recent transactions</h3>
+        <p>The latest money movements across FleetPay.</p>
+       </div>
+
+       <button
+        className="mini"
+        onClick={()=>go('transactions')}
+       >
+        View all transactions
+       </button>
+      </div>
+
+      <div className="tableWrap proTable">
+       <table>
+        <thead>
+         <tr>
+          <th>Time</th>
+          <th>Type</th>
+          <th>Reference</th>
+          <th>Driver / Booking</th>
+          <th>Amount</th>
+          <th>Status</th>
+         </tr>
+        </thead>
+
+        <tbody>
+
+         {recentTx.slice(0,7).map(x=>
+          <tr
+           key={x.ref}
+           onClick={()=>setSelectedTx(x)}
+          >
+           <td>{dt(x.createdAt)}</td>
+
+           <td>
+            <b>{x.typeLabel}</b>
+           </td>
+
+           <td>
+            {x.bookingId
+             ? `Booking ${x.bookingId}`
+             : x.type==='driver_payment'
+             ? 'Payment request'
+             : x.type==='early_payout'
+             ? 'Early payout'
+             : x.type==='weekly_payout'
+             ? 'Weekly payout'
+             : x.type==='fee'
+             ? 'FleetPay fee'
+             : 'FleetPay'}
+           </td>
+
+           <td>
+            {x.callsign
+             ? `Callsign ${x.callsign}`
+             : 'FleetPay'}
+            {x.bookingId
+             ? ` · ${x.bookingId}`
+             : ''}
+           </td>
+
+           <td className={x.direction==='out'?'negative':''}>
+            <b>
+             {x.direction==='out'?'-':'+'}
+             {money(x.amount)}
+            </b>
+           </td>
+
+           <td>
+            <Pill tone={statusTone(x.status)}>
+             {x.status}
+            </Pill>
+           </td>
+          </tr>
+         )}
+
+         {!recentTx.length&&
+          <tr>
+           <td
+            colSpan="6"
+            className="dashboardEmptyCell"
+           >
+            No recent transactions.
+           </td>
+          </tr>
+         }
+
+        </tbody>
+       </table>
+      </div>
+
+     </section>
+
+     <section className="dashboardBottomGrid">
+
+      <section className="panel dashboardActivityCard">
+       <div className="panelHead">
+        <div>
+         <span className="sectionKicker">TODAY'S ACTIVITY</span>
+         <h3>Customer payment operations</h3>
+        </div>
+       </div>
+
+       <div className="activityMetrics">
+
+        <div>
+         <span>Paylinks created</span>
+         <b>{overview?.paylinks?.created||0}</b>
+        </div>
+
+        <div>
+         <span>Paylinks paid</span>
+         <b>{overview?.paylinks?.paid||0}</b>
+        </div>
+
+        <div>
+         <span>Paylinks open</span>
+         <b>{overview?.paylinks?.open||0}</b>
+        </div>
+
+        <div>
+         <span>Refunds processed</span>
+         <b>{overview?.refunds?.count||0}</b>
+        </div>
+
+        <div>
+         <span>Released to Autocab</span>
+         <b>{overview?.activity?.released||0}</b>
+        </div>
+
+        <div>
+         <span>Completed</span>
+         <b>{overview?.activity?.completed||0}</b>
+        </div>
+
+        <div>
+         <span>Cancelled</span>
+         <b>{overview?.activity?.cancelled||0}</b>
+        </div>
+
+        <div>
+         <span>No Fare</span>
+         <b>{overview?.activity?.noFare||0}</b>
+        </div>
+
+       </div>
+      </section>
+
+      <section className="panel dashboardSevenDay">
+       <div className="panelHead">
+        <div>
+         <span className="sectionKicker">LAST 7 DAYS</span>
+         <h3>Short-term snapshot</h3>
+        </div>
+       </div>
+
+       <div className="sevenDayHero">
+        <span>Customer payments</span>
+        <strong>
+         {money(overview?.sevenDay?.customerPayments?.total||0)}
+        </strong>
+        <small>
+         {overview?.sevenDay?.customerPayments?.count||0} payments
+        </small>
+       </div>
+
+       <div className="sevenDayRows">
+        <div>
+         <span>FleetPay fees</span>
+         <b>
+          {money(overview?.sevenDay?.customerPayments?.fees||0)}
+         </b>
+        </div>
+
+        <div>
+         <span>Refunds</span>
+         <b>
+          {money(overview?.sevenDay?.refunds?.total||0)}
+         </b>
+        </div>
+       </div>
+
+      </section>
+
+     </section>
     </>}
+
     {view==='transactions'&&<><section className="officePageIntro"><div><span>MASTER LEDGER</span><h2>Transaction history</h2><p>Search and filter driver payments, payouts, customer payments and fees.</p></div></section>
 
 <section className="transactionCategoryTabs">
