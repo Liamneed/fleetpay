@@ -3755,7 +3755,7 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
                className="mini"
                onClick={()=>setSelectedPaymentPlan(plan)}
               >
-               View
+               {plan.status==='defaulted'?'Review':'View'}
               </button>
 
               {canMoney&&plan.status==='draft'&&
@@ -3765,6 +3765,36 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
                 onClick={()=>activatePaymentPlan(plan)}
                >
                 Activate
+               </button>
+              }
+
+              {canMoney&&plan.status==='active'&&
+               <button
+                className="mini"
+                disabled={planActionBusy}
+                onClick={()=>pausePaymentPlan(plan)}
+               >
+                Pause
+               </button>
+              }
+
+              {canMoney&&plan.status==='paused'&&
+               <button
+                className="mini success"
+                disabled={planActionBusy}
+                onClick={()=>resumePaymentPlan(plan)}
+               >
+                Resume
+               </button>
+              }
+
+              {canMoney&&plan.status==='defaulted'&&
+               <button
+                className="mini danger"
+                disabled={planActionBusy}
+                onClick={()=>pausePaymentPlan(plan)}
+               >
+                Pause
                </button>
               }
              </div>
