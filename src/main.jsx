@@ -154,6 +154,7 @@ function AdminApp(){
  const[customerAdmin,setCustomerAdmin]=useState({payments:[],summary:{}}),[customerCreate,setCustomerCreate]=useState({bookingId:'',callsign:'',customerName:'',customerMobile:'',customerEmail:'',pickup:'',destination:'',journeyAt:'',fareAmount:'',taxiCompany:'',notes:''}),[createdCustomerLink,setCreatedCustomerLink]=useState(null),[customerCreateBusy,setCustomerCreateBusy]=useState(false);
  const[customerPayQ,setCustomerPayQ]=useState(''),[customerPayStatus,setCustomerPayStatus]=useState('needs_review'),[showCustomerCreate,setShowCustomerCreate]=useState(false),[selectedCustomerPayment,setSelectedCustomerPayment]=useState(null),[customerReleaseRetryBusy,setCustomerReleaseRetryBusy]=useState(false);
  const[customerSettlementReview,setCustomerSettlementReview]=useState({decision:'full',amount:'',note:''}),[customerSettlementReviewBusy,setCustomerSettlementReviewBusy]=useState(false);
+ const[customerRefundReview,setCustomerRefundReview]=useState({decision:'full',amount:''}),[customerRefundBusy,setCustomerRefundBusy]=useState(false);
  const[driverUsers,setDriverUsers]=useState([]),[staff,setStaff]=useState([]),[securityLogs,setSecurityLogs]=useState([]);
  const[txQ,setTxQ]=useState(''),[txType,setTxType]=useState('all'),[txStatus,setTxStatus]=useState('all'),[txCategory,setTxCategory]=useState('all'),[txDateFrom,setTxDateFrom]=useState(''),[txDateTo,setTxDateTo]=useState('');
  const[q,setQ]=useState(''),[filter,setFilter]=useState('all'),[selected,setSelected]=useState(null),[selectedTx,setSelectedTx]=useState(null);
@@ -348,6 +349,70 @@ function AdminApp(){
  }
  async function copyCustomerLink(url){try{await navigator.clipboard.writeText(url);alert('Payment link copied.')}catch{prompt('Copy this payment link:',url)}}
  async function cancelCustomerPayment(id){if(!confirm('Cancel this unpaid payment link?'))return;try{await api(`/api/admin/customer-payments/${id}/cancel`,{method:'POST'});await loadCustomerAdmin()}catch(e){alert(e.message)}}
+ async function submitCustomerRefund(payment){
+  if(!payment?.id)return;
+
+  const decision=customerRefundReview.decision;
+  const amount=Number(customerRefundReview.amount||0);
+  const total=Number(payment.totalAmount||0);
+
+  if(decision==='partial'){
+   if(!Number.isFinite(amount)||amount<=0||amount>total){
+    return alert(`Enter a refund amount between £0.01 and ${money(total)}.`);
+   }
+  }
+
+  const wording=
+   decision==='full'
+    ? `Refund the full customer payment of ${money(total)}?`
+    : decision==='partial'
+    ? `Refund ${money(amount)} to the customer?`
+    : 'Continue without refunding the customer?';
+
+  if(!confirm(wording))return;
+
+  setCustomerRefundBusy(true);
+
+  try{
+   const j=await api(
+    `/api/admin/customer-payments/${payment.id}/refund`,
+    {
+     method:'POST',
+     body:JSON.stringify({
+      decision,
+      amount:decision==='partial'?amount:undefined
+     })
+    }
+   );
+
+   setSelectedCustomerPayment(prev=>(
+    prev?.id===payment.id
+     ? {...prev,...j.payment}
+     : prev
+   ));
+
+   await loadCustomerAdmin();
+
+   if(decision==='none'){
+    alert('Saved: no customer refund.');
+   }else if(j.refundStatus==='pending'){
+    alert(
+     'Refund submitted to Stripe and is currently pending. '+
+     'FleetPay will not treat the refund as completed until Stripe confirms it.'
+    );
+   }else{
+    alert(
+     `Refund processed successfully: ${money(j.refundedAmount||0)} refunded in total.`
+    );
+   }
+
+  }catch(e){
+   alert(e.message);
+  }finally{
+   setCustomerRefundBusy(false);
+  }
+ }
+
  async function submitCustomerSettlementReview(payment){
   if(!payment?.id)return;
 
@@ -586,7 +651,7 @@ function AdminApp(){
       </div></div>
       <form className="panel manualPanel" onSubmit={postManual}><div className="panelHead"><div><span className="sectionKicker">MANUAL MONEY MOVEMENT</span><h3>Post directly to Autocab</h3><p>Use for cash paid into the office or a manual payout. Confirmation and audit logging are mandatory.</p></div><ShieldCheck/></div><div className="manualFormGrid"><label>Driver callsign<input required value={manual.callsign} onChange={e=>setManual({...manual,callsign:e.target.value})} placeholder="e.g. 168"/></label><label>Transaction<select value={manual.type} onChange={e=>setManual({...manual,type:e.target.value})}><option value="pay_in">Pay in / money received</option><option value="payout">Payout / money sent</option></select></label><label>Amount<div className="moneyField"><span>£</span><input required type="number" min="0.01" step="0.01" value={manual.amount} onChange={e=>setManual({...manual,amount:e.target.value})}/></div></label><label className="wide">Reason<input value={manual.reason} onChange={e=>setManual({...manual,reason:e.target.value})} placeholder={manual.type==='pay_in'?(settings?.manualPayInReasonDefault||'FleetPay Manual Pay In'):(settings?.manualPayoutReasonDefault||'FleetPay Manual Payout')}/></label></div><button className="primary full" disabled={manualBusy||!canMoney}><Banknote/>{manualBusy?'Posting…':'Review & post to Autocab'}</button><small className="formHint">Autocab writes must be enabled on the server. The transaction is recorded in FleetPay's audit trail.</small></form>
      </section>
-     <section className="panel"><div className="panelHead"><div><h3>Recent money movement</h3><p>The latest customer payments, driver payments, payouts and fees.</p></div><button className="mini" onClick={()=>go('transactions')}>View all</button></div><div className="transactionList">{recentTx.map(x=><button key={x.ref} className="txRow" onClick={()=>setSelectedTx(x)}><div className={`txIcon ${x.direction}`}><CreditCard/></div><div className="txMain"><b>{x.typeLabel}</b><span>{x.callsign?`Callsign ${x.callsign}`:'FleetPay'}{x.bookingId?` · Booking ${x.bookingId}`:''}</span></div><div className="txMeta"><b className={x.direction==='out'?'out':''}>{x.direction==='out'?'-':'+'}{money(x.amount)}</b><span>{dt(x.createdAt)}</span></div><Pill tone={statusTone(x.status)}>{x.status}</Pill></button>)}</div></section>
+     <section className="panel"><div className="panelHead"><div><h3>Recent money movement</h3><p>The latest customer payments, driver payments, payouts and fees.</p></div><button className="mini" onClick={()=>go('transactions')}>View all</button></div><div className="transactionList">{recentTx.map(x=><button key={x.ref} className="txRow" onClick={()=>setSelectedTx(x)}><div className={`txIcon ${x.direction}`}><CreditCard/></div><div className="txMain"><b>{x.typeLabel}</b><span>{x.callsign?`Callsign ${x.callsign}`:'FleetPay'}{x.bookingId?` · Booking ${x.bookingId}`:''}</span></div><div className="txMeta"><b className={x.direction==='out'?'out':''}>{x.direction==='out'?'-':'+'}{money(x.amount)}</b>{Number(x.refundedAmount||0)>0&&<small>{money(x.refundedAmount)} refunded</small>}<span>{dt(x.createdAt)}</span></div><Pill tone={statusTone(x.status)}>{x.status}</Pill></button>)}</div></section>
     </>}
     {view==='transactions'&&<><section className="officePageIntro"><div><span>MASTER LEDGER</span><h2>Transaction history</h2><p>Search and filter driver payments, payouts, customer payments and fees.</p></div></section>
 
@@ -686,7 +751,16 @@ function AdminApp(){
      <td>
       <span className="transactionRef">{x.bookingId?`Booking ${x.bookingId}`:(x.providerRef||x.id)}</span>
      </td>
-     <td><b className={x.direction==='out'?'transactionAmountOut':'transactionAmountIn'}>{x.direction==='out'?'-':'+'}{money(x.amount)}</b></td>
+     <td>
+      <b className={x.direction==='out'?'transactionAmountOut':'transactionAmountIn'}>
+       {x.direction==='out'?'-':'+'}{money(x.amount)}
+      </b>
+      {Number(x.refundedAmount||0)>0&&
+       <small>
+        Received {money(x.originalAmount)} · Refunded {money(x.refundedAmount)}
+       </small>
+      }
+     </td>
      <td><Pill tone={x.direction==='out'?'bad':'good'}>{x.direction==='out'?'Outgoing':'Incoming'}</Pill></td>
      <td><Pill tone={statusTone(x.status)}>{x.status}</Pill></td>
      <td><ChevronRight/></td>
@@ -1512,6 +1586,186 @@ function AdminApp(){
         }
 
         {customerSettlementStatus(selectedCustomerPayment)==='review'&&
+         ['paid'].includes(customerPaymentStatus(selectedCustomerPayment))&&
+         ['no_fare','cancelled'].includes(customerJobStatus(selectedCustomerPayment))&&
+         <div className="customerSettlementReviewCard">
+
+          <div className="customerSettlementReviewHead">
+           <AlertTriangle/>
+           <div>
+            <b>Customer refund decision</b>
+            <span>
+             The customer has already paid {money(selectedCustomerPayment.totalAmount)}.
+             Decide whether this payment should be refunded.
+            </span>
+           </div>
+          </div>
+
+          {selectedCustomerPayment.refundStatus==='pending'&&
+           <div className="customerSettlementDecision held">
+            <Clock3/>
+            <div>
+             <b>Customer refund pending</b>
+             <span>
+              Stripe is still processing this refund. FleetPay will not reduce
+              financial totals until Stripe confirms it has succeeded.
+             </span>
+            </div>
+           </div>
+          }
+
+          {selectedCustomerPayment.refundStatus==='full'&&
+           <div className="customerSettlementDecision approved">
+            <ShieldCheck/>
+            <div>
+             <b>
+              Full refund completed: {money(selectedCustomerPayment.refundedAmount)}
+             </b>
+             <span>
+              The full customer payment has been refunded successfully.
+             </span>
+            </div>
+           </div>
+          }
+
+          {selectedCustomerPayment.refundStatus==='partial'&&
+           <div className="customerSettlementDecision approved">
+            <ShieldCheck/>
+            <div>
+             <b>
+              Partial refund completed: {money(selectedCustomerPayment.refundedAmount)}
+             </b>
+             <span>
+              {money(
+               Math.max(
+                0,
+                Number(selectedCustomerPayment.totalAmount||0)-
+                Number(selectedCustomerPayment.refundedAmount||0)
+               )
+              )} remains from the original customer payment.
+             </span>
+            </div>
+           </div>
+          }
+
+          {selectedCustomerPayment.refundStatus==='none'&&
+           <div className="customerSettlementDecision held">
+            <ShieldCheck/>
+            <div>
+             <b>No customer refund</b>
+             <span>
+              The office has chosen to continue without refunding this payment.
+             </span>
+            </div>
+           </div>
+          }
+
+          {!['pending','full'].includes(selectedCustomerPayment.refundStatus)&&
+           <>
+            <div className="customerSettlementChoices">
+
+             <button
+              type="button"
+              className={customerRefundReview.decision==='full'?'active':''}
+              onClick={()=>setCustomerRefundReview(x=>({
+               ...x,
+               decision:'full'
+              }))}
+             >
+              <b>Full refund</b>
+              <span>{money(selectedCustomerPayment.totalAmount)}</span>
+             </button>
+
+             <button
+              type="button"
+              className={customerRefundReview.decision==='partial'?'active':''}
+              onClick={()=>setCustomerRefundReview(x=>({
+               ...x,
+               decision:'partial'
+              }))}
+             >
+              <b>Partial refund</b>
+              <span>
+               {selectedCustomerPayment.refundStatus==='partial'
+                ? 'Change total refund'
+                : 'Enter amount'}
+              </span>
+             </button>
+
+             <button
+              type="button"
+              className={customerRefundReview.decision==='none'?'active danger':''}
+              onClick={()=>setCustomerRefundReview(x=>({
+               ...x,
+               decision:'none'
+              }))}
+             >
+              <b>No refund</b>
+              <span>£0.00</span>
+             </button>
+
+            </div>
+
+            {customerRefundReview.decision==='partial'&&
+             <label className="customerSettlementAmount">
+              {selectedCustomerPayment.refundStatus==='partial'
+               ? 'Total customer refund'
+               : 'Customer refund'}
+              <div>
+               <span>£</span>
+               <input
+                type="number"
+                min="0.01"
+                max={Number(selectedCustomerPayment.totalAmount||0)}
+                step="0.01"
+                value={customerRefundReview.amount}
+                onChange={e=>setCustomerRefundReview(x=>({
+                 ...x,
+                 amount:e.target.value
+                }))}
+                placeholder="0.00"
+               />
+              </div>
+              {selectedCustomerPayment.refundStatus==='partial'&&
+               <small>
+                Enter the new total refund amount, not an additional amount.
+                Already refunded: {money(selectedCustomerPayment.refundedAmount)}.
+               </small>
+              }
+             </label>
+            }
+
+            {!selectedCustomerPayment.driverId&&
+             Number(selectedCustomerPayment.refundedAmount||0)===0&&
+             !selectedCustomerPayment.refundStatus&&
+             <small>
+              No driver is assigned to this booking. A full refund is selected by default,
+              but you can choose another option before processing.
+             </small>
+            }
+
+            <button
+             type="button"
+             className="customerSettlementApproveButton"
+             disabled={customerRefundBusy}
+             onClick={()=>submitCustomerRefund(selectedCustomerPayment)}
+            >
+             <ShieldCheck/>
+             {customerRefundBusy
+              ? 'Processing…'
+              : customerRefundReview.decision==='none'
+              ? 'Continue without refund'
+              : selectedCustomerPayment.refundStatus==='partial'
+              ? 'Update customer refund'
+              : 'Process customer refund'}
+            </button>
+           </>
+          }
+
+         </div>
+        }
+
+        {customerSettlementStatus(selectedCustomerPayment)==='review'&&
          <div className="customerSettlementReviewCard">
 
           <div className="customerSettlementReviewHead">
@@ -1962,7 +2216,42 @@ function AdminApp(){
     </div></>}
    </div>
   </main>
-  {selectedTx&&<div className="drawerBack" onClick={()=>setSelectedTx(null)}><aside className="drawer txDrawer" onClick={e=>e.stopPropagation()}><button className="drawerClose" onClick={()=>setSelectedTx(null)}><X/></button><div className="txDrawerHead"><div className={`txIcon large ${selectedTx.direction}`}><CreditCard/></div><div><span>{selectedTx.typeLabel}</span><h2>{selectedTx.direction==='out'?'-':'+'}{money(selectedTx.amount)}</h2><Pill tone={statusTone(selectedTx.status)}>{selectedTx.status}</Pill></div></div><div className="detailList">{[['FleetPay ID',selectedTx.id],['Created',dt(selectedTx.createdAt)],['Completed',selectedTx.completedAt?dt(selectedTx.completedAt):'—'],['Callsign',selectedTx.callsign||'—'],['Driver',selectedTx.driverName||'—'],['Booking',selectedTx.bookingId||'—'],['Fare',selectedTx.fareAmount!=null?money(selectedTx.fareAmount):'—'],['FleetPay fee',selectedTx.feeAmount!=null?money(selectedTx.feeAmount):'—'],['Provider',selectedTx.provider||'—'],['Provider reference',selectedTx.providerRef||'—']].map(([a,b])=><div key={a}><span>{a}</span><b>{b}</b></div>)}</div><div className="secureFoot"><ShieldCheck/><span>Transaction detail is read-only. Changes are made through controlled workflows and recorded in the audit trail.</span></div></aside></div>}
+  {selectedTx&&<div className="drawerBack" onClick={()=>setSelectedTx(null)}><aside className="drawer txDrawer" onClick={e=>e.stopPropagation()}><button className="drawerClose" onClick={()=>setSelectedTx(null)}><X/></button><div className="txDrawerHead">
+   <div className={`txIcon large ${selectedTx.direction}`}><CreditCard/></div>
+   <div>
+    <span>{selectedTx.typeLabel}</span>
+    <h2>{selectedTx.direction==='out'?'-':'+'}{money(selectedTx.amount)}</h2>
+    {Number(selectedTx.refundedAmount||0)>0&&<small>Net after customer refund</small>}
+    <Pill tone={statusTone(selectedTx.status)}>{selectedTx.status}</Pill>
+   </div>
+  </div>
+  <div className="detailList">
+   {[
+    ['FleetPay ID',selectedTx.id],
+    ['Created',dt(selectedTx.createdAt)],
+    ['Completed',selectedTx.completedAt?dt(selectedTx.completedAt):'—'],
+    ['Callsign',selectedTx.callsign||'—'],
+    ['Driver',selectedTx.driverName||'—'],
+    ['Booking',selectedTx.bookingId||'—'],
+    ...(Number(selectedTx.refundedAmount||0)>0
+     ?[
+       ['Originally received',money(selectedTx.originalAmount)],
+       ['Customer refunded',money(selectedTx.refundedAmount)],
+       ['Net retained',money(selectedTx.amount)]
+      ]
+     :[]
+    ),
+    ['Fare',selectedTx.fareAmount!=null?money(selectedTx.fareAmount):'—'],
+    ['FleetPay fee',selectedTx.feeAmount!=null?money(selectedTx.feeAmount):'—'],
+    ...(selectedTx.originalFeeAmount!=null &&
+       Number(selectedTx.originalFeeAmount)!==Number(selectedTx.feeAmount)
+     ?[['Original FleetPay fee',money(selectedTx.originalFeeAmount)]]
+     :[]
+    ),
+    ['Provider',selectedTx.provider||'—'],
+    ['Provider reference',selectedTx.providerRef||'—']
+   ].map(([a,b])=><div key={a}><span>{a}</span><b>{b}</b></div>)}
+  </div><div className="secureFoot"><ShieldCheck/><span>Transaction detail is read-only. Changes are made through controlled workflows and recorded in the audit trail.</span></div></aside></div>}
   {selected&&<div className="drawerBack" onClick={()=>setSelected(null)}><aside className="drawer" onClick={e=>e.stopPropagation()}><button className="drawerClose" onClick={()=>setSelected(null)}><X/></button><div className="driverIdentity"><div className="avatar">{selected.forename?.[0]}{selected.surname?.[0]}</div><div><span>CALLSIGN {selected.callsign}</span><h2>{selected.fullName}</h2><p>Autocab Driver ID {selected.driverId}</p></div></div><div className={`balanceHero ${(selected.currentBalance??0)<0?'red':''}`}><span>Current balance</span><strong>{money(selected.currentBalance)}</strong><small>Previous {money(selected.previousBalance)}</small></div><div className="infoGrid"><div><Phone/><span>Mobile</span><b>{selected.mobile||'Not stored'}</b></div><div><Mail/><span>Email</span><b>{selected.email||'Not stored'}</b></div><div><Clock3/><span>Last processed</span><b>{dt(selected.lastProcessed)}</b></div><div><Hash/><span>Processed by</span><b>{selected.lastProcessedBy||'—'}</b></div></div><div className="payoutAccountCard"><div className="payoutAccountHead"><div className="payoutAccountIcon"><Banknote/></div><div><span>PAYOUT ACCOUNT</span><h3>Driver bank details</h3></div><Pill tone={bankTone(selected.bankAccount)}>{selected.bankAccount?.label||'Bank details missing'}</Pill></div>{selected.bankAccount?.ready?<div className="payoutAccountDetails"><div><span>Account holder</span><b>{selected.bankAccount.accountHolder||'Saved securely'}</b></div><div><span>Sort code</span><b>{selected.bankAccount.sortCodeMasked}</b></div><div><span>Account number</span><b>{selected.bankAccount.accountNumberMasked}</b></div><div><span>Added</span><b>{dt(selected.bankAccount.createdAt)}</b></div><div><span>Last changed</span><b>{dt(selected.bankAccount.updatedAt)}</b></div></div>:<div className="bankMissingNotice"><AlertTriangle/><div><b>No payout bank account</b><span>This driver must add bank details in the FleetPay app before a payout can be released.</span></div></div>} {selected.bankAccount?.changedRecently&&<div className="bankRecentNotice"><Clock3/><div><b>Bank details changed recently</b><span>Changed {dt(selected.bankAccount.updatedAt)}. Confirm the driver expected this change if anything looks unusual.</span></div></div>}<small className="bankSecurityNote"><ShieldCheck/> FleetPay only exposes masked account details to office users. Full bank details remain encrypted.</small></div>
 
 <div className={`payoutControlCard ${selected.payoutExcluded?'excluded':''}`}>

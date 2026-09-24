@@ -2888,7 +2888,25 @@ app.patch('/api/admin/staff/:id',adminAuth,requireStaffRole('administrator'),(re
 
 app.get('/api/admin/office-overview',adminAuth,(req,res)=>{
  const today=londonWindow().date;
- const customer=db.prepare("SELECT COUNT(*) c,COALESCE(SUM(total_amount),0) total,COALESCE(SUM(fee_amount),0) fees FROM customer_payments WHERE status='paid' AND substr(paid_at,1,10)=?").get(today);
+ const customerRows=db.prepare(
+  "SELECT * FROM customer_payments WHERE status='paid' AND substr(paid_at,1,10)=?"
+ ).all(today);
+
+ const customer={
+  c:customerRows.length,
+  total:Number(
+   customerRows.reduce(
+    (a,x)=>a+customerPaymentNetAmounts(x).netReceived,
+    0
+   ).toFixed(2)
+  ),
+  fees:Number(
+   customerRows.reduce(
+    (a,x)=>a+customerPaymentNetAmounts(x).netFee,
+    0
+   ).toFixed(2)
+  )
+ };
  const payouts=db.prepare("SELECT COUNT(*) c,COALESCE(SUM(COALESCE(net_amount,amount)),0) total FROM payouts WHERE status='paid' AND substr(paid_at,1,10)=?").get(today);
  const actionNeeded=Number(db.prepare("SELECT COUNT(*) c FROM payouts WHERE status IN ('requested','approved','batched')").get().c)+Number(db.prepare("SELECT COUNT(*) c FROM payment_requests WHERE status='open'").get().c);
  const failedAdjustments=Number(db.prepare("SELECT COUNT(*) c FROM autocab_adjustments WHERE status='failed'").get().c);
@@ -2897,12 +2915,182 @@ app.get('/api/admin/office-overview',adminAuth,(req,res)=>{
 
 function officeTransactions(limit=250){
  const rows=[];
- for(const x of db.prepare('SELECT * FROM customer_payments ORDER BY created_at DESC LIMIT ?').all(limit))rows.push({id:x.id,ref:`customer_payment:${x.id}`,type:'customer_payment',typeLabel:'Customer payment',direction:'in',callsign:x.callsign,driverName:x.driver_name,bookingId:x.booking_id,amount:Number(x.total_amount),fareAmount:Number(x.fare_amount),feeAmount:Number(x.fee_amount),status:x.status,provider:x.provider||'stripe',providerRef:x.stripe_payment_intent_id||x.provider_session_id||'',createdAt:x.created_at,completedAt:x.paid_at});
- for(const x of db.prepare('SELECT * FROM payment_requests ORDER BY created_at DESC LIMIT ?').all(limit))rows.push({id:x.id,ref:`payment_request:${x.id}`,type:'driver_payment',typeLabel:'Driver payment',direction:'in',callsign:x.callsign,driverName:x.driver_name,amount:Number(x.amount),feeAmount:Number(x.weekly_fee||0)+Number(x.carried_charges||0),status:x.status,provider:x.provider||'manual',providerRef:x.provider_payment_intent_id||x.provider_session_id||'',createdAt:x.created_at,completedAt:x.paid_at});
- for(const x of db.prepare('SELECT * FROM payouts ORDER BY created_at DESC LIMIT ?').all(limit))rows.push({id:x.id,ref:`payout:${x.id}`,type:x.type==='early'?'early_payout':'weekly_payout',typeLabel:x.type==='early'?'Early payout':'Weekly payout',direction:'out',callsign:x.callsign,driverName:x.driver_name,amount:Number(x.net_amount||x.amount||0),feeAmount:Number(x.type==='early'?x.fee:x.weekly_fee||0),status:x.status,provider:x.payout_run_id?'payment_run':'manual',providerRef:x.payout_run_id||'',createdAt:x.created_at,completedAt:x.paid_at});
- for(const x of db.prepare('SELECT f.*,c.full_name FROM fee_ledger f LEFT JOIN driver_cache c ON c.driver_id=f.driver_id ORDER BY f.created_at DESC LIMIT ?').all(limit))rows.push({id:x.id,ref:`fee:${x.id}`,type:'fee',typeLabel:String(x.fee_type)==='customer_payment'?'Customer payment fee':String(x.fee_type)==='early_payout'?'Early payout fee':'Weekly FleetPay fee',direction:'in',callsign:x.callsign,driverName:x.full_name,amount:Number(x.gross_fee),feeAmount:Number(x.gross_fee),status:x.status,provider:'FleetPay',providerRef:x.source_id||'',createdAt:x.created_at,completedAt:x.invoiced_at||x.created_at});
- for(const x of db.prepare("SELECT a.*,c.full_name FROM autocab_adjustments a LEFT JOIN driver_cache c ON c.driver_id=a.driver_id WHERE a.event_key LIKE 'manual:%' ORDER BY a.created_at DESC LIMIT ?").all(limit))rows.push({id:x.id,ref:`manual:${x.id}`,type:'manual_adjustment',typeLabel:x.is_credit?'Manual pay in':'Manual payout',direction:x.is_credit?'in':'out',callsign:x.callsign,driverName:x.full_name,amount:Number(x.amount),feeAmount:0,status:x.status,provider:'Autocab',providerRef:x.event_key||'',createdAt:x.created_at,completedAt:x.completed_at});
- return rows.sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+
+ for(const x of db.prepare(
+  'SELECT * FROM customer_payments ORDER BY created_at DESC LIMIT ?'
+ ).all(limit)){
+  const net=customerPaymentNetAmounts(x);
+
+  rows.push({
+   id:x.id,
+   ref:`customer_payment:${x.id}`,
+   type:'customer_payment',
+   typeLabel:'Customer payment',
+   direction:'in',
+   callsign:x.callsign,
+   driverName:x.driver_name,
+   bookingId:x.booking_id,
+   amount:net.netReceived,
+   originalAmount:Number(x.total_amount||0),
+   refundedAmount:net.refunded,
+   refundStatus:x.refund_status||null,
+   fareAmount:Number(x.fare_amount||0),
+   feeAmount:net.netFee,
+   originalFeeAmount:Number(x.fee_amount||0),
+   status:x.status,
+   provider:x.provider||'stripe',
+   providerRef:
+    x.stripe_payment_intent_id||
+    x.provider_session_id||
+    '',
+   createdAt:x.created_at,
+   completedAt:x.paid_at
+  });
+ }
+
+ for(const x of db.prepare(
+  'SELECT * FROM payment_requests ORDER BY created_at DESC LIMIT ?'
+ ).all(limit)){
+  rows.push({
+   id:x.id,
+   ref:`payment_request:${x.id}`,
+   type:'driver_payment',
+   typeLabel:'Driver payment',
+   direction:'in',
+   callsign:x.callsign,
+   driverName:x.driver_name,
+   amount:Number(x.amount),
+   feeAmount:
+    Number(x.weekly_fee||0)+
+    Number(x.carried_charges||0),
+   status:x.status,
+   provider:x.provider||'manual',
+   providerRef:
+    x.provider_payment_intent_id||
+    x.provider_session_id||
+    '',
+   createdAt:x.created_at,
+   completedAt:x.paid_at
+  });
+ }
+
+ for(const x of db.prepare(
+  'SELECT * FROM payouts ORDER BY created_at DESC LIMIT ?'
+ ).all(limit)){
+  rows.push({
+   id:x.id,
+   ref:`payout:${x.id}`,
+   type:x.type==='early'
+    ? 'early_payout'
+    : 'weekly_payout',
+   typeLabel:x.type==='early'
+    ? 'Early payout'
+    : 'Weekly payout',
+   direction:'out',
+   callsign:x.callsign,
+   driverName:x.driver_name,
+   amount:Number(x.net_amount||x.amount||0),
+   feeAmount:Number(
+    x.type==='early'
+     ? x.fee
+     : x.weekly_fee||0
+   ),
+   status:x.status,
+   provider:x.payout_run_id
+    ? 'payment_run'
+    : 'manual',
+   providerRef:x.payout_run_id||'',
+   createdAt:x.created_at,
+   completedAt:x.paid_at
+  });
+ }
+
+ const feeRows=db.prepare(`
+  SELECT
+   f.*,
+   c.full_name,
+   cp.fare_amount customerFareAmount,
+   cp.fee_amount customerFeeAmount,
+   cp.total_amount customerTotalAmount,
+   cp.refunded_amount customerRefundedAmount
+  FROM fee_ledger f
+  LEFT JOIN driver_cache c
+   ON c.driver_id=f.driver_id
+  LEFT JOIN customer_payments cp
+   ON f.fee_type='customer_payment'
+   AND f.source_type='customer_payment'
+   AND cp.id=f.source_id
+  ORDER BY f.created_at DESC
+  LIMIT ?
+ `).all(limit);
+
+ for(const x of feeRows){
+  let effectiveFee=Number(x.gross_fee||0);
+
+  if(
+   x.status==='uninvoiced' &&
+   x.fee_type==='customer_payment' &&
+   x.source_type==='customer_payment' &&
+   x.customerTotalAmount!==null
+  ){
+   effectiveFee=customerPaymentNetAmounts({
+    fare_amount:x.customerFareAmount,
+    fee_amount:x.customerFeeAmount,
+    total_amount:x.customerTotalAmount,
+    refunded_amount:x.customerRefundedAmount
+   }).netFee;
+  }
+
+  rows.push({
+   id:x.id,
+   ref:`fee:${x.id}`,
+   type:'fee',
+   typeLabel:
+    String(x.fee_type)==='customer_payment'
+     ? 'Customer payment fee'
+     : String(x.fee_type)==='early_payout'
+     ? 'Early payout fee'
+     : 'Weekly FleetPay fee',
+   direction:'in',
+   callsign:x.callsign,
+   driverName:x.full_name,
+   amount:Number(effectiveFee.toFixed(2)),
+   feeAmount:Number(effectiveFee.toFixed(2)),
+   originalAmount:Number(x.gross_fee||0),
+   status:x.status,
+   provider:'FleetPay',
+   providerRef:x.source_id||'',
+   createdAt:x.created_at,
+   completedAt:x.invoiced_at||x.created_at
+  });
+ }
+
+ for(const x of db.prepare(
+  "SELECT a.*,c.full_name FROM autocab_adjustments a LEFT JOIN driver_cache c ON c.driver_id=a.driver_id WHERE a.event_key LIKE 'manual:%' ORDER BY a.created_at DESC LIMIT ?"
+ ).all(limit)){
+  rows.push({
+   id:x.id,
+   ref:`manual:${x.id}`,
+   type:'manual_adjustment',
+   typeLabel:x.is_credit
+    ? 'Manual pay in'
+    : 'Manual payout',
+   direction:x.is_credit?'in':'out',
+   callsign:x.callsign,
+   driverName:x.full_name,
+   amount:Number(x.amount),
+   feeAmount:0,
+   status:x.status,
+   provider:'Autocab',
+   providerRef:x.event_key||'',
+   createdAt:x.created_at,
+   completedAt:x.completed_at
+  });
+ }
+
+ return rows.sort(
+  (a,b)=>new Date(b.createdAt)-new Date(a.createdAt)
+ );
 }
 function transactionLondonDate(value){
  const d=new Date(value);
@@ -3010,6 +3198,32 @@ app.post('/api/public/customer-payments/:id/checkout',async(req,res)=>{
   res.json({ok:true,checkoutUrl:session.url});
  }catch(e){res.status(500).json({error:e.message})}
 });
+function customerPaymentNetAmounts(payment){
+ const fare=Math.max(0,Number(payment?.fareAmount??payment?.fare_amount??0));
+ const fee=Math.max(0,Number(payment?.feeAmount??payment?.fee_amount??0));
+ const total=Math.max(0,Number(payment?.totalAmount??payment?.total_amount??0));
+ const refunded=Math.min(
+  total,
+  Math.max(0,Number(payment?.refundedAmount??payment?.refunded_amount??0))
+ );
+
+ // Refund fare first. Only the portion above fare reduces the service fee.
+ const feeRefunded=Math.min(
+  fee,
+  Math.max(0,refunded-fare)
+ );
+
+ const netFee=Math.max(0,fee-feeRefunded);
+ const netReceived=Math.max(0,total-refunded);
+
+ return {
+  refunded:Number(refunded.toFixed(2)),
+  feeRefunded:Number(feeRefunded.toFixed(2)),
+  netFee:Number(netFee.toFixed(2)),
+  netReceived:Number(netReceived.toFixed(2))
+ };
+}
+
 app.get('/api/admin/customer-payments',adminAuth,(req,res)=>{
  const rows=db.prepare(`SELECT cp.*,fl.fleetpay_share,fl.taxi_company_share,fl.gross_fee
   FROM customer_payments cp LEFT JOIN fee_ledger fl ON fl.source_type='customer_payment' AND fl.source_id=cp.id
@@ -3042,16 +3256,40 @@ app.get('/api/admin/customer-payments',adminAuth,(req,res)=>{
    needsReview:needsReview.length,
    releaseFailed:releaseFailed.length,
    grossPaid:Number(
-    paid.reduce((a,x)=>a+x.totalAmount,0).toFixed(2)
+    paid.reduce(
+     (a,x)=>a+customerPaymentNetAmounts(x).netReceived,
+     0
+    ).toFixed(2)
+   ),
+   refunded:Number(
+    paid.reduce(
+     (a,x)=>a+customerPaymentNetAmounts(x).refunded,
+     0
+    ).toFixed(2)
    ),
    feesPaid:Number(
-    paid.reduce((a,x)=>a+x.feeAmount,0).toFixed(2)
+    paid.reduce(
+     (a,x)=>a+customerPaymentNetAmounts(x).netFee,
+     0
+    ).toFixed(2)
    ),
    fleetPayShare:Number(
-    paid.reduce((a,x)=>a+x.fleetPayFeeShare,0).toFixed(2)
+    paid.reduce((a,x)=>{
+     const originalFee=Number(x.grossFee||x.feeAmount||0);
+     if(originalFee<=0)return a;
+
+     const ratio=Number(x.fleetPayFeeShare||0)/originalFee;
+     return a+(customerPaymentNetAmounts(x).netFee*ratio);
+    },0).toFixed(2)
    ),
    taxiCompanyShare:Number(
-    paid.reduce((a,x)=>a+x.taxiCompanyFeeShare,0).toFixed(2)
+    paid.reduce((a,x)=>{
+     const originalFee=Number(x.grossFee||x.feeAmount||0);
+     if(originalFee<=0)return a;
+
+     const ratio=Number(x.taxiCompanyFeeShare||0)/originalFee;
+     return a+(customerPaymentNetAmounts(x).netFee*ratio);
+    },0).toFixed(2)
    )
   }
  });
@@ -3085,6 +3323,291 @@ app.post('/api/admin/customer-payments/:id/cancel',adminAuth,requireStaffRole('a
  const row=db.prepare('SELECT * FROM customer_payments WHERE id=?').get(req.params.id);if(!row)return res.status(404).json({error:'Payment not found'});if(row.status==='paid')return res.status(400).json({error:'Paid payments cannot be cancelled. Use the refund workflow when enabled.'});
  db.prepare('UPDATE customer_payments SET status=?,updated_at=? WHERE id=?').run('cancelled',new Date().toISOString(),row.id);audit(req,'admin',req.auth.email,'customer_payment_cancelled','customer_payment',row.id,{});res.json({ok:true});
 });
+
+
+app.post(
+ '/api/admin/customer-payments/:id/refund',
+ adminAuth,
+ requireStaffRole('administrator','finance','office'),
+ async(req,res)=>{
+  try{
+   if(!stripe){
+    return res.status(400).json({
+     error:'Stripe refunds are not currently available.'
+    });
+   }
+
+   const row=db.prepare(
+    'SELECT * FROM customer_payments WHERE id=?'
+   ).get(req.params.id);
+
+   if(!row){
+    return res.status(404).json({error:'Payment not found'});
+   }
+
+   const paymentStatus=
+    row.payment_status ||
+    row.status ||
+    'open';
+
+   if(paymentStatus!=='paid'){
+    return res.status(400).json({
+     error:'Only successfully paid customer payments can be refunded.'
+    });
+   }
+
+   if(!['no_fare','cancelled'].includes(String(row.job_status||''))){
+    return res.status(400).json({
+     error:'Customer refunds are currently available for No Fare or Cancelled jobs only.'
+    });
+   }
+
+   const paymentIntentId=String(
+    row.stripe_payment_intent_id||''
+   ).trim();
+
+   if(!paymentIntentId){
+    return res.status(400).json({
+     error:'This payment does not have a Stripe Payment Intent to refund.'
+    });
+   }
+
+   const decision=String(req.body.decision||'').trim();
+   const total=Math.round(Number(row.total_amount||0)*100)/100;
+
+   /*
+    * Read Stripe first so Stripe remains the authority for how much
+    * has actually been refunded. This protects against duplicate clicks
+    * or a previous refund succeeding before FleetPay saved its state.
+    */
+   const stripeRefunds=await stripe.refunds.list({
+    payment_intent:paymentIntentId,
+    limit:100
+   });
+
+   const stripeRefundRows=stripeRefunds.data||[];
+
+   const refundedPence=stripeRefundRows
+    .filter(r=>String(r.status||'')==='succeeded')
+    .reduce((sum,r)=>sum+Number(r.amount||0),0);
+
+   const pendingRefundPence=stripeRefundRows
+    .filter(r=>['pending','requires_action'].includes(String(r.status||'')))
+    .reduce((sum,r)=>sum+Number(r.amount||0),0);
+
+   const alreadyRefunded=
+    Math.round((refundedPence/100)*100)/100;
+
+   const pendingRefundAmount=
+    Math.round((pendingRefundPence/100)*100)/100;
+
+   if(decision==='none'){
+    if(alreadyRefunded>0 || pendingRefundAmount>0){
+     return res.status(400).json({
+      error:
+       pendingRefundAmount>0
+        ? 'A Stripe refund is currently pending for this payment.'
+        : 'A Stripe refund has already been issued for this payment.'
+     });
+    }
+
+    const now=new Date().toISOString();
+
+    db.prepare(`
+     UPDATE customer_payments
+     SET refund_status='none',
+         refunded_amount=0,
+         refunded_at=NULL,
+         updated_at=?
+     WHERE id=?
+    `).run(now,row.id);
+
+    audit(
+     req,
+     'admin',
+     req.auth.email,
+     'customer_payment_refund_declined',
+     'customer_payment',
+     row.id,
+     {
+      bookingId:row.booking_id||null,
+      totalAmount:total
+     }
+    );
+
+    return res.json({
+     ok:true,
+     decision:'none',
+     payment:publicCustomerPayment(
+      db.prepare(
+       'SELECT * FROM customer_payments WHERE id=?'
+      ).get(row.id)
+     )
+    });
+   }
+
+   let targetRefund;
+
+   if(decision==='full'){
+    targetRefund=total;
+
+   }else if(decision==='partial'){
+    targetRefund=
+     Math.round(Number(req.body.amount||0)*100)/100;
+
+    if(
+     !Number.isFinite(targetRefund) ||
+     targetRefund<=0 ||
+     targetRefund>total
+    ){
+     return res.status(400).json({
+      error:`Enter a refund amount between £0.01 and £${total.toFixed(2)}.`
+     });
+    }
+
+   }else{
+    return res.status(400).json({
+     error:'Choose full, partial or no refund.'
+    });
+   }
+
+   if(targetRefund<alreadyRefunded){
+    return res.status(400).json({
+     error:
+      `£${alreadyRefunded.toFixed(2)} has already been refunded. `+
+      `The new total refund cannot be lower than that amount.`
+    });
+   }
+
+   if(pendingRefundAmount>0){
+    return res.status(409).json({
+     error:
+      `A Stripe refund of £${pendingRefundAmount.toFixed(2)} is still pending. `+
+      `Wait for Stripe to complete or fail that refund before trying again.`
+    });
+   }
+
+   const additionalRefund=
+    Math.round((targetRefund-alreadyRefunded)*100)/100;
+
+   let stripeRefund=null;
+
+   if(additionalRefund>0){
+    stripeRefund=await stripe.refunds.create(
+     {
+      payment_intent:paymentIntentId,
+      amount:Math.round(additionalRefund*100),
+      metadata:{
+       fleetpay_customer_payment_id:String(row.id),
+       booking_id:String(row.booking_id||''),
+       processed_by:String(req.auth.email||'')
+      }
+     },
+     {
+      idempotencyKey:
+       `fleetpay-refund-${row.id}-${Math.round(targetRefund*100)}`
+     }
+    );
+   }
+
+   /*
+    * Re-read Stripe after the operation rather than assuming the
+    * requested amount was accepted.
+    */
+   const verifiedRefunds=await stripe.refunds.list({
+    payment_intent:paymentIntentId,
+    limit:100
+   });
+
+   const verifiedRefundRows=verifiedRefunds.data||[];
+
+   const verifiedPence=verifiedRefundRows
+    .filter(r=>String(r.status||'')==='succeeded')
+    .reduce((sum,r)=>sum+Number(r.amount||0),0);
+
+   const verifiedPendingPence=verifiedRefundRows
+    .filter(r=>['pending','requires_action'].includes(String(r.status||'')))
+    .reduce((sum,r)=>sum+Number(r.amount||0),0);
+
+   const verifiedAmount=
+    Math.round((verifiedPence/100)*100)/100;
+
+   const verifiedPendingAmount=
+    Math.round((verifiedPendingPence/100)*100)/100;
+
+   const refundStatus=
+    verifiedPendingAmount>0
+     ? 'pending'
+     : verifiedAmount>=total
+     ? 'full'
+     : verifiedAmount>0
+     ? 'partial'
+     : 'none';
+
+   const now=new Date().toISOString();
+
+   db.prepare(`
+    UPDATE customer_payments
+    SET refund_status=?,
+        refunded_amount=?,
+        refunded_at=CASE
+         WHEN ?>0 THEN ?
+         ELSE refunded_at
+        END,
+        updated_at=?
+    WHERE id=?
+   `).run(
+    refundStatus,
+    verifiedAmount,
+    verifiedAmount,
+    now,
+    now,
+    row.id
+   );
+
+   audit(
+    req,
+    'admin',
+    req.auth.email,
+    'customer_payment_refunded',
+    'customer_payment',
+    row.id,
+    {
+     bookingId:row.booking_id||null,
+     decision,
+     previousRefundedAmount:alreadyRefunded,
+     additionalRefundAmount:additionalRefund,
+     refundedAmount:verifiedAmount,
+     pendingRefundAmount:verifiedPendingAmount,
+     totalAmount:total,
+     stripeRefundId:stripeRefund?.id||null,
+     stripeRefundStatus:stripeRefund?.status||null
+    }
+   );
+
+   res.json({
+    ok:true,
+    decision,
+    additionalRefundAmount:additionalRefund,
+    refundedAmount:verifiedAmount,
+    pendingRefundAmount:verifiedPendingAmount,
+    refundStatus,
+    payment:publicCustomerPayment(
+     db.prepare(
+      'SELECT * FROM customer_payments WHERE id=?'
+     ).get(row.id)
+    )
+   });
+
+  }catch(e){
+   console.error('[FleetPay] customer refund failed',e);
+
+   res.status(500).json({
+    error:e.message||'Customer refund could not be processed.'
+   });
+  }
+ }
+);
 
 async function findFleetPayUnpostedDocket(row){
  const bookingId=String(row?.booking_id||'').trim();
@@ -3726,9 +4249,187 @@ app.post('/api/admin/monday-runs/:runId/create-payout-run',adminAuth,requireStaf
 app.get('/api/admin/outstanding-payments',adminAuth,(req,res)=>{const now=new Date().toISOString().slice(0,16),rows=db.prepare("SELECT *,driver_id driverId,driver_name driverName,weekly_fee weeklyFee,carried_charges carriedCharges,payment_url paymentUrl,created_at createdAt,updated_at updatedAt,paid_at paidAt,due_at dueAt,email_sent_at emailSentAt,sms_sent_at smsSentAt,communication_error communicationError FROM payment_requests ORDER BY CASE status WHEN 'open' THEN 0 ELSE 1 END,created_at DESC").all().map(x=>({...x,overdue:x.status==='open'&&x.dueAt&&String(x.dueAt).slice(0,16)<now}));res.json({payments:rows})});
 app.post('/api/admin/outstanding-payments/:id/resend',adminAuth,requireStaffRole('administrator','finance','office'),async(req,res)=>{try{const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(req.params.id);if(!item)return res.status(404).json({error:'Payment request not found'});const d=cachedDriver(item.driver_id);const out=await sendOutstandingCommunications(item,d);audit(req,'staff',req.auth.email,'outstanding_message_resent','payment_request',item.id,{callsign:item.callsign});res.json({ok:true,...out})}catch(e){res.status(500).json({error:e.message})}});
 
-app.get('/api/admin/fees',adminAuth,(req,res)=>{const rows=db.prepare('SELECT *,fee_type feeType,source_type sourceType,source_id sourceId,driver_id driverId,gross_fee grossFee,fleetpay_share fleetpayShare,taxi_company_share taxiCompanyShare,invoice_ref invoiceRef,created_at createdAt,invoiced_at invoicedAt FROM fee_ledger ORDER BY created_at DESC LIMIT 3000').all(),summary=rows.reduce((a,x)=>{a.gross+=Number(x.grossFee);a.fleetpay+=Number(x.fleetpayShare);a.taxi+=Number(x.taxiCompanyShare);if(x.status==='uninvoiced'){a.uninvoiced+=Number(x.fleetpayShare);a.uninvoicedGross+=Number(x.grossFee)}return a},{gross:0,fleetpay:0,taxi:0,uninvoiced:0,uninvoicedGross:0});res.json({fees:rows,summary})});
+app.get('/api/admin/fees',adminAuth,(req,res)=>{
+ const rawRows=db.prepare(`
+  SELECT
+   fl.*,
+   fl.fee_type feeType,
+   fl.source_type sourceType,
+   fl.source_id sourceId,
+   fl.driver_id driverId,
+   fl.gross_fee grossFee,
+   fl.fleetpay_share fleetpayShare,
+   fl.taxi_company_share taxiCompanyShare,
+   fl.invoice_ref invoiceRef,
+   fl.created_at createdAt,
+   fl.invoiced_at invoicedAt,
+   cp.fare_amount customerFareAmount,
+   cp.fee_amount customerFeeAmount,
+   cp.total_amount customerTotalAmount,
+   cp.refunded_amount customerRefundedAmount
+  FROM fee_ledger fl
+  LEFT JOIN customer_payments cp
+   ON fl.fee_type='customer_payment'
+   AND fl.source_type='customer_payment'
+   AND cp.id=fl.source_id
+  ORDER BY fl.created_at DESC
+  LIMIT 3000
+ `).all();
+
+ const rows=rawRows.map(x=>{
+  const originalGross=Number(x.grossFee||0);
+  const originalFleet=Number(x.fleetpayShare||0);
+  const originalTaxi=Number(x.taxiCompanyShare||0);
+
+  let gross=originalGross;
+  let fleet=originalFleet;
+  let taxi=originalTaxi;
+
+  if(
+   x.status==='uninvoiced' &&
+   x.feeType==='customer_payment' &&
+   x.sourceType==='customer_payment' &&
+   x.customerTotalAmount!==null
+  ){
+   const net=customerPaymentNetAmounts({
+    fare_amount:x.customerFareAmount,
+    fee_amount:x.customerFeeAmount,
+    total_amount:x.customerTotalAmount,
+    refunded_amount:x.customerRefundedAmount
+   });
+
+   gross=Math.min(originalGross,net.netFee);
+
+   const fleetRatio=
+    originalGross>0
+     ? originalFleet/originalGross
+     : 0;
+
+   fleet=Number((gross*fleetRatio).toFixed(2));
+   taxi=Number((gross-fleet).toFixed(2));
+  }
+
+  return {
+   ...x,
+   originalGrossFee:originalGross,
+   originalFleetpayShare:originalFleet,
+   originalTaxiCompanyShare:originalTaxi,
+   grossFee:Number(gross.toFixed(2)),
+   fleetpayShare:Number(fleet.toFixed(2)),
+   taxiCompanyShare:Number(taxi.toFixed(2)),
+   refundAdjusted:
+    x.status==='uninvoiced' &&
+    Number(gross.toFixed(2))!==Number(originalGross.toFixed(2))
+  };
+ });
+
+ const summary=rows.reduce((a,x)=>{
+  a.gross+=Number(x.grossFee||0);
+  a.fleetpay+=Number(x.fleetpayShare||0);
+  a.taxi+=Number(x.taxiCompanyShare||0);
+
+  if(x.status==='uninvoiced'){
+   a.uninvoiced+=Number(x.fleetpayShare||0);
+   a.uninvoicedGross+=Number(x.grossFee||0);
+  }
+
+  return a;
+ },{
+  gross:0,
+  fleetpay:0,
+  taxi:0,
+  uninvoiced:0,
+  uninvoicedGross:0
+ });
+
+ for(const key of Object.keys(summary)){
+  summary[key]=Number(summary[key].toFixed(2));
+ }
+
+ res.json({fees:rows,summary});
+});
 app.post('/api/admin/fees/mark-invoiced',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const invoiceRef=String(req.body.invoiceRef||'').trim();if(!invoiceRef)return res.status(400).json({error:'Invoice reference is required'});const ids=Array.isArray(req.body.ids)?req.body.ids.filter(Boolean):[];const now=new Date().toISOString();let info;if(ids.length){const placeholders=ids.map(()=>'?').join(',');info=db.prepare(`UPDATE fee_ledger SET status='invoiced',invoice_ref=?,invoiced_at=? WHERE id IN (${placeholders}) AND status='uninvoiced'`).run(invoiceRef,now,...ids)}else info=db.prepare("UPDATE fee_ledger SET status='invoiced',invoice_ref=?,invoiced_at=? WHERE status='uninvoiced'").run(invoiceRef,now);audit(req,'staff',req.auth.email,'fees_marked_invoiced','fee_ledger',invoiceRef,{count:Number(info.changes||0)});res.json({ok:true,count:Number(info.changes||0)})});
-app.get('/api/admin/fees/csv',adminAuth,(req,res)=>{const status=String(req.query.status||'all'),rows=status==='uninvoiced'?db.prepare("SELECT * FROM fee_ledger WHERE status='uninvoiced' ORDER BY created_at").all():db.prepare('SELECT * FROM fee_ledger ORDER BY created_at').all(),esc=v=>`"${String(v??'').replaceAll('"','""')}"`,csv=['Date,Fee Type,Callsign,Description,Gross Fee,FleetPay Share,Taxi Company Share,Status,Invoice Ref',...rows.map(x=>[esc(x.created_at),esc(x.fee_type),esc(x.callsign),esc(x.description),Number(x.gross_fee).toFixed(2),Number(x.fleetpay_share).toFixed(2),Number(x.taxi_company_share).toFixed(2),esc(x.status),esc(x.invoice_ref)].join(','))].join('\n');res.setHeader('Content-Type','text/csv');res.setHeader('Content-Disposition','attachment; filename=FleetPay-fees.csv');res.send(csv)});
+app.get('/api/admin/fees/csv',adminAuth,(req,res)=>{
+ const status=String(req.query.status||'all');
+
+ const rawRows=db.prepare(`
+  SELECT
+   fl.*,
+   cp.fare_amount customerFareAmount,
+   cp.fee_amount customerFeeAmount,
+   cp.total_amount customerTotalAmount,
+   cp.refunded_amount customerRefundedAmount
+  FROM fee_ledger fl
+  LEFT JOIN customer_payments cp
+   ON fl.fee_type='customer_payment'
+   AND fl.source_type='customer_payment'
+   AND cp.id=fl.source_id
+  ${status==='uninvoiced'?"WHERE fl.status='uninvoiced'":''}
+  ORDER BY fl.created_at
+ `).all();
+
+ const rows=rawRows.map(x=>{
+  let gross=Number(x.gross_fee||0);
+  let fleet=Number(x.fleetpay_share||0);
+  let taxi=Number(x.taxi_company_share||0);
+
+  if(
+   x.status==='uninvoiced' &&
+   x.fee_type==='customer_payment' &&
+   x.source_type==='customer_payment' &&
+   x.customerTotalAmount!==null
+  ){
+   const net=customerPaymentNetAmounts({
+    fare_amount:x.customerFareAmount,
+    fee_amount:x.customerFeeAmount,
+    total_amount:x.customerTotalAmount,
+    refunded_amount:x.customerRefundedAmount
+   });
+
+   const originalGross=gross;
+   gross=Math.min(originalGross,net.netFee);
+
+   const fleetRatio=
+    originalGross>0
+     ? fleet/originalGross
+     : 0;
+
+   fleet=Number((gross*fleetRatio).toFixed(2));
+   taxi=Number((gross-fleet).toFixed(2));
+  }
+
+  return {
+   ...x,
+   effectiveGrossFee:gross,
+   effectiveFleetpayShare:fleet,
+   effectiveTaxiCompanyShare:taxi
+  };
+ });
+
+ const esc=v=>`"${String(v??'').replaceAll('"','""')}"`;
+
+ const csv=[
+  'Date,Fee Type,Callsign,Description,Gross Fee,FleetPay Share,Taxi Company Share,Status,Invoice Ref',
+  ...rows.map(x=>[
+   esc(x.created_at),
+   esc(x.fee_type),
+   esc(x.callsign),
+   esc(x.description),
+   Number(x.effectiveGrossFee).toFixed(2),
+   Number(x.effectiveFleetpayShare).toFixed(2),
+   Number(x.effectiveTaxiCompanyShare).toFixed(2),
+   esc(x.status),
+   esc(x.invoice_ref)
+  ].join(','))
+ ].join('\n');
+
+ res.setHeader('Content-Type','text/csv');
+ res.setHeader(
+  'Content-Disposition',
+  'attachment; filename=FleetPay-fees.csv'
+ );
+ res.send(csv);
+});
 
 async function sendEarlyPayoutOfficeSummary({force=false}={}){
  const settings=getSettings(),now=londonWindow(),cut=cutoffParts(settings);if(!force){if(!['Tue','Wed','Thu','Fri'].includes(now.weekday))return {skipped:true,reason:'not_request_day'};if(now.hour<cut.hour||(now.hour===cut.hour&&now.minute<cut.minute))return {skipped:true,reason:'before_cutoff'};const prior=db.prepare("SELECT * FROM early_summary_notifications WHERE run_date=?").get(now.date);if(prior?.status==='sent')return {skipped:true,reason:'already_sent'};if(prior?.status==='failed'&&prior.sent_at&&Date.now()-new Date(prior.sent_at).getTime()<15*60000)return {skipped:true,reason:'retry_cooldown'}}const to=safeEmail(settings.officeNotificationEmail);if(!to)throw new Error('Office notification email is not configured');const rows=db.prepare("SELECT * FROM payouts WHERE type='early' AND eligible_run_date=? AND status!='declined' ORDER BY CAST(callsign AS INTEGER),callsign").all(now.date),count=rows.length,total=rows.reduce((a,x)=>a+Number(x.net_amount||x.amount||0),0),has=count>0,color=has?'#d97706':'#16a34a',title=has?'Early payouts require action':'No early payouts today',summary=has?`${count} early payout request${count===1?'':'s'} due today · £${total.toFixed(2)} total`:`No early payout requests were received before today's ${cut.label} cutoff.`,list=has?`<table style="width:100%;border-collapse:collapse;margin-top:18px">${rows.map(x=>`<tr><td style="padding:9px;border-bottom:1px solid #e5e7eb">${x.callsign}</td><td style="padding:9px;border-bottom:1px solid #e5e7eb">${x.driver_name||''}</td><td style="padding:9px;border-bottom:1px solid #e5e7eb;text-align:right"><b>£${Number(x.net_amount||x.amount||0).toFixed(2)}</b></td></tr>`).join('')}</table>`:'';const html=`<div style="font-family:Arial,sans-serif;background:#f4f6f8;padding:24px"><div style="max-width:680px;margin:auto;background:#fff;border-radius:14px;overflow:hidden"><div style="background:${color};color:#fff;padding:24px"><div style="font-size:13px;font-weight:700;letter-spacing:.08em">FLEETPAY OFFICE</div><h2 style="margin:8px 0 0">${title}</h2></div><div style="padding:24px"><p style="font-size:17px">${summary}</p>${list}</div></div></div>`;try{const out=await sendEmail(to,`FleetPay early payout summary – ${now.date}`,html);if(!out.sent)throw new Error('No email provider is configured');db.prepare("INSERT INTO early_summary_notifications(run_date,request_count,total_amount,sent_at,status,error) VALUES(?,?,?,?,?,NULL) ON CONFLICT(run_date) DO UPDATE SET request_count=excluded.request_count,total_amount=excluded.total_amount,sent_at=excluded.sent_at,status=excluded.status,error=NULL").run(now.date,count,total,new Date().toISOString(),'sent');logCommunication({channel:'email',recipient:to,templateKey:'early_payout_summary',entityType:'payout_run',entityId:now.date,status:'sent',providerRef:out.id||out.provider||''});return {sent:true,count,total,to}}catch(e){db.prepare("INSERT INTO early_summary_notifications(run_date,request_count,total_amount,sent_at,status,error) VALUES(?,?,?,?,?,?) ON CONFLICT(run_date) DO UPDATE SET request_count=excluded.request_count,total_amount=excluded.total_amount,sent_at=excluded.sent_at,status=excluded.status,error=excluded.error").run(now.date,count,total,new Date().toISOString(),'failed',e.message);logCommunication({channel:'email',recipient:to,templateKey:'early_payout_summary',entityType:'payout_run',entityId:now.date,status:'failed',error:e.message});throw e}
