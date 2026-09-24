@@ -1729,6 +1729,127 @@ app.post(['/api/webhooks/autocab/booking-cancelled','/cancelled'],async(req,res)
 });
 
 
+/*
+ * Temporary Autocab Docket Modified webhook capture.
+ *
+ * This deliberately does NOT update customer payments, driver balances,
+ * settlement state or docket state. It only records the raw webhook so
+ * we can establish Autocab's exact payload contract before using it.
+ */
+db.exec(`
+ CREATE TABLE IF NOT EXISTS autocab_docket_webhooks(
+  id TEXT PRIMARY KEY,
+  docket_id TEXT,
+  docket_number TEXT,
+  booking_id TEXT,
+  event_type TEXT NOT NULL DEFAULT 'DocketModified',
+  raw_json TEXT NOT NULL,
+  received_at TEXT NOT NULL
+ )
+`);
+
+app.post(
+ ['/api/webhooks/autocab/docket-modified','/dockets'],
+ (req,res)=>{
+  try{
+   const raw=req.body||{};
+
+   /*
+    * We do not yet know Autocab's exact Docket Modified envelope,
+    * so these are capture-only convenience fields. The full payload
+    * is always retained in raw_json.
+    */
+   const d=
+    raw.Docket ??
+    raw.docket ??
+    raw.Data ??
+    raw.data ??
+    raw;
+
+   const docketId=String(
+    d?.Id ??
+    d?.id ??
+    raw?.DocketId ??
+    raw?.docketId ??
+    ''
+   ).trim();
+
+   const docketNumber=String(
+    d?.DocketNumber ??
+    d?.docketNumber ??
+    raw?.DocketNumber ??
+    raw?.docketNumber ??
+    ''
+   ).trim();
+
+   const bookingId=String(
+    d?.BookingId ??
+    d?.bookingId ??
+    raw?.BookingId ??
+    raw?.bookingId ??
+    ''
+   ).trim();
+
+   const webhookId=id('docketwh');
+   const receivedAt=new Date().toISOString();
+
+   db.prepare(`
+    INSERT INTO autocab_docket_webhooks(
+     id,
+     docket_id,
+     docket_number,
+     booking_id,
+     event_type,
+     raw_json,
+     received_at
+    )
+    VALUES(?,?,?,?,?,?,?)
+   `).run(
+    webhookId,
+    docketId||null,
+    docketNumber||null,
+    bookingId||null,
+    'DocketModified',
+    JSON.stringify(raw),
+    receivedAt
+   );
+
+   console.log(
+    '[FleetPay] Autocab DocketModified received',
+    {
+     webhookId,
+     docketId:docketId||null,
+     docketNumber:docketNumber||null,
+     bookingId:bookingId||null
+    }
+   );
+
+   console.log(
+    '[FleetPay] Autocab DocketModified RAW\n'+
+    JSON.stringify(raw,null,2)
+   );
+
+   res.status(200).json({
+    ok:true,
+    received:true,
+    eventType:'DocketModified',
+    webhookId
+   });
+
+  }catch(e){
+   console.error(
+    '[FleetPay] DocketModified webhook capture error',
+    e
+   );
+
+   res.status(500).json({
+    ok:false,
+    error:'DocketModified webhook could not be captured'
+   });
+  }
+ }
+);
+
 function getSettings(){
  const rows=db.prepare('SELECT key,value FROM settings').all(); const out={...defaultSettings};
  for(const r of rows){ try{out[r.key]=JSON.parse(r.value)}catch{out[r.key]=r.value} } return out;
