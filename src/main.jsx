@@ -3684,7 +3684,14 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
              x=>['due','scheduled','overdue'].includes(x.status)
             );
 
-           return <tr key={plan.id}>
+           const needsAttention=
+            plan.status==='defaulted'||
+            nextInstalment?.status==='overdue';
+
+           return <tr
+            key={plan.id}
+            className={needsAttention?'overdueRow':''}
+           >
             <td>
              <div className="driverCell">
               <span className="callsign">{plan.callsign}</span>
@@ -3713,7 +3720,10 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
               ?<span>Completed</span>
               :<>
                <b>{nextInstalment?money(nextInstalment.amount):'—'}</b>
-               <small>{dateOnly(plan.nextDueAt||nextInstalment?.dueAt)}</small>
+               <small className={needsAttention?'negative':''}>
+                {needsAttention?'Overdue · ':''}
+                {dateOnly(plan.nextDueAt||nextInstalment?.dueAt)}
+               </small>
               </>
              }
             </td>
