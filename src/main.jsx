@@ -152,6 +152,7 @@ function AdminApp(){
  const[mondayRuns,setMondayRuns]=useState([]),[sett,setSett]=useState({runs:[],payoutRuns:[],payouts:[],paymentRequests:[],earlyPayoutRequests:[]});
  const[outstanding,setOutstanding]=useState([]),[fees,setFees]=useState({fees:[],summary:{}}),[earlySummary,setEarlySummary]=useState(null);
  const[paymentPlans,setPaymentPlans]=useState({plans:[],summary:{}}),[selectedPaymentPlan,setSelectedPaymentPlan]=useState(null);
+ const[paymentPlanQ,setPaymentPlanQ]=useState(''),[paymentPlanStatus,setPaymentPlanStatus]=useState('all');
  const[planCreateSource,setPlanCreateSource]=useState(null),[planCreate,setPlanCreate]=useState({frequency:'weekly',instalmentAmount:'',startDate:'',notes:''}),[planCreateBusy,setPlanCreateBusy]=useState(false),[planActivateBusy,setPlanActivateBusy]=useState(false),[planActionBusy,setPlanActionBusy]=useState(false);
  const[planAmendTarget,setPlanAmendTarget]=useState(null),[planAmend,setPlanAmend]=useState({frequency:'weekly',instalmentAmount:'',startDate:'',notes:''}),[planAmendBusy,setPlanAmendBusy]=useState(false);
  const[customerAdmin,setCustomerAdmin]=useState({payments:[],summary:{}}),[customerCreate,setCustomerCreate]=useState({bookingId:'',callsign:'',customerName:'',customerMobile:'',customerEmail:'',pickup:'',destination:'',journeyAt:'',fareAmount:'',taxiCompany:'',notes:''}),[createdCustomerLink,setCreatedCustomerLink]=useState(null),[customerCreateBusy,setCustomerCreateBusy]=useState(false);
@@ -361,6 +362,20 @@ function AdminApp(){
   ['dashboard',LayoutDashboard,'Dashboard'],['transactions',CreditCard,'Transactions'],['customerPayments',Send,'Customer Payments'],['monday',CalendarDays,'Monday Run'],['early',ArrowUpRight,'Early Payouts'],['outstanding',AlertTriangle,'Outstanding'],['paymentPlans',CalendarDays,'Payment Plans'],['fees',BadgePoundSterling,'Fees & Billing'],['demo',PlayCircle,'Demo Lab'],['drivers',Users,'Drivers'],['access',UserCheck,'Users & Access'],...(isAdmin?[['security',ShieldCheck,'Security'],['settings',Settings,'Settings']]:[])
  ];
  const filtered=useMemo(()=>drivers.filter(d=>{const h=`${d.callsign} ${d.fullName} ${d.mobile} ${d.email} ${d.driverId} ${d.bankAccount?.accountHolder||''} ${d.bankAccount?.accountNumberMasked||''}`.toLowerCase();if(!h.includes(q.toLowerCase()))return false;if(filter==='negative')return(d.currentBalance??0)<0;if(filter==='positive')return(d.currentBalance??0)>0;if(filter==='unmatched')return d.currentBalance==null;if(filter==='bank_ready')return Boolean(d.bankAccount?.ready)&&!d.bankAccount?.changedRecently;if(filter==='bank_missing')return !d.bankAccount?.ready;if(filter==='bank_recent')return Boolean(d.bankAccount?.changedRecently);if(filter==='payout_excluded')return Boolean(d.payoutExcluded);return true}).sort((a,b)=>String(a.callsign??'').localeCompare(String(b.callsign??''),'en-GB',{numeric:true})),[drivers,q,filter]);
+
+ const filteredPaymentPlans=useMemo(()=>{
+  const needle=paymentPlanQ.trim().toLowerCase();
+
+  return (paymentPlans?.plans||[]).filter(plan=>{
+   const haystack=`${plan.callsign||''} ${plan.driverName||''}`.toLowerCase();
+
+   if(needle&&!haystack.includes(needle))return false;
+   if(paymentPlanStatus!=='all'&&plan.status!==paymentPlanStatus)return false;
+
+   return true;
+  });
+ },[paymentPlans,paymentPlanQ,paymentPlanStatus]);
+
  const bankFor=driverId=>drivers.find(d=>String(d.driverId)===String(driverId))?.bankAccount||{configured:false,ready:false,status:'missing',label:'Bank details missing'};
  const bankTone=b=>!b?.ready?'bad':b?.changedRecently?'warn':'good';
  if(!token)return <AdminLogin onLogin={setToken}/>;
@@ -3605,11 +3620,42 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
         <h3>Driver payment plans</h3>
         <p>Each plan keeps the original debt, instalment history and remaining balance fully traceable.</p>
        </div>
-       <span>{paymentPlans?.plans?.length||0} plans</span>
+       <span>
+        {filteredPaymentPlans.length}
+        {filteredPaymentPlans.length!==(paymentPlans?.plans?.length||0)
+         ?` of ${paymentPlans?.plans?.length||0}`
+         :''
+        } plans
+       </span>
       </div>
 
       {paymentPlans?.plans?.length
-       ?<div className="tableWrap proTable">
+       ?<>
+        <div className="driverToolbar">
+         <div className="searchBox">
+          <Search/>
+          <input
+           value={paymentPlanQ}
+           onChange={e=>setPaymentPlanQ(e.target.value)}
+           placeholder="Search callsign or driver name…"
+          />
+         </div>
+
+         <select
+          value={paymentPlanStatus}
+          onChange={e=>setPaymentPlanStatus(e.target.value)}
+         >
+          <option value="all">All statuses</option>
+          <option value="active">Active</option>
+          <option value="draft">Draft</option>
+          <option value="paused">Paused</option>
+          <option value="defaulted">Defaulted</option>
+          <option value="completed">Completed</option>
+          <option value="cancelled">Cancelled</option>
+         </select>
+        </div>
+
+        <div className="tableWrap proTable">
         <table>
          <thead>
           <tr>
@@ -3625,7 +3671,7 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
          </thead>
 
          <tbody>
-          {paymentPlans.plans.map(plan=>{
+          {filteredPaymentPlans.map(plan=>{
            const total=Number(plan.planAmount||0);
            const paid=Number(plan.paidAmount||0);
            const percent=total>0
@@ -3714,9 +3760,22 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
             </td>
            </tr>
           })}
+
+          {!filteredPaymentPlans.length&&
+           <tr>
+            <td colSpan="8">
+             <div className="emptyState compact">
+              <Search/>
+              <h3>No matching payment plans</h3>
+              <p>Try changing the search or status filter.</p>
+             </div>
+            </td>
+           </tr>
+          }
          </tbody>
         </table>
        </div>
+       </>
        :<div className="emptyState compact">
         <CalendarDays/>
         <h3>No payment plans yet</h3>
