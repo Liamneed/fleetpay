@@ -6012,3 +6012,591 @@ body {
 .transactionDetailLayer{
  z-index:70;
 }
+
+/* ============================================================
+   PHASE 3 — PAYMENT PLANS
+   ============================================================ */
+
+.paymentPlanModalLayer{
+  z-index:1200;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:24px
+}
+
+.paymentPlanModal{
+  position:relative;
+  width:min(720px,100%);
+  max-height:calc(100vh - 48px);
+  overflow:auto;
+  background:#fff;
+  border-radius:20px;
+  padding:28px;
+  box-shadow:0 28px 80px rgba(11,19,36,.24)
+}
+
+.paymentPlanModalHead{
+  padding-right:44px;
+  margin-bottom:22px
+}
+
+.paymentPlanModalHead>span,
+.paymentPlanDrawerHead>span{
+  display:block;
+  font-size:11px;
+  font-weight:800;
+  letter-spacing:.12em;
+  color:#64748b;
+  margin-bottom:7px
+}
+
+.paymentPlanModalHead h2,
+.paymentPlanDrawerHead h2{
+  margin:0;
+  font-size:25px;
+  color:#111827
+}
+
+.paymentPlanModalHead p,
+.paymentPlanDrawerHead p{
+  margin:7px 0 0;
+  color:#64748b
+}
+
+.paymentPlanDriver{
+  display:grid;
+  grid-template-columns:auto 1fr auto;
+  gap:12px;
+  align-items:center;
+  background:#f7f9fc;
+  border:1px solid #e5eaf1;
+  border-radius:15px;
+  padding:14px 16px;
+  margin-bottom:22px
+}
+
+.paymentPlanDriver>div b,
+.paymentPlanDriver>div span{
+  display:block
+}
+
+.paymentPlanDriver>div span{
+  color:#64748b;
+  font-size:12px;
+  margin-top:2px
+}
+
+.paymentPlanDriver strong{
+  font-size:20px
+}
+
+.paymentPlanForm{
+  display:grid;
+  gap:18px
+}
+
+.paymentPlanPreview{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:10px
+}
+
+.paymentPlanPreview>div{
+  background:#f7f9fc;
+  border:1px solid #e5eaf1;
+  border-radius:13px;
+  padding:13px
+}
+
+.paymentPlanPreview span,
+.paymentPlanPreview b{
+  display:block
+}
+
+.paymentPlanPreview span{
+  color:#64748b;
+  font-size:11px;
+  margin-bottom:5px
+}
+
+.paymentPlanPreview b{
+  font-size:16px
+}
+
+.paymentPlanModalActions{
+  display:flex;
+  justify-content:flex-end;
+  gap:10px
+}
+
+.planProgressCell{
+  min-width:130px
+}
+
+.planProgressTrack{
+  width:100%;
+  height:7px;
+  overflow:hidden;
+  border-radius:999px;
+  background:#e8edf4;
+  margin-bottom:6px
+}
+
+.planProgressTrack span{
+  display:block;
+  height:100%;
+  border-radius:inherit;
+  background:#1f7a4d
+}
+
+.planProgressCell small{
+  color:#64748b
+}
+
+.paymentPlanDrawer{
+  width:min(520px,100%)
+}
+
+.paymentPlanDrawerHead{
+  margin-bottom:22px;
+  padding-right:45px
+}
+
+.paymentPlanBalanceGrid{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:10px;
+  margin-bottom:20px
+}
+
+.paymentPlanBalanceGrid>div{
+  border:1px solid #e5eaf1;
+  background:#f7f9fc;
+  border-radius:13px;
+  padding:14px
+}
+
+.paymentPlanBalanceGrid span,
+.paymentPlanBalanceGrid b{
+  display:block
+}
+
+.paymentPlanBalanceGrid span{
+  color:#64748b;
+  font-size:11px;
+  margin-bottom:5px
+}
+
+.paymentPlanBalanceGrid b{
+  font-size:18px
+}
+
+.paymentPlanDrawerMeta{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:1px;
+  background:#e5eaf1;
+  border:1px solid #e5eaf1;
+  border-radius:14px;
+  overflow:hidden;
+  margin-bottom:18px
+}
+
+.paymentPlanDrawerMeta>div{
+  background:#fff;
+  padding:13px
+}
+
+.paymentPlanDrawerMeta span,
+.paymentPlanDrawerMeta b{
+  display:block
+}
+
+.paymentPlanDrawerMeta span{
+  color:#64748b;
+  font-size:11px;
+  margin-bottom:4px
+}
+
+.paymentPlanNotes{
+  border:1px solid #e5eaf1;
+  border-radius:14px;
+  padding:14px;
+  margin-bottom:18px
+}
+
+.paymentPlanNotes span{
+  display:block;
+  color:#64748b;
+  font-size:11px;
+  margin-bottom:5px
+}
+
+.paymentPlanNotes p{
+  margin:0
+}
+
+.paymentPlanSchedule{
+  margin-bottom:20px
+}
+
+.paymentPlanScheduleRow{
+  display:grid;
+  grid-template-columns:36px 1fr auto;
+  gap:12px;
+  align-items:center;
+  padding:11px 0;
+  border-bottom:1px solid #edf0f4
+}
+
+.paymentPlanInstalmentNo{
+  width:32px;
+  height:32px;
+  display:grid;
+  place-items:center;
+  border-radius:9px;
+  background:#eef2f7;
+  font-size:12px;
+  font-weight:800
+}
+
+.paymentPlanScheduleRow>div:nth-child(2) b,
+.paymentPlanScheduleRow>div:nth-child(2) span{
+  display:block
+}
+
+.paymentPlanScheduleRow>div:nth-child(2) span{
+  color:#64748b;
+  font-size:11px;
+  margin-top:2px
+}
+
+@media(max-width:700px){
+  .paymentPlanModal{
+    padding:20px
+  }
+
+  .paymentPlanPreview,
+  .paymentPlanBalanceGrid{
+    grid-template-columns:1fr
+  }
+
+  .paymentPlanDrawerMeta{
+    grid-template-columns:1fr
+  }
+
+  .paymentPlanDriver{
+    grid-template-columns:auto 1fr
+  }
+
+  .paymentPlanDriver strong{
+    grid-column:2
+  }
+}
+
+/* ============================================================
+   DRIVER — PAYMENT PLAN
+   ============================================================ */
+
+.driverPaymentPlanCard,
+.driverPlanCompact{
+  overflow:hidden
+}
+
+.driverPlanHeader,
+.driverPlanCompactTop,
+.driverPlanNextTop,
+.driverPlanProgressLabels{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:14px
+}
+
+.driverPlanHeader h2,
+.driverPlanCompactTop h2{
+  margin:4px 0 0
+}
+
+.driverPlanIntro{
+  margin:10px 0 18px;
+  color:var(--driver-muted,#667085)
+}
+
+.driverPlanMoneyGrid{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:9px;
+  margin-bottom:20px
+}
+
+.driverPlanMoneyGrid>div{
+  padding:13px 12px;
+  border:1px solid rgba(120,130,150,.16);
+  background:rgba(120,130,150,.06);
+  border-radius:14px
+}
+
+.driverPlanMoneyGrid span,
+.driverPlanMoneyGrid b{
+  display:block
+}
+
+.driverPlanMoneyGrid span{
+  font-size:.76rem;
+  color:var(--driver-muted,#667085);
+  margin-bottom:4px
+}
+
+.driverPlanMoneyGrid b{
+  font-size:1.08rem
+}
+
+.driverPlanProgressBlock{
+  margin-bottom:20px
+}
+
+.driverPlanProgressLabels{
+  margin-bottom:7px;
+  font-size:.84rem
+}
+
+.driverPlanProgress{
+  position:relative;
+  height:7px;
+  background:rgba(120,130,150,.18);
+  border-radius:999px;
+  overflow:hidden
+}
+
+.driverPlanProgress.large{
+  height:9px
+}
+
+.driverPlanProgress>span{
+  position:absolute;
+  inset:0 auto 0 0;
+  display:block;
+  background:#168556;
+  border-radius:inherit
+}
+
+.driverPlanProgressBlock>small{
+  display:block;
+  margin-top:7px;
+  color:var(--driver-muted,#667085)
+}
+
+.driverPlanNextPayment{
+  margin:8px 0 22px;
+  padding:17px;
+  border-radius:17px;
+  background:rgba(245,158,11,.08);
+  border:1px solid rgba(245,158,11,.22)
+}
+
+.driverPlanNextTop span{
+  display:block;
+  font-size:.7rem;
+  font-weight:800;
+  letter-spacing:.1em;
+  color:#92620b
+}
+
+.driverPlanNextTop strong{
+  display:block;
+  font-size:1.9rem;
+  line-height:1.1;
+  margin-top:4px
+}
+
+.driverPlanNextMeta{
+  display:flex;
+  justify-content:space-between;
+  gap:16px;
+  padding:13px 0 15px;
+  font-size:.86rem
+}
+
+.driverPlanNextMeta span{
+  color:var(--driver-muted,#667085)
+}
+
+.driverPlanNotice{
+  display:flex;
+  gap:11px;
+  align-items:flex-start;
+  padding:13px;
+  border-radius:14px;
+  background:rgba(22,133,86,.07);
+  margin-bottom:18px
+}
+
+.driverPlanNotice.warning{
+  background:rgba(245,158,11,.09)
+}
+
+.driverPlanNotice.danger{
+  background:rgba(220,38,38,.08)
+}
+
+.driverPlanNotice svg{
+  width:19px;
+  height:19px;
+  flex:0 0 auto
+}
+
+.driverPlanNotice b,
+.driverPlanNotice span{
+  display:block
+}
+
+.driverPlanNotice span{
+  margin-top:3px;
+  color:var(--driver-muted,#667085);
+  font-size:.82rem
+}
+
+.driverPlanSchedule{
+  border-top:1px solid rgba(120,130,150,.14);
+  padding-top:17px
+}
+
+.driverPlanScheduleRow{
+  display:grid;
+  grid-template-columns:34px 1fr auto;
+  gap:11px;
+  align-items:center;
+  padding:11px 0;
+  border-bottom:1px solid rgba(120,130,150,.12)
+}
+
+.driverPlanScheduleNo{
+  width:31px;
+  height:31px;
+  display:grid;
+  place-items:center;
+  border-radius:50%;
+  background:rgba(120,130,150,.11);
+  font-size:.77rem;
+  font-weight:800
+}
+
+.driverPlanScheduleRow.paid .driverPlanScheduleNo{
+  background:rgba(22,133,86,.12);
+  color:#168556
+}
+
+.driverPlanScheduleNo svg{
+  width:17px;
+  height:17px
+}
+
+.driverPlanScheduleMain b,
+.driverPlanScheduleMain span{
+  display:block
+}
+
+.driverPlanScheduleMain span{
+  color:var(--driver-muted,#667085);
+  font-size:.76rem;
+  margin-top:2px
+}
+
+.driverPlanCompact{
+  padding-bottom:14px
+}
+
+.driverPlanCompactMeta{
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  margin:7px 0 13px;
+  color:var(--driver-muted,#667085);
+  font-size:.76rem
+}
+
+.driverPlanNextCompact{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-top:9px;
+  padding:11px 0;
+  border-top:1px solid rgba(120,130,150,.12)
+}
+
+.driverPlanNextCompact span,
+.driverPlanNextCompact b{
+  display:block
+}
+
+.driverPlanNextCompact span{
+  color:var(--driver-muted,#667085);
+  font-size:.74rem
+}
+
+.driverPlanNextCompact b{
+  margin-top:2px;
+  font-size:1.04rem
+}
+
+@media(max-width:480px){
+  .driverPlanMoneyGrid{
+    grid-template-columns:1fr 1fr
+  }
+
+  .driverPlanMoneyGrid>div:last-child{
+    grid-column:1/-1
+  }
+}
+
+/* ============================================================
+   OFFICE — PAYMENT PLAN LIFECYCLE ACTIONS
+   ============================================================ */
+
+.paymentPlanLifecycleActions{
+  display:grid;
+  gap:10px;
+  margin-top:18px;
+  padding-top:18px;
+  border-top:1px solid #e5eaf1
+}
+
+.paymentPlanLifecycleActions .full{
+  width:100%;
+  justify-content:center
+}
+
+.paymentPlanSettleButton{
+  border-color:#cbd5e1
+}
+
+.paymentPlanCancelButton{
+  min-height:44px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  border:1px solid rgba(220,38,38,.22);
+  background:rgba(220,38,38,.06);
+  color:#b42318;
+  border-radius:10px;
+  font-weight:700;
+  cursor:pointer
+}
+
+.paymentPlanCancelButton:hover{
+  background:rgba(220,38,38,.1)
+}
+
+.paymentPlanCancelButton:disabled{
+  opacity:.55;
+  cursor:not-allowed
+}
+
+.paymentPlanCancelButton svg{
+  width:17px;
+  height:17px
+}

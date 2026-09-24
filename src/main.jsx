@@ -151,6 +151,8 @@ function AdminApp(){
  const[drivers,setDrivers]=useState([]),[meta,setMeta]=useState({}),[settings,setSettings]=useState(null),[integrations,setIntegrations]=useState(null),[twilioBalance,setTwilioBalance]=useState(null);
  const[mondayRuns,setMondayRuns]=useState([]),[sett,setSett]=useState({runs:[],payoutRuns:[],payouts:[],paymentRequests:[],earlyPayoutRequests:[]});
  const[outstanding,setOutstanding]=useState([]),[fees,setFees]=useState({fees:[],summary:{}}),[earlySummary,setEarlySummary]=useState(null);
+ const[paymentPlans,setPaymentPlans]=useState({plans:[],summary:{}}),[selectedPaymentPlan,setSelectedPaymentPlan]=useState(null);
+ const[planCreateSource,setPlanCreateSource]=useState(null),[planCreate,setPlanCreate]=useState({frequency:'weekly',instalmentAmount:'',startDate:'',notes:''}),[planCreateBusy,setPlanCreateBusy]=useState(false),[planActivateBusy,setPlanActivateBusy]=useState(false),[planActionBusy,setPlanActionBusy]=useState(false);
  const[customerAdmin,setCustomerAdmin]=useState({payments:[],summary:{}}),[customerCreate,setCustomerCreate]=useState({bookingId:'',callsign:'',customerName:'',customerMobile:'',customerEmail:'',pickup:'',destination:'',journeyAt:'',fareAmount:'',taxiCompany:'',notes:''}),[createdCustomerLink,setCreatedCustomerLink]=useState(null),[customerCreateBusy,setCustomerCreateBusy]=useState(false);
  const[customerPayQ,setCustomerPayQ]=useState(''),[customerPayStatus,setCustomerPayStatus]=useState('needs_review'),[showCustomerCreate,setShowCustomerCreate]=useState(false),[selectedCustomerPayment,setSelectedCustomerPayment]=useState(null),[customerReleaseRetryBusy,setCustomerReleaseRetryBusy]=useState(false);
  const[customerSettlementReview,setCustomerSettlementReview]=useState({decision:'full',amount:'',note:''}),[customerSettlementReviewBusy,setCustomerSettlementReviewBusy]=useState(false);
@@ -210,6 +212,8 @@ function AdminApp(){
  const loadSett=()=>safeLoad(async()=>setSett(await api('/api/admin/settlements')));
  const loadMonday=()=>safeLoad(async()=>setMondayRuns((await api('/api/admin/monday-runs')).runs||[]));
  const loadOutstanding=()=>safeLoad(async()=>setOutstanding((await api('/api/admin/outstanding-payments')).payments||[]));
+
+ const loadPaymentPlans=()=>safeLoad(async()=>setPaymentPlans(await api('/api/admin/payment-plans')));
  const loadFees=()=>safeLoad(async()=>setFees(await api('/api/admin/fees')));
  const loadEarlySummary=()=>safeLoad(async()=>setEarlySummary(await api('/api/admin/early-summary')));
  const applyCustomerAdminData=j=>{
@@ -288,6 +292,14 @@ function AdminApp(){
 
   if(view==='outstanding'){
    jobs.push(
+    api('/api/admin/outstanding-payments').then(j=>setOutstanding(j.payments||[])),
+    api('/api/admin/payment-plans').then(setPaymentPlans)
+   );
+  }
+
+  if(view==='paymentPlans'){
+   jobs.push(
+    api('/api/admin/payment-plans').then(setPaymentPlans),
     api('/api/admin/outstanding-payments').then(j=>setOutstanding(j.payments||[]))
    );
   }
@@ -345,7 +357,7 @@ function AdminApp(){
  useEffect(()=>{if(token&&view==='transactions')loadTransactions()},[txType,txStatus,txCategory,txDateFrom,txDateTo]);
  const isAdmin=me?.role==='administrator',canMoney=['administrator','finance'].includes(me?.role),canOffice=['administrator','finance','office'].includes(me?.role);
  const nav=[
-  ['dashboard',LayoutDashboard,'Dashboard'],['transactions',CreditCard,'Transactions'],['customerPayments',Send,'Customer Payments'],['monday',CalendarDays,'Monday Run'],['early',ArrowUpRight,'Early Payouts'],['outstanding',AlertTriangle,'Outstanding'],['fees',BadgePoundSterling,'Fees & Billing'],['demo',PlayCircle,'Demo Lab'],['drivers',Users,'Drivers'],['access',UserCheck,'Users & Access'],...(isAdmin?[['security',ShieldCheck,'Security'],['settings',Settings,'Settings']]:[])
+  ['dashboard',LayoutDashboard,'Dashboard'],['transactions',CreditCard,'Transactions'],['customerPayments',Send,'Customer Payments'],['monday',CalendarDays,'Monday Run'],['early',ArrowUpRight,'Early Payouts'],['outstanding',AlertTriangle,'Outstanding'],['paymentPlans',CalendarDays,'Payment Plans'],['fees',BadgePoundSterling,'Fees & Billing'],['demo',PlayCircle,'Demo Lab'],['drivers',Users,'Drivers'],['access',UserCheck,'Users & Access'],...(isAdmin?[['security',ShieldCheck,'Security'],['settings',Settings,'Settings']]:[])
  ];
  const filtered=useMemo(()=>drivers.filter(d=>{const h=`${d.callsign} ${d.fullName} ${d.mobile} ${d.email} ${d.driverId} ${d.bankAccount?.accountHolder||''} ${d.bankAccount?.accountNumberMasked||''}`.toLowerCase();if(!h.includes(q.toLowerCase()))return false;if(filter==='negative')return(d.currentBalance??0)<0;if(filter==='positive')return(d.currentBalance??0)>0;if(filter==='unmatched')return d.currentBalance==null;if(filter==='bank_ready')return Boolean(d.bankAccount?.ready)&&!d.bankAccount?.changedRecently;if(filter==='bank_missing')return !d.bankAccount?.ready;if(filter==='bank_recent')return Boolean(d.bankAccount?.changedRecently);if(filter==='payout_excluded')return Boolean(d.payoutExcluded);return true}).sort((a,b)=>String(a.callsign??'').localeCompare(String(b.callsign??''),'en-GB',{numeric:true})),[drivers,q,filter]);
  const bankFor=driverId=>drivers.find(d=>String(d.driverId)===String(driverId))?.bankAccount||{configured:false,ready:false,status:'missing',label:'Bank details missing'};
@@ -368,10 +380,27 @@ function AdminApp(){
  const weeklyIncomingFeesCharges=Math.max(0,weeklyOutstandingTotal-weeklyIncomingBeforeFees);
  const weeklyExcludedBeforeFees=weeklyExcluded.reduce((a,x)=>a+Math.max(0,Number(x.previousBalance||0)),0);
  const activeMondayCancelledBatch=activeMonday?sett.payoutRuns.find(r=>r.runType==='weekly'&&r.status==='cancelled'&&String(r.notes||'').includes(activeMonday.id)):null;
- const openOutstanding=outstanding.filter(x=>x.status==='open'),overdueOutstanding=openOutstanding.filter(x=>x.overdue);
+ const standardOutstanding=outstanding.filter(
+  x=>x.status==='open'&&x.request_type!=='payment_plan_instalment'
+ );
+ const planInstalmentsDue=outstanding.filter(
+  x=>x.status==='open'&&x.request_type==='payment_plan_instalment'
+ );
+ const onPlanOutstanding=outstanding.filter(
+  x=>x.status==='on_plan'
+ );
+ const openOutstanding=[
+  ...standardOutstanding,
+  ...planInstalmentsDue
+ ];
+ const overdueOutstanding=openOutstanding.filter(x=>x.overdue);
+ const collectibleOutstandingTotal=openOutstanding.reduce(
+  (a,x)=>a+Number(x.amount||0),
+  0
+ );
  const dueEarly=earlySummary?.requests?.filter(x=>['requested','approved','batched'].includes(x.status))||[];
  const recentTx=transactions.slice(0,7);
- function go(k){setView(k);setMobileNav(false);setErr('');if(k==='customerPayments')loadCustomerAdmin();if(k==='monday'){loadMonday();loadSett()}if(k==='early'){loadEarlySummary();loadSett()}if(k==='outstanding')loadOutstanding();if(k==='fees')loadFees();if(k==='demo')loadDemo();if(k==='drivers')loadDrivers();if(k==='access'){loadStaff();loadDriverUsers()}if(k==='security')loadSecurity();if(k==='settings'){loadSettings();loadIntegrations()}}
+ function go(k){setView(k);setMobileNav(false);setErr('');if(k==='customerPayments')loadCustomerAdmin();if(k==='monday'){loadMonday();loadSett()}if(k==='early'){loadEarlySummary();loadSett()}if(k==='outstanding'){loadOutstanding();loadPaymentPlans();}if(k==='paymentPlans')loadPaymentPlans();if(k==='fees')loadFees();if(k==='demo')loadDemo();if(k==='drivers')loadDrivers();if(k==='access'){loadStaff();loadDriverUsers()}if(k==='security')loadSecurity();if(k==='settings'){loadSettings();loadIntegrations()}}
  async function createOfficeCustomerPayment(e){
   e?.preventDefault();setCustomerCreateBusy(true);
   try{
@@ -605,14 +634,286 @@ function AdminApp(){
  async function saveSettings(){try{const j=await api('/api/admin/operations-settings',{method:'PUT',body:JSON.stringify(settings)});setSettings(j);alert('FleetPay settings saved.')}catch(e){alert(e.message)}}
  async function testSmsNow(){try{await api('/api/admin/communications/test-sms',{method:'POST',body:JSON.stringify(testSms)});alert('Test SMS sent.')}catch(e){alert(e.message)}}
  async function testEmailNow(){try{await api('/api/admin/communications/test-email',{method:'POST',body:JSON.stringify({to:testEmail||settings?.officeNotificationEmail})});alert('Test email sent.')}catch(e){alert(e.message)}}
- async function resendOutstanding(x){try{await api(`/api/admin/outstanding-payments/${x.id}/resend`,{method:'POST'});alert('Payment reminder sent.');await loadOutstanding()}catch(e){alert(e.message)}}
+
+ function openPaymentPlanCreate(x){
+  const today=new Date().toISOString().slice(0,10);
+
+  setPlanCreateSource(x);
+  setPlanCreate({
+   frequency:'weekly',
+   instalmentAmount:'',
+   startDate:today,
+   notes:''
+  });
+ }
+
+ async function createPaymentPlan(e){
+  e?.preventDefault();
+
+  if(!planCreateSource)return;
+
+  const amount=Number(planCreate.instalmentAmount||0);
+
+  if(!Number.isFinite(amount)||amount<=0){
+   alert('Enter a valid instalment amount.');
+   return;
+  }
+
+  setPlanCreateBusy(true);
+
+  try{
+   const j=await api('/api/admin/payment-plans',{
+    method:'POST',
+    body:JSON.stringify({
+     paymentRequestId:planCreateSource.id,
+     frequency:planCreate.frequency,
+     instalmentAmount:amount,
+     startDate:planCreate.startDate,
+     notes:planCreate.notes
+    })
+   });
+
+   setPlanCreateSource(null);
+   setSelectedPaymentPlan(j.plan);
+
+   await Promise.all([
+    loadPaymentPlans(),
+    loadOutstanding()
+   ]);
+
+   setView('paymentPlans');
+
+  }catch(e){
+   alert(e.message);
+  }finally{
+   setPlanCreateBusy(false);
+  }
+ }
+
+ async function activatePaymentPlan(plan){
+  if(
+   !confirm(
+    `Activate this payment plan for callsign ${plan.callsign}?\n\n`+
+    `${money(plan.planAmount)} total · ${money(plan.instalmentAmount)} ${plan.frequency}\n\n`+
+    `The existing full-balance payment request will be closed and the first instalment will become payable.`
+   )
+  )return;
+
+  setPlanActivateBusy(true);
+
+  try{
+   const j=await api(
+    `/api/admin/payment-plans/${plan.id}/activate`,
+    {method:'POST'}
+   );
+
+   setSelectedPaymentPlan(j.plan);
+
+   await Promise.all([
+    loadPaymentPlans(),
+    loadOutstanding()
+   ]);
+
+   alert('Payment plan activated.');
+
+  }catch(e){
+   alert(e.message);
+  }finally{
+   setPlanActivateBusy(false);
+  }
+ }
+
+
+ async function refreshSelectedPaymentPlan(planId){
+  const j=await api(`/api/admin/payment-plans/${planId}`);
+
+  setSelectedPaymentPlan(j.plan);
+
+  await Promise.all([
+   loadPaymentPlans(),
+   loadOutstanding()
+  ]);
+
+  return j.plan;
+ }
+
+ async function pausePaymentPlan(plan){
+  const reason=prompt(
+   'Why is this payment plan being paused?\n\nThis note will be recorded in the audit history.',
+   ''
+  );
+
+  if(reason===null)return;
+
+  if(
+   !confirm(
+    `Pause the payment plan for callsign ${plan.callsign}?\n\n`+
+    `The driver will not be able to make the current plan payment until the plan is resumed.`
+   )
+  )return;
+
+  setPlanActionBusy(true);
+
+  try{
+   const j=await api(
+    `/api/admin/payment-plans/${plan.id}/pause`,
+    {
+     method:'POST',
+     body:JSON.stringify({reason})
+    }
+   );
+
+   setSelectedPaymentPlan(j.plan);
+
+   await Promise.all([
+    loadPaymentPlans(),
+    loadOutstanding()
+   ]);
+
+   alert('Payment plan paused.');
+
+  }catch(e){
+   alert(e.message);
+  }finally{
+   setPlanActionBusy(false);
+  }
+ }
+
+ async function resumePaymentPlan(plan){
+  if(
+   !confirm(
+    `Resume the payment plan for callsign ${plan.callsign}?\n\n`+
+    `The current instalment will become payable again.`
+   )
+  )return;
+
+  setPlanActionBusy(true);
+
+  try{
+   const j=await api(
+    `/api/admin/payment-plans/${plan.id}/resume`,
+    {method:'POST'}
+   );
+
+   setSelectedPaymentPlan(j.plan);
+
+   await Promise.all([
+    loadPaymentPlans(),
+    loadOutstanding()
+   ]);
+
+   alert(
+    j.plan.status==='defaulted'
+     ?'Payment plan resumed. The current instalment remains overdue.'
+     :'Payment plan resumed.'
+   );
+
+  }catch(e){
+   alert(e.message);
+  }finally{
+   setPlanActionBusy(false);
+  }
+ }
+
+ async function settlePaymentPlanEarly(plan){
+  const remaining=Number(plan.remainingAmount||0);
+
+  if(
+   !confirm(
+    `Settle this payment plan early?\n\n`+
+    `Remaining balance: ${money(remaining)}\n\n`+
+    `Future instalments will be cancelled and the driver will be asked to pay the full remaining balance in one payment.`
+   )
+  )return;
+
+  setPlanActionBusy(true);
+
+  try{
+   const j=await api(
+    `/api/admin/payment-plans/${plan.id}/settle-early`,
+    {method:'POST'}
+   );
+
+   setSelectedPaymentPlan(j.plan);
+
+   await Promise.all([
+    loadPaymentPlans(),
+    loadOutstanding()
+   ]);
+
+   alert(
+    `${money(remaining)} is now available for the driver to pay as the final settlement.`
+   );
+
+  }catch(e){
+   alert(e.message);
+  }finally{
+   setPlanActionBusy(false);
+  }
+ }
+
+ async function cancelPaymentPlan(plan){
+  const reason=prompt(
+   'Enter the reason for cancelling this payment plan.\n\nThe remaining balance will return to normal Outstanding.',
+   ''
+  );
+
+  if(reason===null)return;
+
+  if(!reason.trim()){
+   alert('A cancellation reason is required.');
+   return;
+  }
+
+  const remaining=Number(plan.remainingAmount||0);
+
+  if(
+   !confirm(
+    `Cancel this payment plan for callsign ${plan.callsign}?\n\n`+
+    `Remaining balance: ${money(remaining)}\n\n`+
+    `The remaining balance will return to normal Outstanding and can be paid in full or placed onto a new plan.`
+   )
+  )return;
+
+  setPlanActionBusy(true);
+
+  try{
+   const j=await api(
+    `/api/admin/payment-plans/${plan.id}/cancel`,
+    {
+     method:'POST',
+     body:JSON.stringify({
+      reason:reason.trim()
+     })
+    }
+   );
+
+   setSelectedPaymentPlan(j.plan);
+
+   await Promise.all([
+    loadPaymentPlans(),
+    loadOutstanding()
+   ]);
+
+   alert(
+    `Payment plan cancelled. ${money(remaining)} has returned to Outstanding.`
+   );
+
+  }catch(e){
+   alert(e.message);
+  }finally{
+   setPlanActionBusy(false);
+  }
+ }
+
+async function resendOutstanding(x){try{await api(`/api/admin/outstanding-payments/${x.id}/resend`,{method:'POST'});alert('Payment reminder sent.');await loadOutstanding()}catch(e){alert(e.message)}}
  async function createStripeLink(x){try{const j=await api(`/api/admin/payment-requests/${x.id}/stripe`,{method:'POST'});await loadOutstanding();if(j.paymentUrl)window.open(j.paymentUrl,'_blank')}catch(e){alert(e.message)}}
  async function markFeesInvoiced(){const invoiceRef=prompt('Enter the invoice reference/number:');if(!invoiceRef?.trim())return;try{const j=await api('/api/admin/fees/mark-invoiced',{method:'POST',body:JSON.stringify({invoiceRef})});alert(`${j.count} fee records marked invoiced.`);await loadFees()}catch(e){alert(e.message)}}
  async function downloadFeesCsv(){try{const r=await fetch(`${API_BASE}/api/admin/fees/csv?status=all`,{headers:{Authorization:`Bearer ${token}`}});if(!r.ok)throw new Error('Could not export fees');const b=await r.blob(),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download='FleetPay-fees.csv';a.click();URL.revokeObjectURL(u)}catch(e){alert(e.message)}}
  async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff',{method:'POST',body:JSON.stringify(newStaff)});setNewStaff({name:'',email:'',role:'office',password:''});setShowNewStaff(false);await loadStaff()}catch(e){alert(e.message)}}
  async function updateStaff(u,changes){try{await api(`/api/admin/staff/${u.id}`,{method:'PATCH',body:JSON.stringify(changes)});await loadStaff()}catch(e){alert(e.message)}}
  async function setApproval(u,approved){try{await api(`/api/admin/users/${u.id}`,{method:'PATCH',body:JSON.stringify({approved})});await loadDriverUsers()}catch(e){alert(e.message)}}
- const statusTone=s=>['paid','completed','approved','sent','invoiced'].includes(String(s))?'good':['failed','declined','overdue','cancelled'].includes(String(s))?'bad':'warn';
+ const statusTone=s=>['paid','completed','approved','sent','invoiced'].includes(String(s))?'good':['failed','declined','overdue','cancelled','defaulted'].includes(String(s))?'bad':['on_plan','active','paused'].includes(String(s))?'warn':'warn';
 
  const customerPaymentStatus=x=>x?.paymentStatus||x?.status||'open';
  const customerJobStatus=x=>x?.jobStatus||'';
@@ -2793,8 +3094,553 @@ function AdminApp(){
 </div>
 </div></section>{activeMondayCancelledBatch&&<div className="operatorWarning blue"><AlertTriangle/><div><b>Previous payment batch cancelled safely</b><span>The payment batch was cancelled before release. The same Monday settlement remains open so the approved drivers can be reviewed, changed and placed into a corrected payment run. No Autocab payout adjustment was posted by the cancellation.</span></div></div>}<section className="panel"><div className="panelHead"><div><h3>Drivers to pay</h3><p>Positive Previous Balances. Only approved drivers are included in the payment run.</p></div><div className="rowActions">{weeklyPending.length>0&&canMoney&&<button className="secondary" onClick={approveAllWeekly}><CheckCircle2/>Approve all pending</button>}{selectedWeeklyPayouts.length>0&&!activeMonday.payoutRunId&&canMoney&&<button className="dangerAction" onClick={excludeSelectedWeekly}>Exclude selected ({selectedWeeklyPayouts.length})</button>}{weeklyApproved.length>0&&!activeMonday.payoutRunId&&canMoney&&<button className="primary" onClick={createWeeklyBatch}><Send/>Create payment run</button>}</div></div>{weeklyItems.length?<div className="tableWrap proTable"><table><thead><tr><th className="selectCol"><input type="checkbox" aria-label="Select all payouts" disabled={Boolean(activeMonday.payoutRunId)} checked={weeklyItems.length>0&&weeklyItems.every(x=>selectedWeeklyPayouts.includes(x.payoutId))} onChange={toggleAllWeeklyPayouts}/></th><th>Driver</th><th>Previous balance</th><th>Weekly fee</th><th>Payout</th><th>Payout account</th><th>Decision</th><th>Actions</th></tr></thead><tbody>{weeklyItems.map(x=><tr key={x.payoutId} className={selectedWeeklyPayouts.includes(x.payoutId)?'selectedPayoutRow':''}><td className="selectCol"><input type="checkbox" aria-label={`Select callsign ${x.callsign}`} disabled={Boolean(activeMonday.payoutRunId)} checked={selectedWeeklyPayouts.includes(x.payoutId)} onChange={()=>toggleWeeklyPayout(x.payoutId)}/></td><td><div className="driverCell"><span className="callsign">{x.callsign}</span><div><b>{x.driverName}</b><small>Driver {x.driverId}</small></div></div></td><td>{money(x.previousBalance)}</td><td>{x.weeklyFeeWaivedInactive?<div><b>{money(0)}</b><small className="reasonText">Fee waived · no work recorded</small></div>:money(x.weeklyFee)}</td><td><b>{money(x.amount)}</b></td><td><Pill tone={bankTone(bankFor(x.driverId))}>{bankFor(x.driverId).label}</Pill></td><td><Pill tone={x.approvalStatus==='approved'?'good':x.approvalStatus==='excluded'?'bad':'warn'}>{x.approvalStatus||'pending'}</Pill>{x.exclusionReason&&<small className="reasonText">{x.exclusionReason}</small>}</td><td><div className="compactActions">{canMoney&&!activeMonday.payoutRunId&&<><button className="mini success" onClick={()=>weeklyDecision(x,'approved')}>Approve</button><button className="mini danger" onClick={()=>weeklyDecision(x,'excluded')}>Exclude</button></>}</div></td></tr>)}</tbody></table></div>:<div className="emptyInline">No payouts are above the minimum payout threshold for this Monday settlement.</div>}{weeklyPayoutCarryForward.length>0&&<div className="carryNote"><Info/> {weeklyPayoutCarryForward.length} positive balance{weeklyPayoutCarryForward.length===1?' is':'s are'} below the minimum payout threshold and will remain on the driver account for a future settlement.</div>}</section><section className="panel"><div className="panelHead"><div><h3>Drivers owing</h3><p>Negative Previous Balances above the configured threshold. These are collection requests, not payout items.</p></div><button className="secondary" onClick={()=>go('outstanding')}>Open full Outstanding view</button></div>{weeklyCollections.length?<div className="tableWrap proTable"><table><thead><tr><th>Driver</th><th>Previous balance</th><th>Weekly fee</th><th>Amount due</th><th>Due</th><th>Communication</th><th>Status</th></tr></thead><tbody>{weeklyCollections.map(x=>{const req=outstanding.find(o=>o.id===x.requestId);return <tr key={x.requestId||x.driverId}><td><div className="driverCell"><span className="callsign">{x.callsign}</span><b>{x.driverName}</b></div></td><td className="negative">{money(x.previousBalance)}</td><td>{x.weeklyFeeWaivedInactive?<div><b>{money(0)}</b><small className="reasonText">Fee waived · no work recorded</small></div>:money(x.weeklyFee)}</td><td><b className="negative">{money(x.amount)}</b></td><td>{req?.dueAt?dt(req.dueAt):'—'}</td><td><div className="compactStatus"><Pill tone={req?.emailSentAt?'good':'warn'}>Email {req?.emailSentAt?'sent':'pending'}</Pill><Pill tone={req?.smsSentAt?'good':'warn'}>SMS {req?.smsSentAt?'sent':'pending'}</Pill></div></td><td><Pill tone={req?.overdue?'bad':statusTone(req?.status||'open')}>{req?.overdue?'overdue':req?.status||'open'}</Pill></td></tr>})}</tbody></table></div>:<div className="emptyInline good"><CheckCircle2/>No drivers are above the outstanding-payment threshold for this run.</div>}{weeklyCarryForward.length>0&&<div className="carryNote"><Info/> {weeklyCarryForward.length} small negative balance{weeklyCarryForward.length===1?' is':'s are'} below the threshold and will be carried forward.</div>}</section></>:<section className="emptyState"><CalendarDays/><h3>No active Monday settlement</h3><p>Once Rent Sheets are complete, create the Monday draft. FleetPay will separate drivers to pay from drivers who owe automatically.</p></section>}<section className="panel"><div className="panelHead"><div><h3>Weekly payment-run history</h3><p>Cancelled runs stay here for audit. They do not represent money sent.</p></div></div><div className="runCards liveRunStack">{sett.payoutRuns.filter(r=>r.runType==='weekly').slice(0,12).map(r=><LiveRunCard key={r.id} r={r}/>)}</div></section></>}
     {view==='early'&&<><section className="officePageIntro"><div><span>DAILY PAYOUT CONTROL</span><h2>Early payouts</h2><p>Approve requests individually, batch only approved payments, then reconcile the paid batch back to Autocab.</p></div><div className="rowActions"><button className="secondary" onClick={sendEarlySummary}><Mail/>Send office summary now</button>{canMoney&&sett.earlyPayoutRequests.some(x=>x.status==='approved')&&<button className="primary" onClick={createEarlyBatch}><Send/>Create approved batch</button>}</div></section><section className="summaryBanner"><div><Clock3/><div><b>Today's cutoff: {earlySummary?.cutoff||settings?.earlyPayoutCutoffTime||'11:00'}</b><span>{earlySummary?.summary?.status==='sent'?`Office email sent ${dt(earlySummary.summary.sent_at)}`:'Automatic office summary will send after cutoff.'}</span></div></div><div className="summaryNumbers"><span>{dueEarly.length} requests</span><b>{money(dueEarly.reduce((a,x)=>a+Number(x.netAmount||x.amount||0),0))}</b></div></section><section className="panel"><div className="tableWrap proTable"><table><thead><tr><th>Driver</th><th>Requested</th><th>Fee</th><th>Driver receives</th><th>Payout account</th><th>Due</th><th>Status</th><th>Actions</th></tr></thead><tbody>{sett.earlyPayoutRequests.map(x=><tr key={x.id}><td><div className="driverCell"><span className="callsign">{x.callsign}</span><b>{x.driverName}</b></div></td><td>{money(x.grossAmount)}</td><td>{money(x.fee)}</td><td><b>{money(x.netAmount??x.amount)}</b></td><td><Pill tone={bankTone(bankFor(x.driverId))}>{bankFor(x.driverId).label}</Pill></td><td>{x.eligibleRunDate||'—'}</td><td><Pill tone={statusTone(x.status)}>{x.status}</Pill></td><td><div className="compactActions">{x.status==='requested'&&canMoney&&<><button className="mini success" onClick={()=>reviewEarly(x,'approved')}>Approve</button><button className="mini danger" onClick={()=>reviewEarly(x,'declined')}>Decline</button></>}{x.status==='approved'&&<span className="tinyNote">Ready to batch</span>}</div></td></tr>)}</tbody></table></div></section><section className="panel"><div className="panelHead"><div><h3>Early payout payment runs</h3><p>Review, cancel or complete daily payout runs. A run can only be cancelled before it is submitted to the payment provider.</p></div></div><div className="runCards liveRunStack">{sett.payoutRuns.filter(r=>r.runType==='early').slice(0,12).map(r=><LiveRunCard key={r.id} r={r}/>)}</div></section></>}
-    {view==='outstanding'&&<><section className="officePageIntro"><div><span>COLLECTIONS</span><h2>Outstanding payments</h2><p>Drivers above the configured threshold receive an app notification, email and SMS. The deadline is shown clearly here.</p></div></section><section className="officeStats three"><Stat icon={AlertTriangle} label="Open" value={openOutstanding.length} sub="Awaiting payment"/><Stat icon={Clock3} label="Overdue" value={overdueOutstanding.length} sub="Past Tuesday deadline"/><Stat icon={CreditCard} label="Amount outstanding" value={money(openOutstanding.reduce((a,x)=>a+Number(x.amount||0),0))} sub="Open payment requests"/></section><section className="panel"><div className="tableWrap proTable"><table><thead><tr><th>Driver</th><th>Amount</th><th>Due</th><th>Email</th><th>SMS</th><th>Status</th><th>Actions</th></tr></thead><tbody>{outstanding.map(x=><tr key={x.id} className={x.overdue?'overdueRow':''}><td><div className="driverCell"><span className="callsign">{x.callsign}</span><b>{x.driverName}</b></div></td><td><b>{money(x.amount)}</b></td><td>{x.dueAt?dt(x.dueAt):'—'}</td><td><Pill tone={x.emailSentAt?'good':'warn'}>{x.emailSentAt?'Sent':'Not sent'}</Pill></td><td><Pill tone={x.smsSentAt?'good':'warn'}>{x.smsSentAt?'Sent':'Not sent'}</Pill></td><td><Pill tone={x.overdue?'bad':statusTone(x.status)}>{x.overdue?'overdue':x.status}</Pill>{x.communicationError&&<small className="reasonText">{x.communicationError}</small>}</td><td><div className="compactActions">{x.status==='open'&&<><button className="mini" onClick={()=>resendOutstanding(x)}>Resend</button><button className="mini" onClick={()=>createStripeLink(x)}>Payment link</button></>}</div></td></tr>)}</tbody></table></div></section></>}
-    {view==='fees'&&<><section className="officePageIntro"><div><span>REVENUE & RECONCILIATION</span><h2>Fees & billing</h2><p>Every FleetPay fee is recorded separately so you can invoice the taxi company accurately and see the agreed split.</p></div><div className="rowActions"><button className="secondary" onClick={downloadFeesCsv}>Export CSV</button>{canMoney&&<button className="primary" onClick={markFeesInvoiced}>Mark uninvoiced as invoiced</button>}</div></section><section className="officeStats four"><Stat icon={BadgePoundSterling} label="Gross fees" value={money(fees?.summary?.gross||0)} sub="All recorded fees"/><Stat icon={WalletCards} label="FleetPay share" value={money(fees?.summary?.fleetpay||0)} sub="Your share"/><Stat icon={Users} label="Taxi company share" value={money(fees?.summary?.taxi||0)} sub="Their share"/><Stat icon={FileClock} label="FleetPay uninvoiced" value={money(fees?.summary?.uninvoiced||0)} sub="Ready to invoice"/></section><section className="panel"><div className="tableWrap proTable"><table><thead><tr><th>Date</th><th>Fee</th><th>Driver</th><th>Gross</th><th>FleetPay</th><th>Taxi company</th><th>Status</th><th>Invoice</th></tr></thead><tbody>{fees.fees.map(x=><tr key={x.id}><td>{dt(x.createdAt)}</td><td><b>{String(x.feeType).replaceAll('_',' ')}</b><small>{x.description}</small></td><td>{x.callsign||'—'}</td><td>{money(x.grossFee)}</td><td><b>{money(x.fleetpayShare)}</b></td><td>{money(x.taxiCompanyShare)}</td><td><Pill tone={statusTone(x.status)}>{x.status}</Pill></td><td>{x.invoiceRef||'—'}</td></tr>)}</tbody></table></div></section></>}
+    {view==='outstanding'&&<>
+
+     <section className="officePageIntro">
+      <div>
+       <span>COLLECTIONS</span>
+       <h2>Outstanding payments</h2>
+       <p>Only balances currently due for collection are counted here. Drivers already on an agreed payment plan remain visible separately without double-counting the original debt.</p>
+      </div>
+     </section>
+
+     <section className="officeStats four">
+      <Stat
+       icon={AlertTriangle}
+       label="Standard outstanding"
+       value={standardOutstanding.length}
+       sub="Normal payment requests"
+      />
+
+      <Stat
+       icon={CalendarDays}
+       label="Plan instalments due"
+       value={planInstalmentsDue.length}
+       sub="Current instalments payable"
+      />
+
+      <Stat
+       icon={Clock3}
+       label="Overdue"
+       value={overdueOutstanding.length}
+       sub="Past payment deadline"
+      />
+
+      <Stat
+       icon={CreditCard}
+       label="Collect now"
+       value={money(collectibleOutstandingTotal)}
+       sub="No payment-plan double counting"
+      />
+     </section>
+
+     <section className="panel">
+      <div className="panelHead">
+       <div>
+        <span className="sectionKicker">ACTION REQUIRED</span>
+        <h3>Payments currently due</h3>
+        <p>These are the balances a driver can pay now.</p>
+       </div>
+       <span>{openOutstanding.length} due</span>
+      </div>
+
+      {openOutstanding.length
+       ?<div className="tableWrap proTable">
+        <table>
+         <thead>
+          <tr>
+           <th>Driver</th>
+           <th>Type</th>
+           <th>Amount</th>
+           <th>Due</th>
+           <th>Email</th>
+           <th>SMS</th>
+           <th>Status</th>
+           <th>Actions</th>
+          </tr>
+         </thead>
+
+         <tbody>
+          {openOutstanding.map(x=>{
+           const isPlanInstalment=
+            x.request_type==='payment_plan_instalment';
+
+           return <tr
+            key={x.id}
+            className={x.overdue?'overdueRow':''}
+           >
+            <td>
+             <div className="driverCell">
+              <span className="callsign">{x.callsign}</span>
+              <div>
+               <b>{x.driverName}</b>
+               {isPlanInstalment&&
+                <small>Payment plan instalment</small>
+               }
+              </div>
+             </div>
+            </td>
+
+            <td>
+             <Pill tone={isPlanInstalment?'warn':'good'}>
+              {isPlanInstalment
+               ?'Plan instalment'
+               :'Standard balance'}
+             </Pill>
+            </td>
+
+            <td>
+             <b>{money(x.amount)}</b>
+            </td>
+
+            <td>
+             {x.dueAt?dt(x.dueAt):'—'}
+            </td>
+
+            <td>
+             {isPlanInstalment
+              ?<span className="mutedText">Plan managed</span>
+              :<Pill tone={x.emailSentAt?'good':'warn'}>
+               {x.emailSentAt?'Sent':'Not sent'}
+              </Pill>
+             }
+            </td>
+
+            <td>
+             {isPlanInstalment
+              ?<span className="mutedText">Plan managed</span>
+              :<Pill tone={x.smsSentAt?'good':'warn'}>
+               {x.smsSentAt?'Sent':'Not sent'}
+              </Pill>
+             }
+            </td>
+
+            <td>
+             <Pill tone={x.overdue?'bad':statusTone(x.status)}>
+              {x.overdue?'overdue':'open'}
+             </Pill>
+
+             {x.communicationError&&
+              <small className="reasonText">
+               {x.communicationError}
+              </small>
+             }
+            </td>
+
+            <td>
+             <div className="compactActions">
+
+              {!isPlanInstalment&&
+               <button
+                className="mini"
+                onClick={()=>resendOutstanding(x)}
+               >
+                Resend
+               </button>
+              }
+
+              <button
+               className="mini"
+               onClick={()=>createStripeLink(x)}
+              >
+               Payment link
+              </button>
+
+              {canMoney&&!isPlanInstalment&&
+               <button
+                className="mini"
+                onClick={()=>openPaymentPlanCreate(x)}
+               >
+                Payment plan
+               </button>
+              }
+
+              {isPlanInstalment&&x.payment_plan_id&&
+               <button
+                className="mini"
+                onClick={()=>{
+                 const plan=paymentPlans?.plans?.find(
+                  p=>p.id===x.payment_plan_id
+                 );
+
+                 if(plan){
+                  setSelectedPaymentPlan(plan);
+                  setView('paymentPlans');
+                 }else{
+                  go('paymentPlans');
+                 }
+                }}
+               >
+                View plan
+               </button>
+              }
+
+             </div>
+            </td>
+           </tr>
+          })}
+         </tbody>
+        </table>
+       </div>
+
+       :<div className="emptyState compact">
+        <CheckCircle2/>
+        <h3>No payments currently due</h3>
+        <p>There are no standard balances or payment-plan instalments awaiting payment.</p>
+       </div>
+      }
+     </section>
+
+     <section className="panel">
+      <div className="panelHead">
+       <div>
+        <span className="sectionKicker">AGREED ARRANGEMENTS</span>
+        <h3>Balances on payment plans</h3>
+        <p>The original debt stays here for audit, but it is not included in the collectible total above.</p>
+       </div>
+       <span>{onPlanOutstanding.length} balances</span>
+      </div>
+
+      {onPlanOutstanding.length
+       ?<div className="tableWrap proTable">
+        <table>
+         <thead>
+          <tr>
+           <th>Driver</th>
+           <th>Original balance</th>
+           <th>Plan</th>
+           <th>Remaining</th>
+           <th>Next due</th>
+           <th>Status</th>
+           <th>Actions</th>
+          </tr>
+         </thead>
+
+         <tbody>
+          {onPlanOutstanding.map(x=>{
+           const plan=paymentPlans?.plans?.find(
+            p=>p.id===x.payment_plan_id ||
+               p.sourcePaymentRequestId===x.id
+           );
+
+           return <tr key={x.id}>
+            <td>
+             <div className="driverCell">
+              <span className="callsign">{x.callsign}</span>
+              <b>{x.driverName}</b>
+             </div>
+            </td>
+
+            <td>
+             <b>{money(x.amount)}</b>
+            </td>
+
+            <td>
+             {plan
+              ?<>
+               <b>{money(plan.instalmentAmount)}</b>
+               <small>{plan.frequency}</small>
+              </>
+              :'—'
+             }
+            </td>
+
+            <td>
+             <b>
+              {plan
+               ?money(plan.remainingAmount)
+               :'—'}
+             </b>
+            </td>
+
+            <td>
+             {plan?.nextDueAt||'—'}
+            </td>
+
+            <td>
+             <Pill tone={
+              plan?.status==='defaulted'
+               ?'bad'
+               :plan?.status==='completed'
+                ?'good'
+                :'warn'
+             }>
+              {plan?.status
+               ?String(plan.status).replaceAll('_',' ')
+               :'on plan'}
+             </Pill>
+            </td>
+
+            <td>
+             <div className="compactActions">
+              <button
+               className="mini"
+               onClick={()=>{
+                if(plan){
+                 setSelectedPaymentPlan(plan);
+                 setView('paymentPlans');
+                }else{
+                 go('paymentPlans');
+                }
+               }}
+              >
+               View plan
+              </button>
+             </div>
+            </td>
+           </tr>
+          })}
+         </tbody>
+        </table>
+       </div>
+
+       :<div className="emptyState compact">
+        <CalendarDays/>
+        <h3>No active payment-plan balances</h3>
+        <p>Drivers with agreed plans will appear here after activation.</p>
+       </div>
+      }
+     </section>
+
+     <section className="panel">
+      <div className="panelHead">
+       <div>
+        <span className="sectionKicker">HISTORY</span>
+        <h3>Resolved payment requests</h3>
+        <p>Paid and closed requests remain available for reconciliation and audit.</p>
+       </div>
+      </div>
+
+      <div className="tableWrap proTable">
+       <table>
+        <thead>
+         <tr>
+          <th>Driver</th>
+          <th>Type</th>
+          <th>Amount</th>
+          <th>Status</th>
+          <th>Paid</th>
+         </tr>
+        </thead>
+
+        <tbody>
+         {outstanding
+          .filter(x=>!['open','on_plan'].includes(x.status))
+          .slice(0,100)
+          .map(x=>
+           <tr key={x.id}>
+            <td>
+             <div className="driverCell">
+              <span className="callsign">{x.callsign}</span>
+              <b>{x.driverName}</b>
+             </div>
+            </td>
+
+            <td>
+             {x.request_type==='payment_plan_instalment'
+              ?'Plan instalment'
+              :'Standard balance'}
+            </td>
+
+            <td>
+             <b>{money(x.amount)}</b>
+            </td>
+
+            <td>
+             <Pill tone={statusTone(x.status)}>
+              {String(x.status||'').replaceAll('_',' ')}
+             </Pill>
+            </td>
+
+            <td>
+             {x.paidAt?dt(x.paidAt):'—'}
+            </td>
+           </tr>
+          )
+         }
+        </tbody>
+       </table>
+      </div>
+     </section>
+
+    </>}
+
+    {view==='paymentPlans'&&<>
+
+     <section className="officePageIntro">
+      <div>
+       <span>DRIVER COLLECTION AGREEMENTS</span>
+       <h2>Payment plans</h2>
+       <p>Manage agreed instalment plans for outstanding driver balances. FleetPay tracks payments, remaining balances and the next instalment automatically.</p>
+      </div>
+      <div className="rowActions">
+       <button className="secondary" onClick={loadPaymentPlans}>
+        <RefreshCw/>Refresh
+       </button>
+      </div>
+     </section>
+
+     <section className="officeStats four">
+      <Stat
+       icon={CalendarDays}
+       label="Active plans"
+       value={paymentPlans?.summary?.active||0}
+       sub="Currently being repaid"
+      />
+      <Stat
+       icon={Clock3}
+       label="Draft plans"
+       value={paymentPlans?.summary?.draft||0}
+       sub="Awaiting activation"
+      />
+      <Stat
+       icon={AlertTriangle}
+       label="Needs attention"
+       value={
+        Number(paymentPlans?.summary?.defaulted||0)+
+        Number(paymentPlans?.summary?.paused||0)
+       }
+       sub="Paused or defaulted"
+      />
+      <Stat
+       icon={CreditCard}
+       label="Remaining"
+       value={money(paymentPlans?.summary?.outstanding||0)}
+       sub="Across active plans"
+      />
+     </section>
+
+     <section className="panel">
+      <div className="panelHead">
+       <div>
+        <h3>Driver payment plans</h3>
+        <p>Each plan keeps the original debt, instalment history and remaining balance fully traceable.</p>
+       </div>
+       <span>{paymentPlans?.plans?.length||0} plans</span>
+      </div>
+
+      {paymentPlans?.plans?.length
+       ?<div className="tableWrap proTable">
+        <table>
+         <thead>
+          <tr>
+           <th>Driver</th>
+           <th>Plan</th>
+           <th>Paid</th>
+           <th>Remaining</th>
+           <th>Next payment</th>
+           <th>Progress</th>
+           <th>Status</th>
+           <th>Actions</th>
+          </tr>
+         </thead>
+
+         <tbody>
+          {paymentPlans.plans.map(plan=>{
+           const total=Number(plan.planAmount||0);
+           const paid=Number(plan.paidAmount||0);
+           const percent=total>0
+            ?Math.min(100,Math.round((paid/total)*100))
+            :0;
+
+           const nextInstalment=
+            plan.instalments?.find(
+             x=>['due','scheduled','overdue'].includes(x.status)
+            );
+
+           return <tr key={plan.id}>
+            <td>
+             <div className="driverCell">
+              <span className="callsign">{plan.callsign}</span>
+              <div>
+               <b>{plan.driverName}</b>
+               <small>{plan.frequency} plan</small>
+              </div>
+             </div>
+            </td>
+
+            <td>
+             <b>{money(plan.planAmount)}</b>
+             <small>{money(plan.instalmentAmount)} {plan.frequency}</small>
+            </td>
+
+            <td>
+             <b className="pos">{money(plan.paidAmount)}</b>
+            </td>
+
+            <td>
+             <b>{money(plan.remainingAmount)}</b>
+            </td>
+
+            <td>
+             {plan.status==='completed'
+              ?<span>Completed</span>
+              :<>
+               <b>{nextInstalment?money(nextInstalment.amount):'—'}</b>
+               <small>{plan.nextDueAt||nextInstalment?.dueAt||'—'}</small>
+              </>
+             }
+            </td>
+
+            <td>
+             <div className="planProgressCell">
+              <div className="planProgressTrack">
+               <span style={{width:`${percent}%`}}/>
+              </div>
+              <small>{percent}% · {plan.instalments?.filter(x=>x.status==='paid').length||0}/{plan.instalments?.length||0} paid</small>
+             </div>
+            </td>
+
+            <td>
+             <Pill tone={
+              plan.status==='completed'
+               ?'good'
+               :['defaulted','cancelled'].includes(plan.status)
+                ?'bad'
+                :'warn'
+             }>
+              {String(plan.status||'').replaceAll('_',' ')}
+             </Pill>
+            </td>
+
+            <td>
+             <div className="compactActions">
+              <button
+               className="mini"
+               onClick={()=>setSelectedPaymentPlan(plan)}
+              >
+               View
+              </button>
+
+              {canMoney&&plan.status==='draft'&&
+               <button
+                className="mini success"
+                disabled={planActivateBusy}
+                onClick={()=>activatePaymentPlan(plan)}
+               >
+                Activate
+               </button>
+              }
+             </div>
+            </td>
+           </tr>
+          })}
+         </tbody>
+        </table>
+       </div>
+       :<div className="emptyState compact">
+        <CalendarDays/>
+        <h3>No payment plans yet</h3>
+        <p>Create a plan from an open balance in Outstanding payments.</p>
+        <button className="secondary" onClick={()=>go('outstanding')}>
+         Open Outstanding
+        </button>
+       </div>
+      }
+     </section>
+    </>}
+
+{view==='fees'&&<><section className="officePageIntro"><div><span>REVENUE & RECONCILIATION</span><h2>Fees & billing</h2><p>Every FleetPay fee is recorded separately so you can invoice the taxi company accurately and see the agreed split.</p></div><div className="rowActions"><button className="secondary" onClick={downloadFeesCsv}>Export CSV</button>{canMoney&&<button className="primary" onClick={markFeesInvoiced}>Mark uninvoiced as invoiced</button>}</div></section><section className="officeStats four"><Stat icon={BadgePoundSterling} label="Gross fees" value={money(fees?.summary?.gross||0)} sub="All recorded fees"/><Stat icon={WalletCards} label="FleetPay share" value={money(fees?.summary?.fleetpay||0)} sub="Your share"/><Stat icon={Users} label="Taxi company share" value={money(fees?.summary?.taxi||0)} sub="Their share"/><Stat icon={FileClock} label="FleetPay uninvoiced" value={money(fees?.summary?.uninvoiced||0)} sub="Ready to invoice"/></section><section className="panel"><div className="tableWrap proTable"><table><thead><tr><th>Date</th><th>Fee</th><th>Driver</th><th>Gross</th><th>FleetPay</th><th>Taxi company</th><th>Status</th><th>Invoice</th></tr></thead><tbody>{fees.fees.map(x=><tr key={x.id}><td>{dt(x.createdAt)}</td><td><b>{String(x.feeType).replaceAll('_',' ')}</b><small>{x.description}</small></td><td>{x.callsign||'—'}</td><td>{money(x.grossFee)}</td><td><b>{money(x.fleetpayShare)}</b></td><td>{money(x.taxiCompanyShare)}</td><td><Pill tone={statusTone(x.status)}>{x.status}</Pill></td><td>{x.invoiceRef||'—'}</td></tr>)}</tbody></table></div></section></>}
     {view==='demo'&&<DemoLab demo={demo} loadDemo={loadDemo} resetDemo={resetDemo} action={demoAction} demoEmail={demoEmail} setDemoEmail={setDemoEmail} demoMobile={demoMobile} setDemoMobile={setDemoMobile} sendEmail={demoSendEmail} sendSms={demoSendSms}/>}
     {view==='drivers'&&<><section className="officePageIntro"><div><span>AUTOCAB + PAYOUT READINESS</span><h2>Driver accounts</h2><p>Balances and payout-bank readiness in one place. Full bank account numbers are never exposed in the normal office view.</p></div><button className="secondary" onClick={syncNow}><RefreshCw className={loading?'spin':''}/>Sync Autocab</button></section><section className="officeStats three"><Stat icon={Banknote} label="Bank ready" value={meta.bankReady??drivers.filter(d=>d.bankAccount?.ready).length} sub="Payout details saved"/><Stat icon={AlertTriangle} label="Missing bank details" value={meta.bankMissing??drivers.filter(d=>!d.bankAccount?.ready).length} sub="Cannot be released for payout"/><Stat icon={Clock3} label="Recently changed" value={meta.bankRecentlyChanged??drivers.filter(d=>d.bankAccount?.changedRecently).length} sub="Changed in the last 7 days"/></section><div className="driverToolbar"><div className="searchBox"><Search/><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search callsign, name, mobile, email or bank ending…"/></div><select value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All drivers</option><option value="bank_ready">Bank ready</option><option value="bank_missing">Missing bank details</option><option value="bank_recent">Recently changed bank</option><option value="payout_excluded">Payout excluded</option><option value="positive">Positive balance</option><option value="negative">Negative balance</option><option value="unmatched">Unmatched</option></select></div><section className="panel driverPanel"><div className="tableWrap proTable"><table><thead><tr><th>Callsign</th><th>Driver</th><th>Previous</th><th>Current</th><th>Payout account</th><th>Payout status</th><th>Last processed</th></tr></thead><tbody>{filtered.map(d=>{const b=d.bankAccount||{};return <tr key={d.driverId} onClick={()=>setSelected(d)}><td><span className="callsign">{d.callsign}</span></td><td><b>{d.fullName}</b><small>{d.email||d.mobile||`Driver ${d.driverId}`}</small></td><td>{money(d.previousBalance)}</td><td><b className={(d.currentBalance??0)<0?'negative':''}>{money(d.currentBalance)}</b></td><td><div className="bankTableCell"><Pill tone={bankTone(b)}>{b.label||'Bank details missing'}</Pill>{b.ready&&<small>{b.accountNumberMasked} · {b.sortCodeMasked}</small>}</div></td><td><div className="bankTableCell"><Pill tone={d.payoutExcluded?'bad':'good'}>{d.payoutExcluded?'Excluded':'Enabled'}</Pill>{d.payoutExcluded&&<small>{d.payoutExclusionReason||'Persistent exclusion'}</small>}</div></td><td>{dt(d.lastProcessed)}</td></tr>})}</tbody></table></div></section></>}
     {view==='access'&&<><section className="officePageIntro"><div><span>IDENTITY & PERMISSIONS</span><h2>Users & access</h2><p>Office accounts use mandatory authenticator MFA. Roles limit who can move money or change settings.</p></div>{isAdmin&&<button className="primary" onClick={()=>setShowNewStaff(!showNewStaff)}><UserCheck/>Add office user</button>}</section>{isAdmin&&showNewStaff&&<section className="panel"><form className="staffForm" onSubmit={createStaff}><label>Name<input required value={newStaff.name} onChange={e=>setNewStaff({...newStaff,name:e.target.value})}/></label><label>Email<input type="email" required value={newStaff.email} onChange={e=>setNewStaff({...newStaff,email:e.target.value})}/></label><label>Role<select value={newStaff.role} onChange={e=>setNewStaff({...newStaff,role:e.target.value})}><option value="administrator">Administrator</option><option value="finance">Finance</option><option value="office">Office</option><option value="readonly">Read only</option></select></label><label>Temporary password<input type="password" minLength="10" required value={newStaff.password} onChange={e=>setNewStaff({...newStaff,password:e.target.value})}/></label><button className="primary">Create user</button></form></section>}<section className="panel"><div className="panelHead"><div><h3>Office users</h3><p>MFA and role status for each staff account.</p></div><button className="mini" onClick={loadStaff}>Refresh</button></div><div className="tableWrap proTable"><table><thead><tr><th>User</th><th>Role</th><th>MFA</th><th>Last login</th><th>Status</th><th/></tr></thead><tbody>{staff.map(u=><tr key={u.id}><td><b>{u.name}</b><small>{u.email}</small></td><td><select value={u.role} onChange={e=>updateStaff(u,{role:e.target.value})} disabled={u.id===me?.id}><option value="administrator">Administrator</option><option value="finance">Finance</option><option value="office">Office</option><option value="readonly">Read only</option></select></td><td><Pill tone={u.mfaEnabled?'good':'warn'}>{u.mfaEnabled?'Enabled':'Setup required'}</Pill></td><td>{dt(u.lastLoginAt)}</td><td><Pill tone={u.active?'good':'bad'}>{u.active?'Active':'Disabled'}</Pill></td><td>{u.id!==me?.id&&<button className="mini" onClick={()=>updateStaff(u,{active:!u.active})}>{u.active?'Disable':'Enable'}</button>}</td></tr>)}</tbody></table></div></section><section className="panel"><div className="panelHead"><div><h3>Driver app accounts</h3><p>Registration remains matched to active Autocab driver details.</p></div><button className="mini" onClick={loadDriverUsers}>Refresh</button></div><div className="tableWrap proTable"><table><thead><tr><th>Callsign</th><th>Email</th><th>Created</th><th>Last login</th><th>Status</th><th/></tr></thead><tbody>{driverUsers.map(u=><tr key={u.id}><td><span className="callsign">{u.callsign}</span></td><td>{u.email}</td><td>{dt(u.createdAt)}</td><td>{dt(u.lastLoginAt)}</td><td><Pill tone={u.approved?'good':'warn'}>{u.approved?'Approved':'Pending'}</Pill></td><td>{canOffice&&<button className="mini" onClick={()=>setApproval(u,!u.approved)}>{u.approved?'Suspend':'Approve'}</button>}</td></tr>)}</tbody></table></div></section></>}
@@ -2805,12 +3651,313 @@ function AdminApp(){
      <section className="panel settingsCardV2"><div className="settingsHead"><Smartphone/><div><h3>SMS providers</h3><p>Choose how FleetPay routes payment and general messages between Twilio and the taxi-company gateway.</p></div></div><div className="formGrid2"><label className="checkLine"><input type="checkbox" checked={Boolean(settings.twilioEnabled)} onChange={e=>setSettings({...settings,twilioEnabled:e.target.checked})}/>Enable Twilio</label><label className="checkLine"><input type="checkbox" checked={Boolean(settings.orionEnabled)} onChange={e=>setSettings({...settings,orionEnabled:e.target.checked})}/>Enable Orion gateway</label><label>Payment-link SMS provider<select value={settings.paymentSmsProvider||'twilio'} onChange={e=>setSettings({...settings,paymentSmsProvider:e.target.value})}><option value="twilio">Twilio</option><option value="orion">Orion gateway</option></select></label><label>General SMS provider<select value={settings.generalSmsProvider||'orion'} onChange={e=>setSettings({...settings,generalSmsProvider:e.target.value})}><option value="orion">Orion gateway</option><option value="twilio">Twilio</option></select></label><label className="checkLine"><input type="checkbox" checked={Boolean(settings.smsFallbackEnabled)} onChange={e=>setSettings({...settings,smsFallbackEnabled:e.target.checked})}/>Use fallback provider if primary fails</label></div><div className="formGrid2"><label>Low Twilio balance warning (£)<input type="number" min="0" step="1" value={settings.twilioLowBalanceThreshold??20} onChange={e=>setSettings({...settings,twilioLowBalanceThreshold:e.target.value})}/></label><label>Low balance email<input type="email" value={settings.twilioLowBalanceEmail||''} onChange={e=>setSettings({...settings,twilioLowBalanceEmail:e.target.value})}/></label><label className="checkLine"><input type="checkbox" checked={Boolean(settings.twilioLowBalanceAlertsEnabled)} onChange={e=>setSettings({...settings,twilioLowBalanceAlertsEnabled:e.target.checked})}/>Enable low-balance alerts</label></div><div className="formGrid2"><label>Orion endpoint URL<input value={settings.smsEndpoint||''} onChange={e=>setSettings({...settings,smsEndpoint:e.target.value})} placeholder="https://..."/></label><label>HTTP method<select value={settings.smsMethod||'POST'} onChange={e=>setSettings({...settings,smsMethod:e.target.value})}><option>POST</option><option>PUT</option><option>PATCH</option></select></label><label>Authentication header<input value={settings.smsAuthHeader||''} onChange={e=>setSettings({...settings,smsAuthHeader:e.target.value})} placeholder="Authorization"/></label><label>Authentication/API value<input type="password" value={settings.smsAuthValue||''} onChange={e=>setSettings({...settings,smsAuthValue:e.target.value})} placeholder={settings.smsAuthConfigured?'Configured – enter only to replace':'Enter secret value'}/></label></div><label>Orion JSON body template<textarea rows="4" value={settings.smsBodyTemplate||''} onChange={e=>setSettings({...settings,smsBodyTemplate:e.target.value})}/><small>Use {'{mobile}'} and {'{message}'}. The final result must be valid JSON.</small></label><div className="testStrip"><input value={testSms.to} onChange={e=>setTestSms({...testSms,to:e.target.value})} placeholder="Test mobile number"/><input value={testSms.message} onChange={e=>setTestSms({...testSms,message:e.target.value})}/><button className="secondary" onClick={testSmsNow}>Send test SMS</button></div></section>
      <section className="panel settingsCardV2"><div className="settingsHead"><Mail/><div><h3>Email / SMTP</h3><p>SMTP is used for outstanding-payment messages and daily early-payout summaries. Resend remains the fallback if SMTP is blank.</p></div></div><div className="formGrid2"><label>SMTP host<input value={settings.smtpHost||''} onChange={e=>setSettings({...settings,smtpHost:e.target.value})}/></label><label>SMTP port<input type="number" value={settings.smtpPort||587} onChange={e=>setSettings({...settings,smtpPort:e.target.value})}/></label><label>SMTP username<input value={settings.smtpUser||''} onChange={e=>setSettings({...settings,smtpUser:e.target.value})}/></label><label>SMTP password<input type="password" value={settings.smtpPassword||''} onChange={e=>setSettings({...settings,smtpPassword:e.target.value})} placeholder={settings.smtpPasswordConfigured?'Configured – enter only to replace':'Enter password'}/></label><label>From name<input value={settings.smtpFromName||''} onChange={e=>setSettings({...settings,smtpFromName:e.target.value})}/></label><label>From email<input type="email" value={settings.smtpFromEmail||''} onChange={e=>setSettings({...settings,smtpFromEmail:e.target.value})}/></label><label>Office notification email<input type="email" value={settings.officeNotificationEmail||''} onChange={e=>setSettings({...settings,officeNotificationEmail:e.target.value})}/></label><label className="checkLine"><input type="checkbox" checked={Boolean(settings.smtpSecure)} onChange={e=>setSettings({...settings,smtpSecure:e.target.checked})}/>Use secure SMTP (usually port 465)</label></div><div className="testStrip"><input type="email" value={testEmail} onChange={e=>setTestEmail(e.target.value)} placeholder={settings.officeNotificationEmail||'Test email address'}/><button className="secondary" onClick={testEmailNow}>Send test email</button></div></section>
      <section className="panel settingsCardV2"><div className="settingsHead"><Mail/><div><h3>Outstanding-payment messages</h3><p>Edit the exact wording drivers receive after the Monday run.</p></div></div><label>Email subject<input value={settings.outstandingEmailSubject||''} onChange={e=>setSettings({...settings,outstandingEmailSubject:e.target.value})}/></label><label>Email message<textarea rows="7" value={settings.outstandingEmailBody||''} onChange={e=>setSettings({...settings,outstandingEmailBody:e.target.value})}/></label><label>SMS message<textarea rows="5" value={settings.outstandingSmsTemplate||''} onChange={e=>setSettings({...settings,outstandingSmsTemplate:e.target.value})}/></label><small>Available variables: {'{driver}'}, {'{callsign}'}, {'{amount}'}, {'{dueDate}'}, {'{dueTime}'}, {'{paymentLink}'}</small></section>
-     <section className="panel settingsCardV2 dangerZone"><div className="settingsHead"><AlertTriangle/><div><h3>Pre-launch data reset</h3><p>Use once before the live launch. FleetPay creates a timestamped SQLite backup first, then clears operational test data while keeping office users, MFA, settings and integrations.</p></div></div><div className="launchResetInfo"><b>Cleared:</b><span>payments, payout runs, settlement runs, fee records, notifications, communication history, adjustments and demo data.</span></div><label className="checkLine"><input type="checkbox" checked={resetDrivers} onChange={e=>setResetDrivers(e.target.checked)}/>Also clear driver app registrations and push subscriptions</label><label>Confirmation phrase<input value={resetPhrase} onChange={e=>setResetPhrase(e.target.value)} placeholder="RESET FLEETPAY FOR LIVE LAUNCH"/></label><button className="dangerAction" disabled={resetPhrase!=='RESET FLEETPAY FOR LIVE LAUNCH'} onClick={launchReset}><AlertTriangle/>Create backup & reset operational data</button></section>
+     <section className="panel settingsCardV2 dangerZone"><div className="settingsHead"><AlertTriangle/><div><h3>Pre-launch data reset</h3><p>Use once before the live launch. FleetPay creates a timestamped SQLite backup first, then clears operational test data while keeping office users, MFA, settings and integrations.</p></div></div><div className="launchResetInfo"><b>Cleared:</b><span>payments, payment plans, payout runs, settlement runs, fee records, notifications, communication history, adjustments and demo data.</span></div><label className="checkLine"><input type="checkbox" checked={resetDrivers} onChange={e=>setResetDrivers(e.target.checked)}/>Also clear driver app registrations and push subscriptions</label><label>Confirmation phrase<input value={resetPhrase} onChange={e=>setResetPhrase(e.target.value)} placeholder="RESET FLEETPAY FOR LIVE LAUNCH"/></label><button className="dangerAction" disabled={resetPhrase!=='RESET FLEETPAY FOR LIVE LAUNCH'} onClick={launchReset}><AlertTriangle/>Create backup & reset operational data</button></section>
      <section className="panel settingsCardV2"><div className="settingsHead"><Database/><div><h3>Integration status</h3><p>Secrets from environment variables remain server-side.</p></div></div>{integrations&&<div className="integrationGrid"><div><b>Stripe</b><span>{integrations.stripe.configured?(integrations.stripe.testMode?'Test mode':'Live mode'):'Not configured'}</span><Pill tone={integrations.stripe.configured?'good':'warn'}>{integrations.stripe.configured?'Ready':'Setup'}</Pill></div><div><b>Wise</b><span>{integrations.wise.configured?integrations.wise.environment:'Not configured'}</span><Pill tone={integrations.wise.configured?'good':'warn'}>{integrations.wise.configured?'Ready':'Setup'}</Pill></div><div><b>Autocab writes</b><span>{integrations.autocab.adjustmentsEnabled?'Enabled':'Safe mode'}</span><Pill tone={integrations.autocab.adjustmentsEnabled?'good':'warn'}>{integrations.autocab.adjustmentsEnabled?'Enabled':'Disabled'}</Pill></div><div><b>Twilio SMS</b><span>{twilioBalance?.configured?`${twilioBalance.currency==='GBP'?'£':''}${Number(twilioBalance.balance||0).toFixed(2)} ${twilioBalance.currency||''}`:'Not configured'}</span><Pill tone={twilioBalance?.configured?'good':'warn'}>{twilioBalance?.configured?'Ready':'Setup'}</Pill></div></div>}</section>
     </div></>}
    </div>
   </main>
-  {selectedTx&&<div className="drawerBack transactionDetailLayer" onClick={()=>setSelectedTx(null)}><aside className="drawer txDrawer" onClick={e=>e.stopPropagation()}><button className="drawerClose" onClick={()=>setSelectedTx(null)}><X/></button><div className="txDrawerHead">
+
+   {planCreateSource&&
+    <div
+     className="drawerBack paymentPlanModalLayer"
+     onClick={()=>!planCreateBusy&&setPlanCreateSource(null)}
+    >
+     <div
+      className="paymentPlanModal"
+      onClick={e=>e.stopPropagation()}
+     >
+      <button
+       className="drawerClose"
+       disabled={planCreateBusy}
+       onClick={()=>setPlanCreateSource(null)}
+      >
+       <X/>
+      </button>
+
+      <div className="paymentPlanModalHead">
+       <span>NEW PAYMENT PLAN</span>
+       <h2>Agree an instalment schedule</h2>
+       <p>The original balance stays unchanged until this draft is explicitly activated.</p>
+      </div>
+
+      <div className="paymentPlanDriver">
+       <span className="callsign">{planCreateSource.callsign}</span>
+       <div>
+        <b>{planCreateSource.driverName}</b>
+        <span>Outstanding balance</span>
+       </div>
+       <strong>{money(planCreateSource.amount)}</strong>
+      </div>
+
+      <form onSubmit={createPaymentPlan} className="paymentPlanForm">
+
+       <div className="formGrid2">
+        <label>
+         Frequency
+         <select
+          value={planCreate.frequency}
+          onChange={e=>setPlanCreate({
+           ...planCreate,
+           frequency:e.target.value
+          })}
+         >
+          <option value="weekly">Weekly</option>
+          <option value="fortnightly">Fortnightly</option>
+          <option value="monthly">Monthly</option>
+         </select>
+        </label>
+
+        <label>
+         Instalment amount
+         <div className="moneyField">
+          <span>£</span>
+          <input
+           type="number"
+           step="0.01"
+           min="0.01"
+           max={planCreateSource.amount}
+           required
+           value={planCreate.instalmentAmount}
+           onChange={e=>setPlanCreate({
+            ...planCreate,
+            instalmentAmount:e.target.value
+           })}
+          />
+         </div>
+        </label>
+
+        <label>
+         First payment date
+         <input
+          type="date"
+          required
+          value={planCreate.startDate}
+          onChange={e=>setPlanCreate({
+           ...planCreate,
+           startDate:e.target.value
+          })}
+         />
+        </label>
+       </div>
+
+       {Number(planCreate.instalmentAmount)>0&&
+        <div className="paymentPlanPreview">
+         <div>
+          <span>Outstanding</span>
+          <b>{money(planCreateSource.amount)}</b>
+         </div>
+
+         <div>
+          <span>Regular payment</span>
+          <b>{money(Number(planCreate.instalmentAmount||0))}</b>
+         </div>
+
+         <div>
+          <span>Approx. instalments</span>
+          <b>{
+           Math.ceil(
+            Number(planCreateSource.amount||0)/
+            Number(planCreate.instalmentAmount||1)
+           )
+          }</b>
+         </div>
+        </div>
+       }
+
+       <label>
+        Office notes
+        <textarea
+         rows="3"
+         value={planCreate.notes}
+         onChange={e=>setPlanCreate({
+          ...planCreate,
+          notes:e.target.value
+         })}
+         placeholder="Reason for plan, agreed arrangement or other internal note"
+        />
+       </label>
+
+       <div className="operatorWarning blue">
+        <Info/>
+        <div>
+         <b>This creates a draft only</b>
+         <span>No payment request, Stripe transaction or Autocab adjustment occurs until Finance activates the plan.</span>
+        </div>
+       </div>
+
+       <div className="paymentPlanModalActions">
+        <button
+         type="button"
+         className="secondary"
+         disabled={planCreateBusy}
+         onClick={()=>setPlanCreateSource(null)}
+        >
+         Cancel
+        </button>
+
+        <button
+         className="primary"
+         disabled={planCreateBusy}
+        >
+         {planCreateBusy?'Creating…':'Create draft plan'}
+        </button>
+       </div>
+      </form>
+     </div>
+    </div>
+   }
+
+   {selectedPaymentPlan&&
+    <div
+     className="drawerBack transactionDetailLayer"
+     onClick={()=>setSelectedPaymentPlan(null)}
+    >
+     <aside
+      className="drawer paymentPlanDrawer"
+      onClick={e=>e.stopPropagation()}
+     >
+      <button
+       className="drawerClose"
+       onClick={()=>setSelectedPaymentPlan(null)}
+      >
+       <X/>
+      </button>
+
+      <div className="paymentPlanDrawerHead">
+       <span>PAYMENT PLAN</span>
+       <h2>Callsign {selectedPaymentPlan.callsign}</h2>
+       <p>{selectedPaymentPlan.driverName}</p>
+      </div>
+
+      <div className="paymentPlanBalanceGrid">
+       <div>
+        <span>Original</span>
+        <b>{money(selectedPaymentPlan.originalAmount)}</b>
+       </div>
+       <div>
+        <span>Paid</span>
+        <b className="pos">{money(selectedPaymentPlan.paidAmount)}</b>
+       </div>
+       <div>
+        <span>Remaining</span>
+        <b>{money(selectedPaymentPlan.remainingAmount)}</b>
+       </div>
+      </div>
+
+      <div className="paymentPlanDrawerMeta">
+       <div><span>Status</span><Pill tone={selectedPaymentPlan.status==='completed'?'good':['cancelled','defaulted'].includes(selectedPaymentPlan.status)?'bad':'warn'}>{String(selectedPaymentPlan.status||'').replaceAll('_',' ')}</Pill></div>
+       <div><span>Frequency</span><b>{selectedPaymentPlan.frequency}</b></div>
+       <div><span>Instalment</span><b>{money(selectedPaymentPlan.instalmentAmount)}</b></div>
+       <div><span>Start date</span><b>{selectedPaymentPlan.startDate}</b></div>
+       <div><span>Next due</span><b>{selectedPaymentPlan.nextDueAt||'—'}</b></div>
+      </div>
+
+      {selectedPaymentPlan.notes&&
+       <div className="paymentPlanNotes">
+        <span>Office notes</span>
+        <p>{selectedPaymentPlan.notes}</p>
+       </div>
+      }
+
+      <div className="paymentPlanSchedule">
+       <div className="panelHead">
+        <div>
+         <h3>Instalment schedule</h3>
+         <p>Every scheduled and completed payment.</p>
+        </div>
+       </div>
+
+       {selectedPaymentPlan.instalments?.map(x=>
+        <div className="paymentPlanScheduleRow" key={x.id}>
+         <div className="paymentPlanInstalmentNo">
+          {x.instalmentNumber}
+         </div>
+
+         <div>
+          <b>{money(x.amount)}</b>
+          <span>Due {x.dueAt}</span>
+         </div>
+
+         <Pill tone={
+          x.status==='paid'
+           ?'good'
+           :x.status==='overdue'
+            ?'bad'
+            :'warn'
+         }>
+          {x.status}
+         </Pill>
+        </div>
+       )}
+      </div>
+
+      {canMoney&&
+       <div className="paymentPlanLifecycleActions">
+
+        {selectedPaymentPlan.status==='draft'&&
+         <button
+          className="primary full"
+          disabled={planActivateBusy||planActionBusy}
+          onClick={()=>activatePaymentPlan(selectedPaymentPlan)}
+         >
+          <CheckCircle2/>
+          {planActivateBusy?'Activating…':'Activate payment plan'}
+         </button>
+        }
+
+        {['active','defaulted'].includes(selectedPaymentPlan.status)&&
+         <button
+          className="secondary full"
+          disabled={planActionBusy}
+          onClick={()=>pausePaymentPlan(selectedPaymentPlan)}
+         >
+          <Clock3/>
+          {planActionBusy?'Working…':'Pause plan'}
+         </button>
+        }
+
+        {selectedPaymentPlan.status==='paused'&&
+         <button
+          className="primary full"
+          disabled={planActionBusy}
+          onClick={()=>resumePaymentPlan(selectedPaymentPlan)}
+         >
+          <CheckCircle2/>
+          {planActionBusy?'Working…':'Resume plan'}
+         </button>
+        }
+
+        {['active','paused','defaulted'].includes(selectedPaymentPlan.status)&&
+         <button
+          className="secondary full paymentPlanSettleButton"
+          disabled={planActionBusy}
+          onClick={()=>settlePaymentPlanEarly(selectedPaymentPlan)}
+         >
+          <CreditCard/>
+          {planActionBusy
+           ?'Working…'
+           :`Settle early · ${money(selectedPaymentPlan.remainingAmount)}`}
+         </button>
+        }
+
+        {['draft','active','paused','defaulted'].includes(selectedPaymentPlan.status)&&
+         <button
+          className="paymentPlanCancelButton full"
+          disabled={planActionBusy||planActivateBusy}
+          onClick={()=>cancelPaymentPlan(selectedPaymentPlan)}
+         >
+          <X/>
+          Cancel payment plan
+         </button>
+        }
+
+       </div>
+      }
+     </aside>
+    </div>
+   }
+
+{selectedTx&&<div className="drawerBack transactionDetailLayer" onClick={()=>setSelectedTx(null)}><aside className="drawer txDrawer" onClick={e=>e.stopPropagation()}><button className="drawerClose" onClick={()=>setSelectedTx(null)}><X/></button><div className="txDrawerHead">
    <div className={`txIcon large ${selectedTx.direction}`}><CreditCard/></div>
    <div>
     <span>{selectedTx.typeLabel}</span>
@@ -3358,7 +4505,25 @@ function DriverApp(){
  const balanceHint=balance>0?'Available for FleetPay payout':balance<0?'Amount currently owed to FleetPay':'Nothing to pay or receive right now';
  const bankAccount=me.bankAccount||{configured:false,status:'missing'};
  const paymentRequests=me.paymentRequests||[];
- const totalDue=paymentRequests.reduce((sum,x)=>sum+Number(x.amount||0),0);
+ const standardPaymentRequests=paymentRequests.filter(
+  x=>x.requestType!=='payment_plan_instalment'
+ );
+ const planPaymentRequests=paymentRequests.filter(
+  x=>x.requestType==='payment_plan_instalment'
+ );
+ const paymentPlans=me.paymentPlans||[];
+ const activePaymentPlan=paymentPlans.find(
+  x=>['active','paused','defaulted'].includes(x.status)
+ )||null;
+ const currentPlanPayment=activePaymentPlan
+  ?planPaymentRequests.find(
+    x=>x.paymentPlanId===activePaymentPlan.id
+   )||null
+  :null;
+ const totalDue=standardPaymentRequests.reduce(
+  (sum,x)=>sum+Number(x.amount||0),
+  0
+ );
  const customerPayments=me.customerPayments||[];
  const paidCustomerPayments=customerPayments.filter(x=>x.status==='paid');
  const openCustomerPayments=customerPayments.filter(x=>x.status==='open');
@@ -3371,8 +4536,11 @@ function DriverApp(){
  const hour=new Date().getHours();
  const greeting=hour<12?'Morning':hour<18?'Afternoon':'Evening';
  const isMonday=new Date().getDay()===1;
- const mondayPriority=isMonday&&paymentRequests.length>0;
- const firstDue=paymentRequests.map(x=>x.dueAt).filter(Boolean).sort()[0]||null;
+ const mondayPriority=isMonday&&standardPaymentRequests.length>0;
+ const firstDue=standardPaymentRequests
+  .map(x=>x.dueAt)
+  .filter(Boolean)
+  .sort()[0]||null;
  const dueWhen=firstDue?new Intl.DateTimeFormat('en-GB',{weekday:'long',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}).format(new Date(firstDue)):'Tuesday 17:00';
 
  const navItems=[
@@ -3382,27 +4550,295 @@ function DriverApp(){
   ['account',UserCheck,'Account']
  ];
 
- const PaymentDueCard=({hero=false})=>paymentRequests.length>0?<section className={`driverCard paymentDueCard ${hero?'mondayDueHero':''}`}><div className="paymentDueHeader"><div><span className="eyebrow">{hero?'MONDAY SETTLEMENT':'PAYMENT DUE'}</span><h2>{money(totalDue)}</h2></div><Pill tone="warn">Outstanding</Pill></div>{hero?<><h3>Weekly payment requires attention</h3><p>Your Monday settlement is ready to pay. Please complete payment by <b>{dueWhen}</b> to avoid suspension.</p><div className="dueHeroMeta"><div><span>Amount due</span><b>{money(totalDue)}</b></div><div><span>Deadline</span><b>{dueWhen}</b></div></div></>:<p>Securely settle your FleetPay balance.</p>}{paymentRequests.map((r,i)=><div className="dueRequestRow" key={r.id}><div><b>{money(r.amount)}</b><span>{r.dueAt?`Due ${new Intl.DateTimeFormat('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}).format(new Date(r.dueAt))}`:dt(r.createdAt)}{paymentRequests.length>1?` · Request ${i+1}`:''}</span></div><button className={`mini ${hero?'heroPayButton':'goodBtn'}`} disabled={paymentBusy||!me.stripeConfigured} onClick={()=>payRequest(r)}>{paymentBusy?'Opening…':'Pay now'}</button></div>)}{hero&&<button className="dueDetailsButton" type="button" onClick={()=>changeTab('pay')}>View payment details <ChevronRight/></button>}</section>:null;
+ const PaymentDueCard=({hero=false})=>standardPaymentRequests.length>0?<section className={`driverCard paymentDueCard ${hero?'mondayDueHero':''}`}><div className="paymentDueHeader"><div><span className="eyebrow">{hero?'MONDAY SETTLEMENT':'PAYMENT DUE'}</span><h2>{money(totalDue)}</h2></div><Pill tone="warn">Outstanding</Pill></div>{hero?<><h3>Weekly payment requires attention</h3><p>Your Monday settlement is ready to pay. Please complete payment by <b>{dueWhen}</b> to avoid suspension.</p><div className="dueHeroMeta"><div><span>Amount due</span><b>{money(totalDue)}</b></div><div><span>Deadline</span><b>{dueWhen}</b></div></div></>:<p>Securely settle your FleetPay balance.</p>}{standardPaymentRequests.map((r,i)=><div className="dueRequestRow" key={r.id}><div><b>{money(r.amount)}</b><span>{r.dueAt?`Due ${new Intl.DateTimeFormat('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}).format(new Date(r.dueAt))}`:dt(r.createdAt)}{standardPaymentRequests.length>1?` · Request ${i+1}`:''}</span></div><button className={`mini ${hero?'heroPayButton':'goodBtn'}`} disabled={paymentBusy||!me.stripeConfigured} onClick={()=>payRequest(r)}>{paymentBusy?'Opening…':'Pay now'}</button></div>)}{hero&&<button className="dueDetailsButton" type="button" onClick={()=>changeTab('pay')}>View payment details <ChevronRight/></button>}</section>:null;
+
+
+ const PaymentPlanCard=({compact=false}={})=>{
+  if(!activePaymentPlan)return null;
+
+  const plan=activePaymentPlan;
+  const total=Number(plan.planAmount||0);
+  const paid=Number(plan.paidAmount||0);
+  const remaining=Number(plan.remainingAmount||0);
+
+  const progress=total>0
+   ?Math.min(100,Math.round((paid/total)*100))
+   :0;
+
+  const paidCount=
+   plan.instalments?.filter(x=>x.status==='paid').length||0;
+
+  const nextInstalment=
+   plan.instalments?.find(
+    x=>['due','overdue','scheduled'].includes(x.status)
+   )||null;
+
+  const nextAmount=currentPlanPayment
+   ?Number(currentPlanPayment.amount||0)
+   :Number(nextInstalment?.amount||0);
+
+  const nextDue=
+   currentPlanPayment?.dueAt||
+   plan.nextDueAt||
+   nextInstalment?.dueAt||
+   null;
+
+  const planStatusLabel={
+   active:'Active',
+   paused:'Paused',
+   defaulted:'Needs attention',
+   completed:'Completed'
+  }[plan.status]||plan.status;
+
+  if(compact){
+   return <section className="driverCard driverPlanCompact">
+    <div className="driverPlanCompactTop">
+     <div>
+      <span className="eyebrow">PAYMENT PLAN</span>
+      <h2>{money(remaining)} remaining</h2>
+     </div>
+
+     <Pill tone={plan.status==='defaulted'?'bad':'warn'}>
+      {planStatusLabel}
+     </Pill>
+    </div>
+
+    <div className="driverPlanProgress">
+     <span style={{width:`${progress}%`}}/>
+    </div>
+
+    <div className="driverPlanCompactMeta">
+     <span>{money(paid)} paid</span>
+     <span>{paidCount}/{plan.instalments?.length||0} instalments</span>
+    </div>
+
+    {currentPlanPayment&&plan.status!=='paused'&&
+     <div className="driverPlanNextCompact">
+      <div>
+       <span>Next payment</span>
+       <b>{money(nextAmount)}</b>
+      </div>
+
+      <button
+       className="mini goodBtn"
+       disabled={paymentBusy||!me.stripeConfigured}
+       onClick={()=>payRequest(currentPlanPayment)}
+      >
+       {paymentBusy?'Opening…':'Pay instalment'}
+      </button>
+     </div>
+    }
+
+    <button
+     type="button"
+     className="dueDetailsButton"
+     onClick={()=>changeTab('pay')}
+    >
+     View payment plan <ChevronRight/>
+    </button>
+   </section>;
+  }
+
+  return <section className="driverCard driverPaymentPlanCard">
+
+   <div className="driverPlanHeader">
+    <div>
+     <span className="eyebrow">PAYMENT PLAN</span>
+     <h2>Your repayment plan</h2>
+    </div>
+
+    <Pill tone={
+     plan.status==='defaulted'
+      ?'bad'
+      :plan.status==='completed'
+       ?'good'
+       :'warn'
+    }>
+     {planStatusLabel}
+    </Pill>
+   </div>
+
+   <p className="driverPlanIntro">
+    Your original FleetPay balance is being repaid by agreed instalments.
+   </p>
+
+   <div className="driverPlanMoneyGrid">
+    <div>
+     <span>Original</span>
+     <b>{money(plan.originalAmount)}</b>
+    </div>
+
+    <div>
+     <span>Paid</span>
+     <b className="pos">{money(paid)}</b>
+    </div>
+
+    <div>
+     <span>Remaining</span>
+     <b>{money(remaining)}</b>
+    </div>
+   </div>
+
+   <div className="driverPlanProgressBlock">
+    <div className="driverPlanProgressLabels">
+     <span>Plan progress</span>
+     <b>{progress}%</b>
+    </div>
+
+    <div className="driverPlanProgress large">
+     <span style={{width:`${progress}%`}}/>
+    </div>
+
+    <small>
+     {paidCount} of {plan.instalments?.length||0} instalments paid
+    </small>
+   </div>
+
+   {plan.status==='paused'&&
+    <div className="driverPlanNotice warning">
+     <Clock3/>
+     <div>
+      <b>Payment plan paused</b>
+      <span>Please contact the office if you need more information.</span>
+     </div>
+    </div>
+   }
+
+   {plan.status==='defaulted'&&
+    <div className="driverPlanNotice danger">
+     <AlertTriangle/>
+     <div>
+      <b>Payment plan needs attention</b>
+      <span>Please contact the office about your repayment arrangement.</span>
+     </div>
+    </div>
+   }
+
+   {currentPlanPayment&&plan.status!=='paused'&&
+    <div className="driverPlanNextPayment">
+     <div className="driverPlanNextTop">
+      <div>
+       <span>NEXT PAYMENT</span>
+       <strong>{money(nextAmount)}</strong>
+      </div>
+
+      <Pill tone="warn">Due</Pill>
+     </div>
+
+     <div className="driverPlanNextMeta">
+      <span>Due date</span>
+      <b>
+       {nextDue
+        ?new Intl.DateTimeFormat(
+          'en-GB',
+          {
+           weekday:'short',
+           day:'numeric',
+           month:'short',
+           year:'numeric'
+          }
+         ).format(new Date(nextDue))
+        :'—'}
+      </b>
+     </div>
+
+     <button
+      className="primary full actionButton"
+      disabled={paymentBusy||!me.stripeConfigured}
+      onClick={()=>payRequest(currentPlanPayment)}
+     >
+      <CreditCard/>
+      {paymentBusy
+       ?'Opening secure payment…'
+       :`Pay ${money(nextAmount)} instalment`}
+     </button>
+    </div>
+   }
+
+   {!currentPlanPayment&&plan.status==='active'&&remaining>0&&
+    <div className="driverPlanNotice">
+     <CheckCircle2/>
+     <div>
+      <b>No instalment currently due</b>
+      <span>Your next payment will appear here when it becomes payable.</span>
+     </div>
+    </div>
+   }
+
+   <div className="driverPlanSchedule">
+    <div className="sectionHeader">
+     <div>
+      <span className="eyebrow">SCHEDULE</span>
+      <h2>Instalments</h2>
+     </div>
+    </div>
+
+    {plan.instalments?.map(x=>
+     <div
+      className={`driverPlanScheduleRow ${x.status}`}
+      key={x.id}
+     >
+      <div className="driverPlanScheduleNo">
+       {x.status==='paid'
+        ?<CheckCircle2/>
+        :x.instalmentNumber}
+      </div>
+
+      <div className="driverPlanScheduleMain">
+       <b>{money(x.amount)}</b>
+       <span>
+        {x.dueAt
+         ?new Intl.DateTimeFormat(
+          'en-GB',
+          {
+           day:'numeric',
+           month:'short',
+           year:'numeric'
+          }
+         ).format(new Date(x.dueAt))
+         :'—'}
+       </span>
+      </div>
+
+      <Pill tone={
+       x.status==='paid'
+        ?'good'
+        :x.status==='overdue'
+         ?'bad'
+         :'warn'
+      }>
+       {x.status==='scheduled'
+        ?'Upcoming'
+        :x.status}
+      </Pill>
+     </div>
+    )}
+   </div>
+
+  </section>;
+ };
 
  const CustomerPaymentForm=()=> <section className="driverCard modernPaymentCard"><div className="cardTop"><div><span className="eyebrow">TAKE PAYMENT</span><h2>Customer payment</h2></div><div className="iconBubble"><CreditCard/></div></div><p className="compactCopy">Enter the fare. FleetPay adds the service fee automatically.</p><div className="formStack"><label>Fare<div className="moneyInput modernMoneyInput"><span>£</span><input type="number" inputMode="decimal" step="0.01" min="0.01" placeholder="0.00" value={customerFare} onChange={e=>{setCustomerFare(e.target.value);setCustomerPayment(null)}}/></div></label><label>Booking ID <small>optional</small><input className="modernInput" type="text" placeholder="e.g. 12345678" value={customerBooking} onChange={e=>{setCustomerBooking(e.target.value);setCustomerPayment(null)}}/></label></div>{fareValue>0&&<div className="paymentBreakdown"><div><span>Fare</span><b>{money(fareValue)}</b></div><div><span>Service fee</span><b>{money(feePreview)}</b></div><div className="paymentTotal"><span>Customer pays</span><strong>{money(customerTotal)}</strong></div></div>}{!customerPayment&&<button className="primary full actionButton" disabled={customerPaymentBusy||!me.stripeConfigured||!(fareValue>0)} onClick={createCustomerPayment}>{customerPaymentBusy?'Creating…':'Create payment'}</button>}{customerPayment&&<div className="activePaymentSheet"><div className="activePaymentTop"><div><span>PAYMENT READY</span><strong>{money(customerPayment.totalAmount)}</strong>{customerPayment.bookingId&&<small>Booking {customerPayment.bookingId}</small>}</div><Pill tone="warn">Awaiting</Pill></div><div className="qrPanel"><QRCodeSVG value={customerPayment.paymentUrl} size={210} level="M" includeMargin/><b>Scan to pay</b><span>Secure Stripe checkout</span></div><div className="paymentActions"><button className="primary" type="button" onClick={()=>window.open(customerPayment.paymentUrl,'_blank')}>Open payment link</button><button className="outline" type="button" onClick={()=>sharePayment(customerPayment)}>Share link</button></div><button className="textBtn paymentCancel" type="button" onClick={()=>setCustomerPayment(null)}>Hide payment</button></div>}{!me.stripeConfigured&&<small className="paymentUnavailable">Customer card payments are not configured.</small>}</section>;
 
  const EarlyPayoutCard=()=> <section className="driverCard"><div className="cardTop"><div><span className="eyebrow">EARLY PAYOUT</span><h2>Request payout</h2></div><div className="iconBubble"><ArrowUpRight/></div></div><div className="availableRow"><span>Available now</span><strong>{money(me.availableForEarlyPayout)}</strong></div>{!bankAccount.configured&&<div className="bankRequiredNotice"><Banknote/><div><b>Bank account required</b><span>Add your payout bank account before requesting money.</span></div><button type="button" className="mini" onClick={()=>changeTab('account')}>Add account</button></div>}{me.reservedForEarlyPayout>0&&<div className="reservedLine"><span>Already reserved</span><b>{money(me.reservedForEarlyPayout)}</b></div>}{me.earlyPayoutAllowed&&<div className={`cutoffNotice ${me.earlyPayoutTiming?.afterCutoff?'afterCutoff':''}`}><Clock3/><span>{me.earlyPayoutWindowMessage}</span></div>}{bankAccount.configured&&me.earlyPayoutAllowed&&me.availableForEarlyPayout>me.settings.earlyPayoutFee?<><div className="moneyInput modernMoneyInput"><span>£</span><input type="number" inputMode="decimal" step="0.01" placeholder="0.00" value={amt} onChange={e=>setAmt(e.target.value)}/></div>{amt&&Number(amt)>0&&<div className="compactPreview"><span>You receive</span><b>{money(Math.max(0,Number(amt)-me.settings.earlyPayoutFee))}</b><small>Includes {money(me.settings.earlyPayoutFee)} fee</small></div>}<button className="primary full actionButton" onClick={payout}>Request payout</button></>:!me.earlyPayoutAllowed?<div className="closed"><Clock3/><span>{me.earlyPayoutWindowMessage}</span></div>:null}</section>;
 
  const HomePage=()=> <div className="driverPageView driverHomeVNext">
-  {paymentRequests.length>0
-   ? PaymentDueCard({hero:true})
-   : <section className={`driverHeroBalance balanceState-${balanceState}`}>
+  {activePaymentPlan
+   ? PaymentPlanCard({compact:true})
+   : standardPaymentRequests.length>0
+    ? PaymentDueCard({hero:true})
+    : <section className={`driverHeroBalance balanceState-${balanceState}`}>
       <div className="balanceMeaning"><span className="balanceMeaningLabel">{balanceTitle}</span><strong>{balanceDisplay}</strong><p>{balanceHint}</p></div>
       <button className="balanceRefresh" type="button" onClick={()=>load(true)} aria-label="Refresh balance"><RefreshCw/></button>
       <div className="balanceStateStrip"><span>{balance>0?'Money due to you':balance<0?'Money you need to pay':'Account clear'}</span><b>{balance>0?`${money(me.availableForEarlyPayout)} available now`:balance<0?'Will carry forward unless requested':'Up to date'}</b></div>
       <div className="heroBalanceActions"><button type="button" onClick={()=>changeTab('pay')}><CreditCard/>Take payment</button>{balance>0&&<button type="button" onClick={()=>changeTab('pay')}><ArrowUpRight/>Early payout</button>}</div>
       <div className="heroBalanceFoot"><span>Updated {dt(d.syncedAt)}</span><span>Callsign {d.callsign}</span></div>
      </section>}
-  {paymentRequests.length===0&&!bankAccount.configured&&<section className="driverCard bankSetupPrompt"><div className="bankSetupIcon"><Banknote/></div><div><span className="eyebrow">PAYOUT SETUP</span><h3>Add your bank account</h3><p>FleetPay needs your bank details before we can send you a payout.</p></div><button type="button" className="primary" onClick={()=>changeTab('account')}>Set up</button></section>}
+  {paymentRequests.length===0&&!activePaymentPlan&&!bankAccount.configured&&<section className="driverCard bankSetupPrompt"><div className="bankSetupIcon"><Banknote/></div><div><span className="eyebrow">PAYOUT SETUP</span><h3>Add your bank account</h3><p>FleetPay needs your bank details before we can send you a payout.</p></div><button type="button" className="primary" onClick={()=>changeTab('account')}>Set up</button></section>}
   <div className="homeSectionTitle"><span>AT A GLANCE</span></div>
   <div className="glanceGrid">
    <button className="glanceCard payments" onClick={()=>changeTab('pay')}><CreditCard/><span>Take payment</span><b>QR or secure link</b><small>{openCustomerPayments.length?`${openCustomerPayments.length} link${openCustomerPayments.length===1?'':'s'} open`:'Ready when you are'}</small></button>
-   {paymentRequests.length===0&&<button className="glanceCard payout" onClick={()=>changeTab('pay')}><ArrowUpRight/><span>Early payout</span><b>{money(me.availableForEarlyPayout)}</b><small>{me.earlyPayoutAllowed?'Available now':'Check payout window'}</small></button>}
+   {paymentRequests.length===0&&!activePaymentPlan&&<button className="glanceCard payout" onClick={()=>changeTab('pay')}><ArrowUpRight/><span>Early payout</span><b>{money(me.availableForEarlyPayout)}</b><small>{me.earlyPayoutAllowed?'Available now':'Check payout window'}</small></button>}
    <button className="glanceCard activity" onClick={()=>changeTab('activity')}><Activity/><span>Activity</span><b>{paidCustomerPayments.length}</b><small>Customer payments received</small></button>
    <button className="glanceCard account" onClick={()=>changeTab('account')}><UserCheck/><span>Account</span><b>Callsign {d.callsign}</b><small>Profile, fees & alerts</small></button>
   </div>
@@ -3411,7 +4847,28 @@ function DriverApp(){
   {me.notifications?.length>0&&<section className="driverCard latestActivityCard"><div className="sectionHeader"><div><span className="eyebrow">UPDATES</span><h2>Notifications</h2></div></div>{me.notifications.slice(0,2).map(n=><div className="cleanNotice" key={n.id}><div className="historyIcon"><Bell/></div><div><b>{n.title}</b><span>{n.message}</span><small>{dt(n.createdAt)}</small></div></div>)}</section>}
  </div>;
 
- const PayPage=()=> <div className="driverPageView"><div className="pageTitle"><span>PAYMENTS</span><h1>Move money</h1><p>{paymentRequests.length>0?'Pay your outstanding FleetPay balance or take a passenger payment.':'Take passenger payments or request an early payout.'}</p></div>{CustomerPaymentForm()}{paymentRequests.length===0&&EarlyPayoutCard()}{PaymentDueCard({})}</div>;
+ const PayPage=()=> <div className="driverPageView">
+  <div className="pageTitle">
+   <span>PAYMENTS</span>
+   <h1>Move money</h1>
+   <p>{
+    activePaymentPlan
+     ?'View your payment plan, make the current instalment or take a passenger payment.'
+     :standardPaymentRequests.length>0
+      ?'Pay your outstanding FleetPay balance or take a passenger payment.'
+      :'Take passenger payments or request an early payout.'
+   }</p>
+  </div>
+
+  {PaymentPlanCard()}
+  {PaymentDueCard({})}
+  {CustomerPaymentForm()}
+
+  {standardPaymentRequests.length===0&&
+   !activePaymentPlan&&
+   EarlyPayoutCard()
+  }
+ </div>;
 
  const ActivityPage=()=> <div className="driverPageView"><div className="pageTitle"><span>ACTIVITY</span><h1>Your history</h1><p>Customer payments, FleetPay fees and payout requests.</p></div><section className="activitySummary"><div><span>Customer payments</span><b>{paidCustomerPayments.length}</b></div><div><span>Open links</span><b>{openCustomerPayments.length}</b></div></section><section className="driverCard activityCard"><div className="sectionHeader"><div><span className="eyebrow">CUSTOMER PAYMENTS</span><h2>Payment history</h2></div></div>{customerPayments.length===0?<div className="emptyState">No customer payments yet.</div>:customerPayments.map(x=><div className="cleanHistoryRow" key={x.id}><div className="historyIcon"><CreditCard/></div><div className="historyMain"><b>{money(x.totalAmount)}</b><span>{money(x.fareAmount)} fare{Number(x.feeAmount)>0?` + ${money(x.feeAmount)} fee`:''}</span><small>{x.bookingId?`Booking ${x.bookingId} · `:''}{dt(x.createdAt)}</small>{x.status==='open'&&x.paymentUrl&&<div className="inlineActions"><button onClick={()=>window.open(x.paymentUrl,'_blank')}>Open</button><button onClick={()=>sharePayment(x)}>Share</button></div>}</div><Pill tone={x.status==='paid'?'good':'warn'}>{x.status}</Pill></div>)}</section><section className="driverCard activityCard"><div className="sectionHeader"><div><span className="eyebrow">FLEETPAY</span><h2>Payments & fees</h2></div></div>{me.ledger?.length===0?<div className="emptyState">No account activity recorded yet.</div>:me.ledger?.slice(0,20).map(x=><div className="cleanHistoryRow" key={x.id}><div className="historyIcon"><WalletCards/></div><div className="historyMain"><b>{x.description}</b><span>{dt(x.createdAt)}{x.feeAmount>0?` · Fee ${money(x.feeAmount)}`:''}</span></div><div className={`historyAmount ${x.direction==='credit'?'pos':'neg'}`}><b>{x.direction==='credit'?'+':'-'}{money(x.amount)}</b><small>{x.status}</small></div></div>)}</section>{me.earlyPayoutRequests?.length>0&&<section className="driverCard activityCard"><div className="sectionHeader"><div><span className="eyebrow">PAYOUTS</span><h2>Request history</h2></div></div>{me.earlyPayoutRequests.slice(0,15).map(x=><div className="cleanHistoryRow" key={x.id}><div className="historyIcon"><ArrowUpRight/></div><div className="historyMain"><b>{money(x.netAmount)}</b><span>{dt(x.createdAt)}{x.declineReason?` · ${x.declineReason}`:''}</span></div><Pill tone={x.status==='approved'||x.status==='paid'?'good':x.status==='declined'?'warn':'neutral'}>{x.status}</Pill></div>)}</section>}</div>;
 
@@ -3425,7 +4882,7 @@ function DriverApp(){
 
  const AccountPage=()=> <div className="driverPageView"><div className="pageTitle"><span>ACCOUNT</span><h1>{d.fullName}</h1><p>Callsign {d.callsign}</p></div><section className="driverCard profileCard"><div className="profileHero"><div className="profileAvatar">{firstName[0]}{(d.surname||'')[0]||''}</div><div><b>{d.fullName}</b><span>Driver · Callsign {d.callsign}</span></div></div><div className="profileRows"><div><span>Email</span><b>{d.email||f.email||'Not available'}</b></div><div><span>Mobile</span><b>{d.mobile||'Not available'}</b></div><div><span>Last FleetPay sync</span><b>{dt(d.syncedAt)}</b></div></div></section>{BankAccountCard()}<section className="driverCard"><div className="sectionHeader"><div><span className="eyebrow">FEES</span><h2>Your FleetPay fees</h2></div></div><div className="feeRows"><div><span>Weekly app fee</span><b>{money(me.settings.weeklyAppFee)}</b></div><div><span>Early payout fee</span><b>{money(me.settings.earlyPayoutFee)}</b></div><div><span>Customer service fee</span><b>{feeType==='percentage'?`${feeValue}%`:money(feeValue)}</b></div></div></section>{pushAvailable&&<section className="driverCard"><div className="compactAction"><div className="compactActionIcon"><Smartphone/></div><div><b>Payment alerts</b><span>{pushReady?'Notifications are enabled.':'Get updates about payments and payouts.'}</span></div>{!pushReady&&<button className="mini" onClick={enablePush}>Enable</button>}{pushReady&&<Pill tone="good">On</Pill>}</div></section>}<section className="driverCard appearanceCard"><div className="sectionHeader"><div><span className="eyebrow">APPEARANCE</span><h2>Display</h2></div></div><div className="themeOptions"><button className={theme==='light'?'active':''} onClick={()=>setTheme('light')}><Sun/><span><b>Light</b><small>Bright and clean</small></span></button><button className={theme==='dark'?'active':''} onClick={()=>setTheme('dark')}><Moon/><span><b>Dark</b><small>Low-light friendly</small></span></button></div><div className="textSizeControl"><div className="textSizeHead"><div><b>Text size</b><span>Adjusts app text without changing the layout.</span></div><strong>{Math.round(textScale*100)}%</strong></div><div className="textSizeSliderRow"><span className="textSizeSmall">A</span><input aria-label="Text size" type="range" min="0.9" max="1.5" step="0.05" value={textScale} onChange={e=>setTextScale(Number(e.target.value))}/><span className="textSizeLarge">A</span></div><div className="textSizePresets" aria-label="Text size presets"><button type="button" className={textScale===0.9?'active':''} onClick={()=>setTextScale(0.9)}>Small</button><button type="button" className={textScale===1?'active':''} onClick={()=>setTextScale(1)}>Standard</button><button type="button" className={textScale===1.2?'active':''} onClick={()=>setTextScale(1.2)}>Large</button><button type="button" className={textScale===1.35?'active':''} onClick={()=>setTextScale(1.35)}>Extra Large</button><button type="button" className={textScale===1.5?'active':''} onClick={()=>setTextScale(1.5)}>Accessibility</button></div><button type="button" className="textSizeReset" onClick={()=>setTextScale(1)}>Reset to standard</button></div></section><button className="accountSignOut" onClick={logout}><LogOut/>Sign out</button><div className="driverFooter">FleetPay · Secure driver payments</div></div>;
 
- return <div className={`driverApp modernDriverApp driverVNext theme-${theme}`} style={{'--driver-text-scale':textScale}}><header className="driverHeader modernDriverHeader driverVNextHeader"><div className="driverBrandMark"><img src={fleetpayMark} alt=""/></div><div className="driverIdentity"><div className="driverAvatar">{firstName[0]}{(d.surname||'')[0]||''}</div><div><span>FLEETPAY · {d.callsign}</span><b>{driverTab==='home'?`${greeting}, ${firstName}`:driverTab==='activity'?'Activity':driverTab==='pay'?'Payments':'Account'}</b></div></div><div className="driverHeaderActions"><button className="headerRefresh" type="button" onClick={()=>load(true)} aria-label="Refresh"><RefreshCw/></button><button className="headerBell" type="button" onClick={()=>changeTab('activity')} aria-label="Notifications"><Bell/>{me.notifications?.length>0&&<i/>}</button></div></header><main className="modernDriverMain">{notice&&<div className="driverNotice floatingNotice"><CheckCircle2/><span>{notice}</span><button onClick={()=>setNotice('')}><X/></button></div>}{err&&<div className="inlineError driverGlobalError"><AlertTriangle/>{err}</div>}{driverTab==='home'&&HomePage()}{driverTab==='pay'&&PayPage()}{driverTab==='activity'&&ActivityPage()}{driverTab==='account'&&AccountPage()}</main><nav className="driverBottomNav" aria-label="Driver navigation">{navItems.map(([key,Icon,label])=><button key={key} className={driverTab===key?'active':''} onClick={()=>changeTab(key)}><Icon/><span>{label}</span>{key==='pay'&&openCustomerPayments.length>0&&<i>{openCustomerPayments.length}</i>}</button>)}</nav></div>;
+ return <div className={`driverApp modernDriverApp driverVNext theme-${theme}`} style={{'--driver-text-scale':textScale}}><header className="driverHeader modernDriverHeader driverVNextHeader"><div className="driverBrandMark"><img src={fleetpayMark} alt=""/></div><div className="driverIdentity"><div className="driverAvatar">{firstName[0]}{(d.surname||'')[0]||''}</div><div><span>FLEETPAY · {d.callsign}</span><b>{driverTab==='home'?`${greeting}, ${firstName}`:driverTab==='activity'?'Activity':driverTab==='pay'?'Payments':'Account'}</b></div></div><div className="driverHeaderActions"><button className="headerRefresh" type="button" onClick={()=>load(true)} aria-label="Refresh"><RefreshCw/></button><button className="headerBell" type="button" onClick={()=>changeTab('activity')} aria-label="Notifications"><Bell/>{me.notifications?.length>0&&<i/>}</button></div></header><main className="modernDriverMain">{notice&&<div className="driverNotice floatingNotice"><CheckCircle2/><span>{notice}</span><button onClick={()=>setNotice('')}><X/></button></div>}{err&&<div className="inlineError driverGlobalError"><AlertTriangle/>{err}</div>}{driverTab==='home'&&HomePage()}{driverTab==='pay'&&PayPage()}{driverTab==='activity'&&ActivityPage()}{driverTab==='account'&&AccountPage()}</main><nav className="driverBottomNav" aria-label="Driver navigation">{navItems.map(([key,Icon,label])=><button key={key} className={driverTab===key?'active':''} onClick={()=>changeTab(key)}><Icon/><span>{label}</span>{key==='pay'&&(openCustomerPayments.length+paymentRequests.length)>0&&<i>{openCustomerPayments.length+paymentRequests.length}</i>}</button>)}</nav></div>;
 }
 
 
