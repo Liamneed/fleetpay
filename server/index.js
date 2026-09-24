@@ -602,10 +602,13 @@ app.post('/api/stripe/webhook', express.raw({type:'application/json'}), async (r
         const total=
          Math.round(Number(item.total_amount||0)*100)/100;
 
+        const refundableAmount=
+         Math.round(Number(item.fare_amount||0)*100)/100;
+
         const refundStatus=
          pendingAmount>0
           ? 'pending'
-          : refundedAmount>=total
+          : refundedAmount>=refundableAmount
           ? 'full'
           : refundedAmount>0
           ? 'partial'
@@ -3645,6 +3648,9 @@ app.post(
 
    const decision=String(req.body.decision||'').trim();
    const total=Math.round(Number(row.total_amount||0)*100)/100;
+   const fare=Math.round(Number(row.fare_amount||0)*100)/100;
+   const fee=Math.round(Number(row.fee_amount||0)*100)/100;
+   const refundableAmount=fare;
 
    /*
     * Read Stripe first so Stripe remains the authority for how much
@@ -3725,7 +3731,7 @@ app.post(
    let targetRefund;
 
    if(decision==='full'){
-    targetRefund=total;
+    targetRefund=refundableAmount;
 
    }else if(decision==='partial'){
     targetRefund=
@@ -3734,10 +3740,12 @@ app.post(
     if(
      !Number.isFinite(targetRefund) ||
      targetRefund<=0 ||
-     targetRefund>total
+     targetRefund>refundableAmount
     ){
      return res.status(400).json({
-      error:`Enter a refund amount between £0.01 and £${total.toFixed(2)}.`
+      error:
+       `Enter a refund amount between £0.01 and £${refundableAmount.toFixed(2)}. `+
+       `The £${fee.toFixed(2)} FleetPay service fee is non-refundable.`
      });
     }
 
@@ -3819,7 +3827,7 @@ app.post(
    const refundStatus=
     verifiedPendingAmount>0
      ? 'pending'
-     : verifiedAmount>=total
+     : verifiedAmount>=refundableAmount
      ? 'full'
      : verifiedAmount>0
      ? 'partial'
@@ -3861,6 +3869,8 @@ app.post(
      refundedAmount:verifiedAmount,
      pendingRefundAmount:verifiedPendingAmount,
      totalAmount:total,
+     refundableAmount,
+     retainedFeeAmount:fee,
      stripeRefundId:stripeRefund?.id||null,
      stripeRefundStatus:stripeRefund?.status||null
     }

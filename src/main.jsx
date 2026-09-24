@@ -355,18 +355,25 @@ function AdminApp(){
   const decision=customerRefundReview.decision;
   const amount=Number(customerRefundReview.amount||0);
   const total=Number(payment.totalAmount||0);
+  const fare=Number(payment.fareAmount||0);
+  const fee=Number(payment.feeAmount||0);
 
   if(decision==='partial'){
-   if(!Number.isFinite(amount)||amount<=0||amount>total){
-    return alert(`Enter a refund amount between £0.01 and ${money(total)}.`);
+   if(!Number.isFinite(amount)||amount<=0||amount>fare){
+    return alert(
+     `Enter a refund amount between £0.01 and ${money(fare)}. `+
+     `The ${money(fee)} FleetPay service fee is non-refundable.`
+    );
    }
   }
 
   const wording=
    decision==='full'
-    ? `Refund the full customer payment of ${money(total)}?`
+    ? `Refund the full fare of ${money(fare)}? `+
+      `The ${money(fee)} FleetPay service fee will be retained.`
     : decision==='partial'
-    ? `Refund ${money(amount)} to the customer?`
+    ? `Refund ${money(amount)} to the customer? `+
+      `The ${money(fee)} FleetPay service fee will be retained.`
     : 'Continue without refunding the customer?';
 
   if(!confirm(wording))return;
@@ -1625,10 +1632,20 @@ function AdminApp(){
             <ShieldCheck/>
             <div>
              <b>
-              Full refund completed: {money(selectedCustomerPayment.refundedAmount)}
+              Full fare refund completed: {money(selectedCustomerPayment.refundedAmount)}
              </b>
              <span>
-              The full customer payment has been refunded successfully.
+              {Number(selectedCustomerPayment.refundedAmount||0)>
+               Number(selectedCustomerPayment.fareAmount||0)
+               ? `This historical refund included ${money(
+                  Math.max(
+                   0,
+                   Number(selectedCustomerPayment.refundedAmount||0)-
+                   Number(selectedCustomerPayment.fareAmount||0)
+                  )
+                 )} of the service fee.`
+               : `The ${money(selectedCustomerPayment.feeAmount||0)} FleetPay service fee has been retained.`
+              }
              </span>
             </div>
            </div>
@@ -1645,10 +1662,15 @@ function AdminApp(){
               {money(
                Math.max(
                 0,
-                Number(selectedCustomerPayment.totalAmount||0)-
-                Number(selectedCustomerPayment.refundedAmount||0)
+                Number(selectedCustomerPayment.fareAmount||0)-
+                Math.min(
+                 Number(selectedCustomerPayment.refundedAmount||0),
+                 Number(selectedCustomerPayment.fareAmount||0)
+                )
                )
-              )} remains from the original customer payment.
+              )} of the fare remains refundable. The {money(
+               selectedCustomerPayment.feeAmount||0
+              )} FleetPay service fee is retained.
              </span>
             </div>
            </div>
@@ -1678,8 +1700,12 @@ function AdminApp(){
                decision:'full'
               }))}
              >
-              <b>Full refund</b>
-              <span>{money(selectedCustomerPayment.totalAmount)}</span>
+              <b>Full fare refund</b>
+              <span>
+               {money(selectedCustomerPayment.fareAmount)}
+               {' · '}
+               {money(selectedCustomerPayment.feeAmount||0)} fee retained
+              </span>
              </button>
 
              <button
@@ -1722,7 +1748,7 @@ function AdminApp(){
                <input
                 type="number"
                 min="0.01"
-                max={Number(selectedCustomerPayment.totalAmount||0)}
+                max={Number(selectedCustomerPayment.fareAmount||0)}
                 step="0.01"
                 value={customerRefundReview.amount}
                 onChange={e=>setCustomerRefundReview(x=>({
@@ -1732,12 +1758,14 @@ function AdminApp(){
                 placeholder="0.00"
                />
               </div>
-              {selectedCustomerPayment.refundStatus==='partial'&&
-               <small>
-                Enter the new total refund amount, not an additional amount.
-                Already refunded: {money(selectedCustomerPayment.refundedAmount)}.
-               </small>
-              }
+              <small>
+               {selectedCustomerPayment.refundStatus==='partial'
+                ? `Enter the new total fare refund, not an additional amount. Already refunded: ${money(selectedCustomerPayment.refundedAmount)}. `
+                : ''
+               }
+               Maximum refundable fare: {money(selectedCustomerPayment.fareAmount)}.
+               {' '}FleetPay service fee retained: {money(selectedCustomerPayment.feeAmount||0)}.
+              </small>
              </label>
             }
 
@@ -1745,8 +1773,8 @@ function AdminApp(){
              Number(selectedCustomerPayment.refundedAmount||0)===0&&
              !selectedCustomerPayment.refundStatus&&
              <small>
-              No driver is assigned to this booking. A full refund is selected by default,
-              but you can choose another option before processing.
+              No driver is assigned to this booking. A full fare refund is selected by default.
+              The FleetPay service fee is retained, and you can choose another option before processing.
              </small>
             }
 
