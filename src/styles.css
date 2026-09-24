@@ -6605,3 +6605,25 @@ body {
 .officeStats .stat.clickable:hover{border-color:#b9c9e5;box-shadow:0 6px 18px rgba(18,28,45,.08);transform:translateY(-1px)}
 .officeStats .stat.clickable.active{border-color:#7da2df;box-shadow:0 0 0 2px rgba(49,103,213,.10),0 5px 16px rgba(18,28,45,.07)}
 .officeStats .stat.clickable:focus-visible{outline:3px solid rgba(49,103,213,.22);outline-offset:2px}
+
+.paymentPlanNotice{display:flex;gap:12px;align-items:flex-start;margin:14px 0;padding:14px 16px;border:1px solid #e5e9ef;border-radius:12px;background:#f8fafc}
+.paymentPlanNotice svg{width:18px;height:18px;flex:0 0 auto;margin-top:2px}
+.paymentPlanNotice div{display:flex;flex-direction:column;gap:3px}
+.paymentPlanNotice b{font-size:13px;color:#263447}
+.paymentPlanNotice span{font-size:12px;line-height:1.45;color:#6d7989}
+.paymentPlanNotice.danger{background:#fff7f6;border-color:#f0cbc7}
+.paymentPlanNotice.danger svg,.paymentPlanNotice.danger b{color:#b63a3a}
+.paymentPlanNotice.warning{background:#fffaf0;border-color:#ead9ad}
+.paymentPlanNotice.warning svg,.paymentPlanNotice.warning b{color:#8a6615}
+.paymentPlanNotice.neutral{background:#f7f8fa;border-color:#dde2e8}
+
+.paymentPlanActivity{margin-top:18px;padding-top:2px}
+.paymentPlanTimeline{display:flex;flex-direction:column;margin-top:6px}
+.paymentPlanTimelineRow{position:relative;display:flex;gap:12px;padding:0 0 16px 2px}
+.paymentPlanTimelineRow:not(:last-child):before{content:"";position:absolute;left:6px;top:13px;bottom:-2px;width:1px;background:#dfe5eb}
+.paymentPlanTimelineMark{position:relative;z-index:1;width:10px;height:10px;flex:0 0 10px;margin-top:5px;border-radius:50%;background:#64748b;box-shadow:0 0 0 3px #f3f6f8}
+.paymentPlanTimelineBody{min-width:0;flex:1}
+.paymentPlanTimelineHead{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.paymentPlanTimelineHead b{font-size:13px;line-height:1.4;color:#263447}
+.paymentPlanTimelineHead span{font-size:11px;white-space:nowrap;color:#8490a0}
+.paymentPlanTimelineBody small{display:block;margin-top:3px;font-size:11px;color:#8a95a4}

@@ -776,6 +776,24 @@ function AdminApp(){
  }
 
 
+ async function openPaymentPlanDetails(plan){
+  if(!plan?.id)return;
+
+  setSelectedPaymentPlan(plan);
+
+  try{
+   const j=await api(`/api/admin/payment-plans/${plan.id}`);
+
+   setSelectedPaymentPlan(current=>
+    String(current?.id)===String(plan.id)
+     ?j.plan
+     :current
+   );
+  }catch(e){
+   setErr(e.message);
+  }
+ }
+
  async function refreshSelectedPaymentPlan(planId){
   const j=await api(`/api/admin/payment-plans/${planId}`);
 
@@ -3404,7 +3422,7 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
                  );
 
                  if(plan){
-                  setSelectedPaymentPlan(plan);
+                  openPaymentPlanDetails(plan);
                   setView('paymentPlans');
                  }else{
                   go('paymentPlans');
@@ -3517,7 +3535,7 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
                className="mini"
                onClick={()=>{
                 if(plan){
-                 setSelectedPaymentPlan(plan);
+                 openPaymentPlanDetails(plan);
                  setView('paymentPlans');
                 }else{
                  go('paymentPlans');
@@ -3798,7 +3816,7 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
              <div className="compactActions">
               <button
                className="mini"
-               onClick={()=>setSelectedPaymentPlan(plan)}
+               onClick={()=>openPaymentPlanDetails(plan)}
               >
                {plan.status==='defaulted'?'Review':'View'}
               </button>
@@ -4246,9 +4264,54 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
        <div><span>Status</span><Pill tone={selectedPaymentPlan.status==='completed'?'good':['cancelled','defaulted'].includes(selectedPaymentPlan.status)?'bad':'warn'}>{String(selectedPaymentPlan.status||'').replaceAll('_',' ')}</Pill></div>
        <div><span>Frequency</span><b>{selectedPaymentPlan.frequency}</b></div>
        <div><span>Instalment</span><b>{money(selectedPaymentPlan.instalmentAmount)}</b></div>
-       <div><span>Start date</span><b>{selectedPaymentPlan.startDate}</b></div>
-       <div><span>Next due</span><b>{selectedPaymentPlan.nextDueAt||'—'}</b></div>
+       <div><span>Start date</span><b>{dateOnly(selectedPaymentPlan.startDate)}</b></div>
+       <div><span>Next due</span><b>{dateOnly(selectedPaymentPlan.nextDueAt)}</b></div>
       </div>
+
+      {selectedPaymentPlan.status==='defaulted'&&
+       <div className="paymentPlanNotice danger">
+        <AlertTriangle/>
+        <div>
+         <b>Payment plan needs attention</b>
+         <span>
+          {selectedPaymentPlan.defaultReason||'A scheduled instalment has been missed.'}
+          {selectedPaymentPlan.defaultedAt
+           ?` Defaulted ${dt(selectedPaymentPlan.defaultedAt)}.`
+           :''}
+         </span>
+        </div>
+       </div>
+      }
+
+      {selectedPaymentPlan.status==='paused'&&
+       <div className="paymentPlanNotice warning">
+        <Clock3/>
+        <div>
+         <b>Payment plan paused</b>
+         <span>
+          {selectedPaymentPlan.pauseReason||'This payment plan has been paused.'}
+          {selectedPaymentPlan.pausedAt
+           ?` Paused ${dt(selectedPaymentPlan.pausedAt)}.`
+           :''}
+         </span>
+        </div>
+       </div>
+      }
+
+      {selectedPaymentPlan.status==='cancelled'&&
+       <div className="paymentPlanNotice neutral">
+        <X/>
+        <div>
+         <b>Payment plan cancelled</b>
+         <span>
+          {selectedPaymentPlan.cancellationReason||'This payment plan has been cancelled.'}
+          {selectedPaymentPlan.cancelledAt
+           ?` Cancelled ${dt(selectedPaymentPlan.cancelledAt)}.`
+           :''}
+         </span>
+        </div>
+       </div>
+      }
 
       {selectedPaymentPlan.notes&&
        <div className="paymentPlanNotes">
@@ -4283,7 +4346,7 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
 
          <div>
           <b>{money(x.amount)}</b>
-          <span>Due {x.dueAt}</span>
+          <span>Due {dateOnly(x.dueAt)}</span>
          </div>
 
          <Pill tone={
@@ -4298,6 +4361,38 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
         </div>
        )}
       </div>
+
+      {Array.isArray(selectedPaymentPlan.events)&&selectedPaymentPlan.events.length>0&&
+       <div className="paymentPlanActivity">
+        <div className="panelHead">
+         <div>
+          <h3>Plan activity</h3>
+          <p>Recorded changes and payment-plan events.</p>
+         </div>
+        </div>
+
+        <div className="paymentPlanTimeline">
+         {selectedPaymentPlan.events.map(event=>
+          <div className="paymentPlanTimelineRow" key={event.id}>
+           <div className="paymentPlanTimelineMark"></div>
+
+           <div className="paymentPlanTimelineBody">
+            <div className="paymentPlanTimelineHead">
+             <b>{event.description||String(event.eventType||'Plan event').replaceAll('_',' ')}</b>
+             <span>{dt(event.createdAt)}</span>
+            </div>
+
+            <small>
+             {event.actorType==='system'
+              ?'FleetPay system'
+              :event.actorId||event.actorType||'FleetPay'}
+            </small>
+           </div>
+          </div>
+         )}
+        </div>
+       </div>
+      }
 
       {canMoney&&
        <div className="paymentPlanLifecycleActions">
