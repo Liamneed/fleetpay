@@ -7256,6 +7256,463 @@ app.post(
  }
 );
 
+
+/*
+ * ============================================================
+ * PAYMENT PLAN AMENDMENT
+ *
+ * Draft:
+ *   - Rebuild the complete proposed schedule.
+ *
+ * Paused:
+ *   - Preserve paid instalments.
+ *   - Replace only the unpaid remainder.
+ *   - Keep the replacement current request paused until Resume.
+ *
+ * Active/defaulted plans must be paused before amendment so an
+ * active Stripe obligation is never changed underneath a driver.
+ * ============================================================
+ */
+app.post(
+ '/api/admin/payment-plans/:id/amend',
+ adminAuth,
+ requireStaffRole('administrator','finance'),
+ (req,res)=>{
+  try{
+   const plan=db.prepare(`
+    SELECT *
+    FROM driver_payment_plans
+    WHERE id=?
+   `).get(req.params.id);
+
+   if(!plan){
+    return res.status(404).json({
+     error:'Payment plan not found'
+    });
+   }
+
+   if(!['draft','paused'].includes(plan.status)){
+    return res.status(409).json({
+     error:
+      'Only draft or paused payment plans can be amended. Pause an active plan first.'
+    });
+   }
+
+   const frequency=
+    String(req.body.frequency||plan.frequency||'weekly').trim();
+
+   const instalmentAmount=
+    Number(req.body.instalmentAmount||0);
+
+   const startDate=
+    paymentPlanDateOnly(req.body.startDate);
+
+   const notes=
+    req.body.notes===undefined
+     ?String(plan.notes||'')
+     :String(req.body.notes||'').trim();
+
+   if(!['weekly','fortnightly','monthly'].includes(frequency)){
+    return res.status(400).json({
+     error:'Frequency must be weekly, fortnightly or monthly'
+    });
+   }
+
+   if(
+    !Number.isFinite(instalmentAmount) ||
+    instalmentAmount<=0
+   ){
+    return res.status(400).json({
+     error:'Instalment amount must be greater than zero'
+    });
+   }
+
+   if(!startDate){
+    return res.status(400).json({
+     error:'A valid next payment date is required'
+    });
+   }
+
+   const remaining=
+    Number(
+     (
+      plan.status==='draft'
+       ?Number(plan.plan_amount||0)
+       :Number(plan.remaining_amount||0)
+     ).toFixed(2)
+    );
+
+   if(!Number.isFinite(remaining) || remaining<=0){
+    return res.status(409).json({
+     error:'This payment plan has no remaining balance to amend'
+    });
+   }
+
+   if(instalmentAmount>remaining){
+    return res.status(400).json({
+     error:'Instalment amount cannot exceed the remaining balance'
+    });
+   }
+
+   const paidRows=db.prepare(`
+    SELECT *
+    FROM driver_payment_plan_instalments
+    WHERE plan_id=?
+      AND status='paid'
+    ORDER BY instalment_number
+   `).all(plan.id);
+
+   const lastPaidNumber=
+    paidRows.reduce(
+     (max,row)=>Math.max(max,Number(row.instalment_number||0)),
+     0
+    );
+
+   const schedule=[];
+   let scheduleRemaining=remaining;
+   let scheduleIndex=0;
+
+   while(scheduleRemaining>0.00001){
+    const instalmentNumber=
+     lastPaidNumber+scheduleIndex+1;
+
+    if(instalmentNumber>104){
+     return res.status(400).json({
+      error:
+       'This amendment would exceed 104 total instalments. Increase the instalment amount.'
+     });
+    }
+
+    const amount=
+     Number(
+      Math.min(
+       instalmentAmount,
+       scheduleRemaining
+      ).toFixed(2)
+     );
+
+    schedule.push({
+     instalmentNumber,
+     amount,
+     dueAt:paymentPlanAddDate(
+      startDate,
+      scheduleIndex,
+      frequency
+     )
+    });
+
+    scheduleRemaining=
+     Number(
+      (scheduleRemaining-amount).toFixed(2)
+     );
+
+    scheduleIndex++;
+   }
+
+   if(!schedule.length){
+    return res.status(400).json({
+     error:'Could not create amended payment schedule'
+    });
+   }
+
+   const source=db.prepare(`
+    SELECT *
+    FROM payment_requests
+    WHERE id=?
+   `).get(plan.source_payment_request_id);
+
+   if(!source){
+    return res.status(404).json({
+     error:'Original outstanding payment request could not be found'
+    });
+   }
+
+   const now=new Date().toISOString();
+   const today=now.slice(0,10);
+
+   const previous={
+    frequency:plan.frequency,
+    instalmentAmount:Number(plan.instalment_amount||0),
+    startDate:plan.start_date,
+    nextDueAt:plan.next_due_at,
+    remainingAmount:Number(plan.remaining_amount||0),
+    status:plan.status
+   };
+
+   let replacementRequestId=null;
+
+   db.exec('BEGIN IMMEDIATE');
+
+   try{
+    /*
+     * Any unpaid requests belonging to a paused plan have already had
+     * their Stripe session safely expired by the Pause workflow.
+     * Retire those request rows before rebuilding the unpaid schedule.
+     */
+    if(plan.status==='paused'){
+     db.prepare(`
+      UPDATE payment_requests
+      SET status='cancelled',
+          payment_url=NULL,
+          provider_session_id=NULL,
+          updated_at=?
+      WHERE payment_plan_id=?
+        AND request_type='payment_plan_instalment'
+        AND status IN ('plan_paused','open')
+     `).run(
+      now,
+      plan.id
+     );
+    }
+
+    db.prepare(`
+     DELETE FROM driver_payment_plan_instalments
+     WHERE plan_id=?
+       AND status!='paid'
+    `).run(plan.id);
+
+    const insertInstalment=db.prepare(`
+     INSERT INTO driver_payment_plan_instalments(
+      id,
+      plan_id,
+      driver_id,
+      callsign,
+      instalment_number,
+      amount,
+      due_at,
+      status,
+      payment_request_id,
+      created_at,
+      updated_at
+     )
+     VALUES(?,?,?,?,?,?,?,?,?,?,?)
+    `);
+
+    const inserted=[];
+
+    for(let i=0;i<schedule.length;i++){
+     const item=schedule[i];
+     const instalmentId=id('instalment');
+
+     let status='scheduled';
+
+     /*
+      * A paused plan still needs one identifiable current instalment
+      * so Resume can reactivate the existing payment workflow.
+      */
+     if(plan.status==='paused' && i===0){
+      status=
+       item.dueAt<today
+        ?'overdue'
+        :'due';
+     }
+
+     insertInstalment.run(
+      instalmentId,
+      plan.id,
+      plan.driver_id,
+      plan.callsign,
+      item.instalmentNumber,
+      item.amount,
+      item.dueAt,
+      status,
+      null,
+      now,
+      now
+     );
+
+     inserted.push({
+      ...item,
+      id:instalmentId,
+      status
+     });
+    }
+
+    /*
+     * Draft plans have no live/current payment request.
+     * Paused plans get a fresh paused request linked to the newly
+     * amended first unpaid instalment.
+     */
+    if(plan.status==='paused'){
+     const first=inserted[0];
+
+     replacementRequestId=id('request');
+
+     db.prepare(`
+      INSERT INTO payment_requests(
+       id,
+       run_id,
+       driver_id,
+       callsign,
+       driver_name,
+       balance,
+       weekly_fee,
+       carried_charges,
+       amount,
+       status,
+       payment_url,
+       created_at,
+       updated_at,
+       due_at,
+       payment_plan_id,
+       payment_plan_instalment_id,
+       request_type
+      )
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+     `).run(
+      replacementRequestId,
+      source.run_id||null,
+      plan.driver_id,
+      plan.callsign,
+      plan.driver_name,
+      -remaining,
+      Number(plan.paid_amount||0)>0
+       ?0
+       :Number(source.weekly_fee||0),
+      Number(plan.paid_amount||0)>0
+       ?0
+       :Number(source.carried_charges||0),
+      Number(first.amount||0),
+      'plan_paused',
+      null,
+      now,
+      now,
+      first.dueAt,
+      plan.id,
+      first.id,
+      'payment_plan_instalment'
+     );
+
+     db.prepare(`
+      UPDATE driver_payment_plan_instalments
+      SET payment_request_id=?,
+          updated_at=?
+      WHERE id=?
+     `).run(
+      replacementRequestId,
+      now,
+      first.id
+     );
+    }
+
+    db.prepare(`
+     UPDATE driver_payment_plans
+     SET frequency=?,
+         instalment_amount=?,
+         start_date=?,
+         next_due_at=?,
+         notes=?,
+         updated_by=?,
+         updated_at=?
+     WHERE id=?
+    `).run(
+     frequency,
+     Number(instalmentAmount.toFixed(2)),
+     startDate,
+     schedule[0].dueAt,
+     notes,
+     req.auth.email,
+     now,
+     plan.id
+    );
+
+    db.prepare(`
+     INSERT INTO driver_payment_plan_events(
+      id,
+      plan_id,
+      driver_id,
+      event_type,
+      description,
+      actor_type,
+      actor_id,
+      metadata_json,
+      created_at
+     )
+     VALUES(?,?,?,?,?,?,?,?,?)
+    `).run(
+     id('planevent'),
+     plan.id,
+     plan.driver_id,
+     'plan_amended',
+     plan.status==='draft'
+      ?'Draft payment plan amended'
+      :'Paused payment plan amended',
+     'staff',
+     req.auth.email,
+     JSON.stringify({
+      previous,
+      amended:{
+       frequency,
+       instalmentAmount:Number(instalmentAmount.toFixed(2)),
+       startDate,
+       nextDueAt:schedule[0].dueAt,
+       remainingAmount:remaining,
+       instalments:schedule.length,
+       replacementRequestId
+      }
+     }),
+     now
+    );
+
+    db.exec('COMMIT');
+
+   }catch(e){
+    try{db.exec('ROLLBACK')}catch{}
+    throw e;
+   }
+
+   if(plan.status==='paused'){
+    notify(
+     plan.driver_id,
+     'Payment plan amended',
+     `Your payment plan has been amended. Remaining balance £${remaining.toFixed(2)}. New instalment £${Number(instalmentAmount).toFixed(2)} ${frequency}. Next payment date ${startDate}. The plan remains paused until FleetPay resumes it.`,
+     'info',
+     plan.id
+    );
+   }
+
+   audit(
+    req,
+    'staff',
+    req.auth.email,
+    'payment_plan_amended',
+    'driver_payment_plan',
+    plan.id,
+    {
+     callsign:plan.callsign,
+     previous,
+     frequency,
+     instalmentAmount:Number(instalmentAmount.toFixed(2)),
+     startDate,
+     remainingAmount:remaining,
+     instalments:schedule.length,
+     status:plan.status
+    }
+   );
+
+   const updated=db.prepare(`
+    SELECT *
+    FROM driver_payment_plans
+    WHERE id=?
+   `).get(plan.id);
+
+   res.json({
+    ok:true,
+    plan:serializePaymentPlan(
+     updated,
+     {instalments:true,events:true}
+    )
+   });
+
+  }catch(e){
+   res.status(500).json({
+    error:e.message
+   });
+  }
+ }
+);
+
+
 app.get('/api/admin/outstanding-payments',adminAuth,(req,res)=>{refreshPaymentPlanStatuses();const now=new Date().toISOString().slice(0,16),rows=db.prepare("SELECT *,driver_id driverId,driver_name driverName,weekly_fee weeklyFee,carried_charges carriedCharges,payment_url paymentUrl,created_at createdAt,updated_at updatedAt,paid_at paidAt,due_at dueAt,email_sent_at emailSentAt,sms_sent_at smsSentAt,communication_error communicationError FROM payment_requests ORDER BY CASE status WHEN 'open' THEN 0 ELSE 1 END,created_at DESC").all().map(x=>({...x,overdue:x.status==='open'&&x.dueAt&&String(x.dueAt).slice(0,16)<now}));res.json({payments:rows})});
 app.post('/api/admin/outstanding-payments/:id/resend',adminAuth,requireStaffRole('administrator','finance','office'),async(req,res)=>{try{const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(req.params.id);if(!item)return res.status(404).json({error:'Payment request not found'});const d=cachedDriver(item.driver_id);const out=await sendOutstandingCommunications(item,d);audit(req,'staff',req.auth.email,'outstanding_message_resent','payment_request',item.id,{callsign:item.callsign});res.json({ok:true,...out})}catch(e){res.status(500).json({error:e.message})}});
 

@@ -815,6 +815,125 @@ function AdminApp(){
   }
  }
 
+ async function amendPaymentPlan(plan){
+  if(!['draft','paused'].includes(plan.status)){
+   alert('Pause this payment plan before amending it.');
+   return;
+  }
+
+  const frequency=prompt(
+   'Payment frequency:\n\nEnter weekly, fortnightly or monthly.',
+   plan.frequency||'weekly'
+  );
+
+  if(frequency===null)return;
+
+  const cleanFrequency=frequency.trim().toLowerCase();
+
+  if(!['weekly','fortnightly','monthly'].includes(cleanFrequency)){
+   alert('Frequency must be weekly, fortnightly or monthly.');
+   return;
+  }
+
+  const amountInput=prompt(
+   `Instalment amount:\n\nRemaining balance: ${money(plan.remainingAmount)}`,
+   Number(plan.instalmentAmount||0).toFixed(2)
+  );
+
+  if(amountInput===null)return;
+
+  const instalmentAmount=Number(
+   String(amountInput).replace('£','').trim()
+  );
+
+  if(!Number.isFinite(instalmentAmount) || instalmentAmount<=0){
+   alert('Enter a valid instalment amount greater than zero.');
+   return;
+  }
+
+  if(instalmentAmount>Number(plan.remainingAmount||0)){
+   alert('Instalment amount cannot exceed the remaining balance.');
+   return;
+  }
+
+  const defaultDate=
+   plan.status==='draft'
+    ?plan.startDate
+    :plan.nextDueAt;
+
+  const startDate=prompt(
+   plan.status==='draft'
+    ?'First payment date (YYYY-MM-DD):'
+    :'New next payment date (YYYY-MM-DD):',
+   defaultDate||new Date().toISOString().slice(0,10)
+  );
+
+  if(startDate===null)return;
+
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(startDate.trim())){
+   alert('Enter the date as YYYY-MM-DD.');
+   return;
+  }
+
+  const notes=prompt(
+   'Plan notes:',
+   plan.notes||''
+  );
+
+  if(notes===null)return;
+
+  if(
+   !confirm(
+    `Amend payment plan for callsign ${plan.callsign}?\n\n`+
+    `Remaining: ${money(plan.remainingAmount)}\n`+
+    `Instalment: ${money(instalmentAmount)}\n`+
+    `Frequency: ${cleanFrequency}\n`+
+    `Next payment: ${startDate.trim()}\n\n`+
+    (
+     plan.status==='paused'
+      ?'Paid instalments will be preserved. The unpaid schedule will be rebuilt and the plan will remain paused.'
+      :'The draft schedule will be rebuilt before activation.'
+    )
+   )
+  )return;
+
+  setPlanActionBusy(true);
+
+  try{
+   const j=await api(
+    `/api/admin/payment-plans/${plan.id}/amend`,
+    {
+     method:'POST',
+     body:JSON.stringify({
+      frequency:cleanFrequency,
+      instalmentAmount,
+      startDate:startDate.trim(),
+      notes:notes.trim()
+     })
+    }
+   );
+
+   setSelectedPaymentPlan(j.plan);
+
+   await Promise.all([
+    loadPaymentPlans(),
+    loadOutstanding()
+   ]);
+
+   alert(
+    plan.status==='paused'
+     ?'Payment plan amended. It remains paused until you resume it.'
+     :'Draft payment plan amended.'
+   );
+
+  }catch(e){
+   alert(e.message);
+  }finally{
+   setPlanActionBusy(false);
+  }
+ }
+
+
  async function settlePaymentPlanEarly(plan){
   const remaining=Number(plan.remainingAmount||0);
 
@@ -3902,6 +4021,17 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
          >
           <CheckCircle2/>
           {planActivateBusy?'Activating…':'Activate payment plan'}
+         </button>
+        }
+
+        {['draft','paused'].includes(selectedPaymentPlan.status)&&
+         <button
+          className="secondary full"
+          disabled={planActionBusy||planActivateBusy}
+          onClick={()=>amendPaymentPlan(selectedPaymentPlan)}
+         >
+          <Pencil/>
+          {planActionBusy?'Working…':'Amend plan'}
          </button>
         }
 
