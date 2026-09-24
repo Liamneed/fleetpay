@@ -7048,6 +7048,44 @@ app.post(
      `).get(current.payment_request_id)
     :null;
 
+   /*
+    * Idempotency:
+    * If this plan has already been converted into one final settlement
+    * request, return that existing request rather than rebuilding it,
+    * sending another notification, or writing another settlement event.
+    */
+   const futureScheduledCount=Number(
+    db.prepare(`
+     SELECT COUNT(*) count
+     FROM driver_payment_plan_instalments
+     WHERE plan_id=?
+       AND instalment_number>?
+       AND status='scheduled'
+    `).get(
+     plan.id,
+     current.instalment_number
+    )?.count||0
+   );
+
+   const alreadyFinalSettlement=
+    Boolean(currentRequest) &&
+    ['open','plan_paused'].includes(currentRequest.status) &&
+    Math.abs(Number(current.amount||0)-remaining)<0.00001 &&
+    Math.abs(Number(currentRequest.amount||0)-remaining)<0.00001 &&
+    futureScheduledCount===0;
+
+   if(alreadyFinalSettlement){
+    return res.json({
+     ok:true,
+     alreadySettled:true,
+     plan:serializePaymentPlan(
+      plan,
+      {instalments:true,events:true}
+     ),
+     paymentRequestId:currentRequest.id
+    });
+   }
+
    if(currentRequest){
     await safelyExpirePlanPaymentSession(currentRequest);
    }
@@ -7455,6 +7493,7 @@ app.post(
       SET status='cancelled',
           payment_url=NULL,
           provider_session_id=NULL,
+          payment_plan_instalment_id=NULL,
           updated_at=?
       WHERE payment_plan_id=?
         AND request_type='payment_plan_instalment'

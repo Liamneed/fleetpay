@@ -3,7 +3,7 @@ import { App } from '@capacitor/app';
 import React,{useEffect,useMemo,useRef,useState}from'react';
 import{createRoot}from'react-dom/client';
 import { QRCodeSVG } from 'qrcode.react';
-import{Activity,AlertTriangle,ArrowDownLeft,ArrowRight,ArrowUpRight,BadgePoundSterling,Banknote,Bell,CalendarDays,CheckCircle2,ChevronRight,Clock3,CreditCard,Database,FileClock,Hash,Home,Info,KeyRound,LayoutDashboard,LogIn,LogOut,Mail,Menu,Phone,PlayCircle,RefreshCw,Search,Send,Settings,ShieldCheck,Smartphone,Users,UserCheck,WalletCards,X,Sun,Moon,Eye,EyeOff}from'lucide-react';
+import{Activity,AlertTriangle,ArrowDownLeft,ArrowRight,ArrowUpRight,BadgePoundSterling,Banknote,Bell,CalendarDays,CheckCircle2,ChevronRight,Clock3,CreditCard,Database,FileClock,Hash,Home,Info,KeyRound,LayoutDashboard,LogIn,LogOut,Mail,Menu,Phone,PlayCircle,RefreshCw,Search,Send,Settings,ShieldCheck,Smartphone,Users,UserCheck,WalletCards,X,Sun,Moon,Eye,EyeOff,Pencil}from'lucide-react';
 import fleetpayMark from './assets/fleetpay-mark.png';
 import'./styles.css';
 const money=v=>v==null?'—':new Intl.NumberFormat('en-GB',{style:'currency',currency:'GBP'}).format(v);
@@ -153,6 +153,7 @@ function AdminApp(){
  const[outstanding,setOutstanding]=useState([]),[fees,setFees]=useState({fees:[],summary:{}}),[earlySummary,setEarlySummary]=useState(null);
  const[paymentPlans,setPaymentPlans]=useState({plans:[],summary:{}}),[selectedPaymentPlan,setSelectedPaymentPlan]=useState(null);
  const[planCreateSource,setPlanCreateSource]=useState(null),[planCreate,setPlanCreate]=useState({frequency:'weekly',instalmentAmount:'',startDate:'',notes:''}),[planCreateBusy,setPlanCreateBusy]=useState(false),[planActivateBusy,setPlanActivateBusy]=useState(false),[planActionBusy,setPlanActionBusy]=useState(false);
+ const[planAmendTarget,setPlanAmendTarget]=useState(null),[planAmend,setPlanAmend]=useState({frequency:'weekly',instalmentAmount:'',startDate:'',notes:''}),[planAmendBusy,setPlanAmendBusy]=useState(false);
  const[customerAdmin,setCustomerAdmin]=useState({payments:[],summary:{}}),[customerCreate,setCustomerCreate]=useState({bookingId:'',callsign:'',customerName:'',customerMobile:'',customerEmail:'',pickup:'',destination:'',journeyAt:'',fareAmount:'',taxiCompany:'',notes:''}),[createdCustomerLink,setCreatedCustomerLink]=useState(null),[customerCreateBusy,setCustomerCreateBusy]=useState(false);
  const[customerPayQ,setCustomerPayQ]=useState(''),[customerPayStatus,setCustomerPayStatus]=useState('needs_review'),[showCustomerCreate,setShowCustomerCreate]=useState(false),[selectedCustomerPayment,setSelectedCustomerPayment]=useState(null),[customerReleaseRetryBusy,setCustomerReleaseRetryBusy]=useState(false);
  const[customerSettlementReview,setCustomerSettlementReview]=useState({decision:'full',amount:'',note:''}),[customerSettlementReviewBusy,setCustomerSettlementReviewBusy]=useState(false);
@@ -815,44 +816,9 @@ function AdminApp(){
   }
  }
 
- async function amendPaymentPlan(plan){
+ function openPaymentPlanAmend(plan){
   if(!['draft','paused'].includes(plan.status)){
    alert('Pause this payment plan before amending it.');
-   return;
-  }
-
-  const frequency=prompt(
-   'Payment frequency:\n\nEnter weekly, fortnightly or monthly.',
-   plan.frequency||'weekly'
-  );
-
-  if(frequency===null)return;
-
-  const cleanFrequency=frequency.trim().toLowerCase();
-
-  if(!['weekly','fortnightly','monthly'].includes(cleanFrequency)){
-   alert('Frequency must be weekly, fortnightly or monthly.');
-   return;
-  }
-
-  const amountInput=prompt(
-   `Instalment amount:\n\nRemaining balance: ${money(plan.remainingAmount)}`,
-   Number(plan.instalmentAmount||0).toFixed(2)
-  );
-
-  if(amountInput===null)return;
-
-  const instalmentAmount=Number(
-   String(amountInput).replace('£','').trim()
-  );
-
-  if(!Number.isFinite(instalmentAmount) || instalmentAmount<=0){
-   alert('Enter a valid instalment amount greater than zero.');
-   return;
-  }
-
-  if(instalmentAmount>Number(plan.remainingAmount||0)){
-   alert('Instalment amount cannot exceed the remaining balance.');
    return;
   }
 
@@ -861,81 +827,103 @@ function AdminApp(){
     ?plan.startDate
     :plan.nextDueAt;
 
-  const startDate=prompt(
-   plan.status==='draft'
-    ?'First payment date (YYYY-MM-DD):'
-    :'New next payment date (YYYY-MM-DD):',
-   defaultDate||new Date().toISOString().slice(0,10)
-  );
+  setPlanAmendTarget(plan);
+  setPlanAmend({
+   frequency:plan.frequency||'weekly',
+   instalmentAmount:Number(plan.instalmentAmount||0).toFixed(2),
+   startDate:defaultDate||new Date().toISOString().slice(0,10),
+   notes:plan.notes||''
+  });
+ }
 
-  if(startDate===null)return;
+ async function submitPaymentPlanAmend(e){
+  e?.preventDefault();
 
-  if(!/^\d{4}-\d{2}-\d{2}$/.test(startDate.trim())){
-   alert('Enter the date as YYYY-MM-DD.');
+  if(!planAmendTarget)return;
+
+  const instalmentAmount=Number(planAmend.instalmentAmount||0);
+  const remaining=Number(planAmendTarget.remainingAmount||0);
+
+  if(!['weekly','fortnightly','monthly'].includes(planAmend.frequency)){
+   alert('Choose a valid payment frequency.');
    return;
   }
 
-  const notes=prompt(
-   'Plan notes:',
-   plan.notes||''
-  );
+  if(!Number.isFinite(instalmentAmount)||instalmentAmount<=0){
+   alert('Enter a valid instalment amount greater than zero.');
+   return;
+  }
 
-  if(notes===null)return;
+  if(instalmentAmount>remaining){
+   alert('Instalment amount cannot exceed the remaining balance.');
+   return;
+  }
 
-  if(
-   !confirm(
-    `Amend payment plan for callsign ${plan.callsign}?\n\n`+
-    `Remaining: ${money(plan.remainingAmount)}\n`+
-    `Instalment: ${money(instalmentAmount)}\n`+
-    `Frequency: ${cleanFrequency}\n`+
-    `Next payment: ${startDate.trim()}\n\n`+
-    (
-     plan.status==='paused'
-      ?'Paid instalments will be preserved. The unpaid schedule will be rebuilt and the plan will remain paused.'
-      :'The draft schedule will be rebuilt before activation.'
-    )
-   )
-  )return;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(planAmend.startDate||'')){
+   alert('Choose a valid payment date.');
+   return;
+  }
 
-  setPlanActionBusy(true);
+  setPlanAmendBusy(true);
 
   try{
    const j=await api(
-    `/api/admin/payment-plans/${plan.id}/amend`,
+    `/api/admin/payment-plans/${planAmendTarget.id}/amend`,
     {
      method:'POST',
      body:JSON.stringify({
-      frequency:cleanFrequency,
+      frequency:planAmend.frequency,
       instalmentAmount,
-      startDate:startDate.trim(),
-      notes:notes.trim()
+      startDate:planAmend.startDate,
+      notes:planAmend.notes.trim()
      })
     }
    );
 
    setSelectedPaymentPlan(j.plan);
+   setPlanAmendTarget(null);
 
    await Promise.all([
     loadPaymentPlans(),
     loadOutstanding()
    ]);
 
-   alert(
-    plan.status==='paused'
-     ?'Payment plan amended. It remains paused until you resume it.'
-     :'Draft payment plan amended.'
-   );
-
   }catch(e){
    alert(e.message);
   }finally{
-   setPlanActionBusy(false);
+   setPlanAmendBusy(false);
   }
  }
 
+ function isPaymentPlanFinalSettlement(plan){
+  if(!plan)return false;
+
+  const remaining=Number(plan.remainingAmount||0);
+  if(remaining<=0)return false;
+
+  const instalments=Array.isArray(plan.instalments)?plan.instalments:[];
+  const current=instalments.find(
+   x=>['due','overdue'].includes(x.status)
+  );
+
+  if(!current)return false;
+
+  const hasFutureScheduled=instalments.some(
+   x=>x.status==='scheduled'
+  );
+
+  return (
+   !hasFutureScheduled &&
+   Math.abs(Number(current.amount||0)-remaining)<0.00001
+  );
+ }
 
  async function settlePaymentPlanEarly(plan){
   const remaining=Number(plan.remainingAmount||0);
+
+  if(isPaymentPlanFinalSettlement(plan)){
+   return;
+  }
 
   if(
    !confirm(
@@ -959,10 +947,6 @@ function AdminApp(){
     loadPaymentPlans(),
     loadOutstanding()
    ]);
-
-   alert(
-    `${money(remaining)} is now available for the driver to pay as the final settlement.`
-   );
 
   }catch(e){
    alert(e.message);
@@ -3926,6 +3910,170 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
     </div>
    }
 
+   {planAmendTarget&&
+    <div
+     className="drawerBack paymentPlanModalLayer"
+     onClick={()=>!planAmendBusy&&setPlanAmendTarget(null)}
+    >
+     <div
+      className="paymentPlanModal"
+      onClick={e=>e.stopPropagation()}
+     >
+      <button
+       className="drawerClose"
+       disabled={planAmendBusy}
+       onClick={()=>setPlanAmendTarget(null)}
+      >
+       <X/>
+      </button>
+
+      <div className="paymentPlanModalHead">
+       <span>AMEND PAYMENT PLAN</span>
+       <h2>Update the instalment schedule</h2>
+       <p>
+        {planAmendTarget.status==='paused'
+         ?'Update the remaining arrangement before resuming the plan.'
+         :'Update this draft arrangement before it is activated.'}
+       </p>
+      </div>
+
+      <div className="paymentPlanDriver">
+       <span className="callsign">{planAmendTarget.callsign}</span>
+       <div>
+        <b>{planAmendTarget.driverName}</b>
+        <span>Remaining balance</span>
+       </div>
+       <strong>{money(planAmendTarget.remainingAmount)}</strong>
+      </div>
+
+      <form onSubmit={submitPaymentPlanAmend} className="paymentPlanForm">
+
+       <div className="formGrid2">
+        <label>
+         Frequency
+         <select
+          value={planAmend.frequency}
+          onChange={e=>setPlanAmend({
+           ...planAmend,
+           frequency:e.target.value
+          })}
+         >
+          <option value="weekly">Weekly</option>
+          <option value="fortnightly">Fortnightly</option>
+          <option value="monthly">Monthly</option>
+         </select>
+        </label>
+
+        <label>
+         Instalment amount
+         <div className="moneyField">
+          <span>£</span>
+          <input
+           type="number"
+           step="0.01"
+           min="0.01"
+           max={planAmendTarget.remainingAmount}
+           required
+           value={planAmend.instalmentAmount}
+           onChange={e=>setPlanAmend({
+            ...planAmend,
+            instalmentAmount:e.target.value
+           })}
+          />
+         </div>
+        </label>
+
+        <label>
+         {planAmendTarget.status==='paused'
+          ?'Next payment date'
+          :'First payment date'}
+         <input
+          type="date"
+          required
+          value={planAmend.startDate}
+          onChange={e=>setPlanAmend({
+           ...planAmend,
+           startDate:e.target.value
+          })}
+         />
+        </label>
+       </div>
+
+       {Number(planAmend.instalmentAmount)>0&&
+        <div className="paymentPlanPreview">
+         <div>
+          <span>Remaining</span>
+          <b>{money(planAmendTarget.remainingAmount)}</b>
+         </div>
+
+         <div>
+          <span>Regular payment</span>
+          <b>{money(Number(planAmend.instalmentAmount||0))}</b>
+         </div>
+
+         <div>
+          <span>Approx. instalments</span>
+          <b>{
+           Math.ceil(
+            Number(planAmendTarget.remainingAmount||0)/
+            Number(planAmend.instalmentAmount||1)
+           )
+          }</b>
+         </div>
+        </div>
+       }
+
+       <label>
+        Office notes
+        <textarea
+         rows="3"
+         value={planAmend.notes}
+         onChange={e=>setPlanAmend({
+          ...planAmend,
+          notes:e.target.value
+         })}
+         placeholder="Reason for plan, agreed arrangement or other internal note"
+        />
+       </label>
+
+       <div className="operatorWarning blue">
+        <Info/>
+        <div>
+         <b>
+          {planAmendTarget.status==='paused'
+           ?'Paid instalments are protected'
+           :'Draft schedule only'}
+         </b>
+         <span>
+          {planAmendTarget.status==='paused'
+           ?'Completed payments remain unchanged. Only the unpaid balance is rescheduled, and the plan stays paused until you resume it.'
+           :'No money moves when this draft is amended. The revised schedule only becomes payable after activation.'}
+         </span>
+        </div>
+       </div>
+
+       <div className="paymentPlanModalActions">
+        <button
+         type="button"
+         className="secondary"
+         disabled={planAmendBusy}
+         onClick={()=>setPlanAmendTarget(null)}
+        >
+         Cancel
+        </button>
+
+        <button
+         className="primary"
+         disabled={planAmendBusy}
+        >
+         {planAmendBusy?'Saving…':'Save changes'}
+        </button>
+       </div>
+      </form>
+     </div>
+    </div>
+   }
+
    {selectedPaymentPlan&&
     <div
      className="drawerBack transactionDetailLayer"
@@ -3975,6 +4123,16 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
        <div className="paymentPlanNotes">
         <span>Office notes</span>
         <p>{selectedPaymentPlan.notes}</p>
+       </div>
+      }
+
+      {isPaymentPlanFinalSettlement(selectedPaymentPlan)&&
+       <div className="paymentPlanNotes">
+        <span>Final settlement</span>
+        <p>
+         {money(selectedPaymentPlan.remainingAmount)} is due now as the final payment.
+         Future instalments have been cancelled.
+        </p>
        </div>
       }
 
@@ -4028,7 +4186,7 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
          <button
           className="secondary full"
           disabled={planActionBusy||planActivateBusy}
-          onClick={()=>amendPaymentPlan(selectedPaymentPlan)}
+          onClick={()=>openPaymentPlanAmend(selectedPaymentPlan)}
          >
           <Pencil/>
           {planActionBusy?'Working…':'Amend plan'}
@@ -4058,16 +4216,26 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
         }
 
         {['active','paused','defaulted'].includes(selectedPaymentPlan.status)&&
-         <button
-          className="secondary full paymentPlanSettleButton"
-          disabled={planActionBusy}
-          onClick={()=>settlePaymentPlanEarly(selectedPaymentPlan)}
-         >
-          <CreditCard/>
-          {planActionBusy
-           ?'Working…'
-           :`Settle early · ${money(selectedPaymentPlan.remainingAmount)}`}
-         </button>
+         (
+          isPaymentPlanFinalSettlement(selectedPaymentPlan)
+           ?<button
+             className="secondary full paymentPlanSettleButton"
+             disabled
+            >
+             <CheckCircle2/>
+             {`Final settlement · ${money(selectedPaymentPlan.remainingAmount)} due`}
+            </button>
+           :<button
+             className="secondary full paymentPlanSettleButton"
+             disabled={planActionBusy}
+             onClick={()=>settlePaymentPlanEarly(selectedPaymentPlan)}
+            >
+             <CreditCard/>
+             {planActionBusy
+              ?'Working…'
+              :`Settle early · ${money(selectedPaymentPlan.remainingAmount)}`}
+            </button>
+         )
         }
 
         {['draft','active','paused','defaulted'].includes(selectedPaymentPlan.status)&&
