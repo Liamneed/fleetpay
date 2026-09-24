@@ -5466,7 +5466,7 @@ function progressPaymentPlanAfterPayment(paymentRequest,paidAt){
 
 
 function refreshPaymentPlanStatuses(){
- const today=new Date().toISOString().slice(0,10);
+ const today=londonWindow().date;
  const now=new Date().toISOString();
 
  /*
@@ -8428,6 +8428,7 @@ app.get('/payment-cancelled',(_req,res)=>{
 const __filename=fileURLToPath(import.meta.url),__dirname=path.dirname(__filename),dist=path.resolve(__dirname,'../dist');app.use(express.static(dist));app.get('*',(req,res,next)=>{if(req.path.startsWith('/api'))return next();res.sendFile(path.join(dist,'index.html'),e=>e&&next())});
 function scheduleSync(){if(!API_KEY)return;const minutes=Math.max(2,Number(getSettings().syncMinutes||10));setTimeout(async()=>{try{const r=await syncAutocab();console.log(`FleetPay scheduled sync: ${r.drivers.length} drivers`)}catch(e){console.error('Scheduled Autocab sync failed:',e.message)}finally{scheduleSync()}},minutes*60000)}
 function scheduleEarlySummary(){setTimeout(async()=>{try{await sendEarlyPayoutOfficeSummary()}catch(e){console.error('Early payout office summary failed:',e.message)}finally{scheduleEarlySummary()}},60000)}
+function schedulePaymentPlanStatusRefresh(){setTimeout(()=>{try{const r=refreshPaymentPlanStatuses();if(r.overdueInstalments||r.defaultedPlans)console.log(`FleetPay payment plan refresh: ${r.overdueInstalments} overdue instalment(s), ${r.defaultedPlans} newly defaulted plan(s)`)}catch(e){console.error('Payment plan status refresh failed:',e.message)}finally{schedulePaymentPlanStatusRefresh()}},15*60000)}
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`FleetPay server running on port ${PORT} · DB ${DB_PATH}`);
 
@@ -8438,4 +8439,5 @@ app.listen(PORT, '0.0.0.0', () => {
       .finally(scheduleSync);
   }
   scheduleEarlySummary();
+  schedulePaymentPlanStatusRefresh();
 });
