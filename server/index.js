@@ -2927,11 +2927,229 @@ app.post('/api/admin/customer-payments/:id/cancel',adminAuth,requireStaffRole('a
  db.prepare('UPDATE customer_payments SET status=?,updated_at=? WHERE id=?').run('cancelled',new Date().toISOString(),row.id);audit(req,'admin',req.auth.email,'customer_payment_cancelled','customer_payment',row.id,{});res.json({ok:true});
 });
 
+async function findFleetPayUnpostedDocket(row){
+ const bookingId=String(row?.booking_id||'').trim();
+ if(!bookingId)throw new Error('Customer payment has no Autocab booking ID.');
+
+ const anchorRaw=row.journey_at||row.created_at||new Date().toISOString();
+ const anchor=new Date(anchorRaw);
+
+ if(Number.isNaN(anchor.getTime())){
+  throw new Error(`Invalid journey date for booking ${bookingId}.`);
+ }
+
+ const from=new Date(anchor);
+ from.setUTCDate(from.getUTCDate()-1);
+ from.setUTCHours(0,0,0,0);
+
+ const to=new Date(anchor);
+ to.setUTCDate(to.getUTCDate()+2);
+ to.setUTCHours(23,59,59,999);
+
+ const driverId=Number(row.driver_id||0);
+
+ const response=await postJson(
+  `${BASE_URL}/accounts/v1/DocketsChecksPostings?pageno=1&pagesize=1000`,
+  {
+   from:from.toISOString(),
+   to:to.toISOString(),
+   invoiceDate:anchor.toISOString(),
+   companyId:null,
+   driverId:driverId>0?driverId:null,
+   vehicleId:null,
+   accountId:null
+  }
+ );
+
+ const dockets=Array.isArray(response?.docketsPage)
+  ? response.docketsPage
+  : [];
+
+ const matchingDockets=dockets.filter(
+  d=>String(d?.bookingId||'').trim()===bookingId
+ );
+
+ if(matchingDockets.length>1){
+  throw new Error(
+   `Autocab returned more than one unposted docket for booking ${bookingId}. `+
+   `Settlement was stopped for manual review.`
+  );
+ }
+
+ const docket=matchingDockets[0];
+
+ if(!docket){
+  throw new Error(
+   `Autocab unposted docket for booking ${bookingId} was not found. `+
+   `It may already have been posted or may not yet have reached Dockets Checks & Postings.`
+  );
+ }
+
+ const docketCustomerId=Number(
+  docket.customerId ??
+  docket.customer?.id ??
+  0
+ );
+
+ const docketAccountCode=String(
+  docket.accountCode ??
+  docket.customer?.accountCode ??
+  ''
+ ).trim();
+
+ if(
+  docketCustomerId!==AUTOCAB_FLEETPAY_CUSTOMER_ID &&
+  docketAccountCode!==AUTOCAB_FLEETPAY_ACCOUNT_CODE
+ ){
+  throw new Error(
+   `Autocab docket ${docket.docketNumber||docket.id} does not belong to the FleetPay account.`
+  );
+ }
+
+ return docket;
+}
+
+async function applyFleetPaySettlementToAutocab(row,amount){
+ const bookingId=String(row.booking_id||'').trim();
+ const roundedAmount=Math.round(Number(amount||0)*100)/100;
+
+ if(!Number.isFinite(roundedAmount) || roundedAmount<0){
+  throw new Error(`Invalid Autocab docket Cost for booking ${bookingId}.`);
+ }
+
+ const docket=await findFleetPayUnpostedDocket(row);
+
+ if(!docket.pricing || typeof docket.pricing!=='object'){
+  throw new Error(
+   `Autocab docket ${docket.docketNumber||docket.id} has no pricing object.`
+  );
+ }
+
+ const existingCost=Math.round(
+  Number(docket.pricing.cost||0)*100
+ )/100;
+
+ /*
+  * Idempotency/recovery:
+  * if a previous attempt already updated and approved the docket,
+  * accept that state when the Cost matches the requested amount.
+  */
+ if(docket.approved){
+  if(existingCost!==roundedAmount){
+   throw new Error(
+    `Autocab docket ${docket.docketNumber||docket.id} is already approved `+
+    `with Cost £${existingCost.toFixed(2)}, not £${roundedAmount.toFixed(2)}.`
+   );
+  }
+
+  if(docket.manualEnteredFare!==true){
+   throw new Error(
+    `Autocab docket ${docket.docketNumber||docket.id} is already approved, `+
+    `but it was not marked as a manual fare override. Settlement was stopped for review.`
+   );
+  }
+
+  return {
+   bookingId,
+   docketId:Number(docket.id),
+   docketNumber:docket.docketNumber||null,
+   source:docket.source||null,
+   cost:existingCost,
+   price:Math.round(Number(docket.pricing.price||0)*100)/100,
+   approved:true,
+   manualEnteredFare:Boolean(docket.manualEnteredFare),
+   posted:false,
+   recovered:true
+  };
+ }
+
+ const originalPrice=Math.round(Number(docket.pricing.price||0)*100)/100;
+
+ docket.pricing.cost=roundedAmount;
+ docket.manualEnteredFare=true;
+
+ /*
+  * Mirrors the Autocab UI option to keep corresponding docket data aligned.
+  * We deliberately do NOT alter pricing.price.
+  */
+ docket.copyToOtherDockets=true;
+
+ const updated=await putJson(
+  `${BASE_URL}/accounts/v1/dockets/${encodeURIComponent(docket.id)}`,
+  docket
+ );
+
+ const returnedCost=Math.round(Number(updated?.pricing?.cost||0)*100)/100;
+ const returnedPrice=Math.round(Number(updated?.pricing?.price||0)*100)/100;
+
+ if(returnedCost!==roundedAmount){
+  throw new Error(
+   `Autocab did not accept the driver Cost change for booking ${bookingId}. `+
+   `Expected £${roundedAmount.toFixed(2)}, received £${returnedCost.toFixed(2)}.`
+  );
+ }
+
+ if(returnedPrice!==originalPrice){
+  throw new Error(
+   `Autocab unexpectedly changed the customer Price for booking ${bookingId} `+
+   `from £${originalPrice.toFixed(2)} to £${returnedPrice.toFixed(2)}.`
+  );
+ }
+
+ if(updated?.manualEnteredFare!==true){
+  throw new Error(
+   `Autocab did not retain manualEnteredFare for booking ${bookingId}.`
+  );
+ }
+
+ const approval=await postJson(
+  `${BASE_URL}/accounts/v1/approveDockets`,
+  {Ids:[Number(docket.id)]}
+ );
+
+ const approvedIds=Array.isArray(approval?.approvedDockets)
+  ? approval.approvedDockets.map(Number)
+  : [];
+
+ if(!approvedIds.includes(Number(docket.id))){
+  throw new Error(
+   `Autocab did not confirm approval of docket ${docket.docketNumber||docket.id}.`
+  );
+ }
+
+ /*
+  * Re-read the Checks & Postings copy. We do NOT post it here.
+  */
+ const verified=await findFleetPayUnpostedDocket(row);
+
+ const verifiedCost=Math.round(
+  Number(verified?.pricing?.cost||0)*100
+ )/100;
+
+ if(!verified.approved || verifiedCost!==roundedAmount){
+  throw new Error(
+   `Autocab docket verification failed for booking ${bookingId}.`
+  );
+ }
+
+ return {
+  bookingId,
+  docketId:Number(verified.id),
+  docketNumber:verified.docketNumber||null,
+  source:verified.source||null,
+  cost:verifiedCost,
+  price:Math.round(Number(verified?.pricing?.price||0)*100)/100,
+  approved:Boolean(verified.approved),
+  manualEnteredFare:Boolean(verified.manualEnteredFare),
+  posted:false
+ };
+}
+
 app.post(
  '/api/admin/customer-payments/:id/settlement-review',
  adminAuth,
  requireStaffRole('administrator','finance','office'),
- (req,res)=>{
+ async(req,res)=>{
   try{
    const row=db.prepare(
     'SELECT * FROM customer_payments WHERE id=?'
@@ -2948,6 +3166,12 @@ app.post(
    if(!['no_fare','cancelled'].includes(String(row.job_status||''))){
     return res.status(400).json({
      error:'Settlement review is only available for paid No Fare or Cancelled jobs.'
+    });
+   }
+
+   if(row.source!=='autocab_booking_created'){
+    return res.status(400).json({
+     error:'This settlement workflow requires an Autocab-created customer payment.'
     });
    }
 
@@ -2989,6 +3213,36 @@ app.post(
     });
    }
 
+   /*
+    * Autocab remains the source of truth for driver accounting.
+    * Update and approve the unposted docket BEFORE recording the
+    * FleetPay settlement decision. No driver_ledger credit is created.
+    */
+   let autocabSettlement;
+
+   try{
+    autocabSettlement=await applyFleetPaySettlementToAutocab(row,amount);
+   }catch(e){
+    audit(
+     req,
+     'admin',
+     req.auth.email,
+     'customer_payment_settlement_autocab_failed',
+     'customer_payment',
+     row.id,
+     {
+      bookingId:row.booking_id||null,
+      decision,
+      approvedDriverAmount:amount,
+      error:e.message
+     }
+    );
+
+    return res.status(502).json({
+     error:`Autocab settlement update failed: ${e.message}`
+    });
+   }
+
    const now=new Date().toISOString();
 
    db.prepare(`
@@ -3024,7 +3278,8 @@ app.post(
      fareAmount:fare,
      approvedDriverAmount:amount,
      settlementStatus:nextStatus,
-     note:note||null
+     note:note||null,
+     autocabSettlement
     }
    );
 
@@ -3034,7 +3289,8 @@ app.post(
 
    res.json({
     ok:true,
-    payment:publicCustomerPayment(updated)
+    payment:publicCustomerPayment(updated),
+    autocabSettlement
    });
 
   }catch(e){
