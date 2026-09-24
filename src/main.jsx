@@ -1608,8 +1608,9 @@ function AdminApp(){
            <div>
             <b>Customer refund decision</b>
             <span>
-             The customer has already paid {money(selectedCustomerPayment.totalAmount)}.
-             Decide whether this payment should be refunded.
+             The customer has paid {money(selectedCustomerPayment.totalAmount)}.
+             Up to {money(selectedCustomerPayment.fareAmount)} fare can be refunded.
+             The {money(selectedCustomerPayment.feeAmount||0)} FleetPay service fee is retained.
             </span>
            </div>
           </div>
