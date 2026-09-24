@@ -6600,3 +6600,8 @@ body {
   width:17px;
   height:17px
 }
+
+.officeStats .stat.clickable{cursor:pointer;transition:border-color .15s ease,box-shadow .15s ease,transform .15s ease}
+.officeStats .stat.clickable:hover{border-color:#b9c9e5;box-shadow:0 6px 18px rgba(18,28,45,.08);transform:translateY(-1px)}
+.officeStats .stat.clickable.active{border-color:#7da2df;box-shadow:0 0 0 2px rgba(49,103,213,.10),0 5px 16px rgba(18,28,45,.07)}
+.officeStats .stat.clickable:focus-visible{outline:3px solid rgba(49,103,213,.22);outline-offset:2px}

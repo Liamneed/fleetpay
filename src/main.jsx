@@ -41,7 +41,28 @@ async function call(url, opts = {}, token = '') {
 
 function Logo(){return <div className="logo"><div className="logoMark">FP</div><div><b>FleetPay</b><span>Driver Payments</span></div></div>}
 
-function Stat({icon:Icon,label,value,sub}){return <div className="stat"><div className="statIcon"><Icon/></div><div><span>{label}</span><strong>{value}</strong><small>{sub}</small></div></div>}
+function Stat({icon:Icon,label,value,sub,onClick,active=false}){
+ const interactive=typeof onClick==='function';
+
+ function onKeyDown(e){
+  if(!interactive)return;
+  if(e.key==='Enter'||e.key===' '){
+   e.preventDefault();
+   onClick();
+  }
+ }
+
+ return <div
+  className={`stat${interactive?' clickable':''}${active?' active':''}`}
+  onClick={onClick}
+  onKeyDown={onKeyDown}
+  role={interactive?'button':undefined}
+  tabIndex={interactive?0:undefined}
+ >
+  <div className="statIcon"><Icon/></div>
+  <div><span>{label}</span><strong>{value}</strong><small>{sub}</small></div>
+ </div>
+}
 
 function Pill({children,tone='neutral'}){return <span className={`pill ${tone}`}>{children}</span>}
 
@@ -371,7 +392,21 @@ function AdminApp(){
    const haystack=`${plan.callsign||''} ${plan.driverName||''}`.toLowerCase();
 
    if(needle&&!haystack.includes(needle))return false;
-   if(paymentPlanStatus!=='all'&&plan.status!==paymentPlanStatus)return false;
+
+   if(
+    paymentPlanStatus==='attention'&&
+    !['paused','defaulted'].includes(plan.status)
+   )return false;
+
+   if(
+    paymentPlanStatus==='live'&&
+    !['active','paused','defaulted'].includes(plan.status)
+   )return false;
+
+   if(
+    !['all','attention','live'].includes(paymentPlanStatus)&&
+    plan.status!==paymentPlanStatus
+   )return false;
 
    return true;
   });
@@ -3591,12 +3626,16 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
        label="Active plans"
        value={paymentPlans?.summary?.active||0}
        sub="Currently being repaid"
+       onClick={()=>setPaymentPlanStatus('active')}
+       active={paymentPlanStatus==='active'}
       />
       <Stat
        icon={Clock3}
        label="Draft plans"
        value={paymentPlans?.summary?.draft||0}
        sub="Awaiting activation"
+       onClick={()=>setPaymentPlanStatus('draft')}
+       active={paymentPlanStatus==='draft'}
       />
       <Stat
        icon={AlertTriangle}
@@ -3606,12 +3645,16 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
         Number(paymentPlans?.summary?.paused||0)
        }
        sub="Paused or defaulted"
+       onClick={()=>setPaymentPlanStatus('attention')}
+       active={paymentPlanStatus==='attention'}
       />
       <Stat
        icon={CreditCard}
        label="Remaining"
        value={money(paymentPlans?.summary?.outstanding||0)}
-       sub="Across active plans"
+       sub="Across live plans"
+       onClick={()=>setPaymentPlanStatus('live')}
+       active={paymentPlanStatus==='live'}
       />
      </section>
 
@@ -3647,6 +3690,8 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
           onChange={e=>setPaymentPlanStatus(e.target.value)}
          >
           <option value="all">All statuses</option>
+          <option value="live">Live plans</option>
+          <option value="attention">Needs attention</option>
           <option value="active">Active</option>
           <option value="draft">Draft</option>
           <option value="paused">Paused</option>
