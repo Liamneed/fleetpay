@@ -898,23 +898,9 @@ function AdminApp(){
  function isPaymentPlanFinalSettlement(plan){
   if(!plan)return false;
 
-  const remaining=Number(plan.remainingAmount||0);
-  if(remaining<=0)return false;
-
-  const instalments=Array.isArray(plan.instalments)?plan.instalments:[];
-  const current=instalments.find(
-   x=>['due','overdue'].includes(x.status)
-  );
-
-  if(!current)return false;
-
-  const hasFutureScheduled=instalments.some(
-   x=>x.status==='scheduled'
-  );
-
   return (
-   !hasFutureScheduled &&
-   Math.abs(Number(current.amount||0)-remaining)<0.00001
+   Boolean(plan.earlySettlementRequested) &&
+   Number(plan.remainingAmount||0)>0
   );
  }
 

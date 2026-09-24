@@ -5609,6 +5609,16 @@ function refreshPaymentPlanStatuses(){
 function serializePaymentPlan(row,{instalments=true,events=false}={}){
  if(!row) return null;
 
+ const earlySettlementRequested=Boolean(
+  db.prepare(`
+   SELECT 1
+   FROM driver_payment_plan_events
+   WHERE plan_id=?
+     AND event_type='early_settlement_requested'
+   LIMIT 1
+  `).get(row.id)
+ );
+
  const out={
   id:row.id,
   driverId:Number(row.driver_id),
@@ -5630,6 +5640,7 @@ function serializePaymentPlan(row,{instalments=true,events=false}={}){
 
   status:row.status,
   notes:row.notes||'',
+  earlySettlementRequested,
 
   createdBy:row.created_by,
   createdAt:row.created_at,
