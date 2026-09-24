@@ -8,6 +8,7 @@ import fleetpayMark from './assets/fleetpay-mark.png';
 import'./styles.css';
 const money=v=>v==null?'—':new Intl.NumberFormat('en-GB',{style:'currency',currency:'GBP'}).format(v);
 const dt=v=>v?new Intl.DateTimeFormat('en-GB',{dateStyle:'medium',timeStyle:'short'}).format(new Date(v)):'Never';
+const dateOnly=v=>v?new Intl.DateTimeFormat('en-GB',{dateStyle:'medium'}).format(new Date(v)):'—';
 
 const API_BASE = Capacitor.isNativePlatform()
   ? (import.meta.env.VITE_NATIVE_API_BASE_URL || 'http://127.0.0.1:3001')
@@ -3712,7 +3713,7 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
               ?<span>Completed</span>
               :<>
                <b>{nextInstalment?money(nextInstalment.amount):'—'}</b>
-               <small>{plan.nextDueAt||nextInstalment?.dueAt||'—'}</small>
+               <small>{dateOnly(plan.nextDueAt||nextInstalment?.dueAt)}</small>
               </>
              }
             </td>
