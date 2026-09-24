@@ -3297,6 +3297,8 @@ function officeTransactions(limit=250){
    type:'customer_payment',
    typeLabel:'Customer payment',
    direction:'in',
+   driverId:x.driver_id||null,
+   driverId:x.driver_id||null,
    callsign:x.callsign,
    driverName:x.driver_name,
    bookingId:x.booking_id,
@@ -3321,6 +3323,7 @@ function officeTransactions(limit=250){
  const refundRows=db.prepare(`
   SELECT
    r.*,
+   cp.driver_id,
    cp.callsign,
    cp.driver_name,
    cp.booking_id,
@@ -3375,6 +3378,7 @@ function officeTransactions(limit=250){
    type:'driver_payment',
    typeLabel:'Driver payment',
    direction:'in',
+   driverId:x.driver_id||null,
    callsign:x.callsign,
    driverName:x.driver_name,
    amount:Number(x.amount),
@@ -3405,6 +3409,7 @@ function officeTransactions(limit=250){
     ? 'Early payout'
     : 'Weekly payout',
    direction:'out',
+   driverId:x.driver_id||null,
    callsign:x.callsign,
    driverName:x.driver_name,
    amount:Number(x.net_amount||x.amount||0),
@@ -3470,6 +3475,7 @@ function officeTransactions(limit=250){
      ? 'Early payout fee'
      : 'Weekly FleetPay fee',
    direction:'in',
+   driverId:x.driver_id||null,
    callsign:x.callsign,
    driverName:x.full_name,
    amount:Number(effectiveFee.toFixed(2)),
@@ -3494,6 +3500,7 @@ function officeTransactions(limit=250){
     ? 'Manual pay in'
     : 'Manual payout',
    direction:x.is_credit?'in':'out',
+   driverId:x.driver_id||null,
    callsign:x.callsign,
    driverName:x.full_name,
    amount:Number(x.amount),
@@ -3528,10 +3535,15 @@ app.get('/api/admin/transactions',adminAuth,(req,res)=>{
  const type=String(req.query.type||'all');
  const status=String(req.query.status||'all');
  const category=String(req.query.category||'all');
+ const driverId=String(req.query.driverId||'').trim();
  const dateFrom=String(req.query.dateFrom||'').trim();
  const dateTo=String(req.query.dateTo||'').trim();
 
  let rows=officeTransactions(limit);
+
+ if(driverId)rows=rows.filter(x=>
+  String(x.driverId||'')===driverId
+ );
 
  if(category==='driver_in')rows=rows.filter(x=>
   x.type==='driver_payment' ||

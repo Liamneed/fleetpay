@@ -5661,3 +5661,283 @@ body {
   grid-template-columns:1fr 1fr;
  }
 }
+
+/* ===== Driver financial drawer ===== */
+
+.driverFinanceDrawer{
+ width:min(720px,96vw);
+ max-width:720px;
+ overflow-y:auto;
+}
+
+.driverDrawerTabs{
+ display:flex;
+ gap:8px;
+ margin:18px 0;
+ padding:5px;
+ border:1px solid #e5e7eb;
+ border-radius:14px;
+ background:#f8fafc;
+}
+
+.driverDrawerTabs button{
+ flex:1;
+ display:flex;
+ align-items:center;
+ justify-content:center;
+ gap:8px;
+ min-height:42px;
+ border:0;
+ border-radius:10px;
+ background:transparent;
+ color:#64748b;
+ font-weight:800;
+ cursor:pointer;
+}
+
+.driverDrawerTabs button.active{
+ background:#fff;
+ color:#0f172a;
+ box-shadow:0 2px 8px rgba(15,23,42,.08);
+}
+
+.driverDrawerTabs button span{
+ min-width:23px;
+ padding:2px 7px;
+ border-radius:999px;
+ background:#e2e8f0;
+ font-size:11px;
+}
+
+.driverTransactionsPane{
+ display:flex;
+ flex-direction:column;
+ gap:14px;
+}
+
+.driverTxHead{
+ display:flex;
+ align-items:flex-start;
+ justify-content:space-between;
+ gap:16px;
+}
+
+.driverTxHead span{
+ display:block;
+ color:#64748b;
+ font-size:11px;
+ font-weight:900;
+ letter-spacing:.08em;
+}
+
+.driverTxHead h3{
+ margin:3px 0 2px;
+}
+
+.driverTxHead p{
+ margin:0;
+ color:#64748b;
+ font-size:13px;
+}
+
+.driverTxFilters{
+ display:flex;
+ gap:7px;
+ overflow-x:auto;
+ padding-bottom:2px;
+}
+
+.driverTxFilters button{
+ border:1px solid #e2e8f0;
+ border-radius:999px;
+ padding:7px 12px;
+ background:#fff;
+ color:#64748b;
+ font-size:12px;
+ font-weight:800;
+ white-space:nowrap;
+ cursor:pointer;
+}
+
+.driverTxFilters button.active{
+ border-color:#0f172a;
+ background:#0f172a;
+ color:#fff;
+}
+
+.driverTxList{
+ border:1px solid #e5e7eb;
+ border-radius:16px;
+ overflow:hidden;
+ background:#fff;
+}
+
+.driverTxRow{
+ display:grid;
+ grid-template-columns:42px minmax(0,1fr) auto;
+ gap:12px;
+ align-items:center;
+ padding:13px 14px;
+ border-bottom:1px solid #eef2f7;
+}
+
+.driverTxRow:last-child{
+ border-bottom:0;
+}
+
+.driverTxIcon{
+ width:38px;
+ height:38px;
+ display:flex;
+ align-items:center;
+ justify-content:center;
+ border-radius:11px;
+ background:#ecfdf5;
+ color:#047857;
+}
+
+.driverTxIcon.out{
+ background:#fff1f2;
+ color:#be123c;
+}
+
+.driverTxIcon svg{
+ width:18px;
+ height:18px;
+}
+
+.driverTxMain{
+ min-width:0;
+}
+
+.driverTxMain>div{
+ display:flex;
+ align-items:center;
+ gap:8px;
+ flex-wrap:wrap;
+}
+
+.driverTxMain b{
+ font-size:13px;
+ color:#0f172a;
+}
+
+.driverTxMain span,
+.driverTxMain small{
+ display:block;
+ margin-top:3px;
+ color:#64748b;
+ font-size:11px;
+ overflow:hidden;
+ text-overflow:ellipsis;
+ white-space:nowrap;
+}
+
+.driverTxAmount{
+ text-align:right;
+}
+
+.driverTxAmount b{
+ display:block;
+ color:#047857;
+ font-size:14px;
+}
+
+.driverTxAmount.out b{
+ color:#be123c;
+}
+
+.driverTxAmount small{
+ display:block;
+ margin-top:3px;
+ color:#64748b;
+ font-size:10px;
+}
+
+.driverTxEmpty{
+ min-height:170px;
+ display:flex;
+ flex-direction:column;
+ align-items:center;
+ justify-content:center;
+ gap:7px;
+ border:1px dashed #cbd5e1;
+ border-radius:16px;
+ color:#64748b;
+ text-align:center;
+}
+
+.driverTxEmpty svg{
+ width:24px;
+ height:24px;
+}
+
+.driverTxEmpty b{
+ color:#334155;
+}
+
+.driverTxEmpty span{
+ font-size:12px;
+}
+
+.driverTxFoot{
+ display:flex;
+ gap:8px;
+ align-items:flex-start;
+ padding:12px 14px;
+ border-radius:13px;
+ background:#f8fafc;
+ color:#64748b;
+ font-size:11px;
+ line-height:1.45;
+}
+
+.driverTxFoot svg{
+ width:16px;
+ min-width:16px;
+}
+
+@media(max-width:600px){
+ .driverFinanceDrawer{
+  width:100vw;
+  max-width:none;
+ }
+
+ .driverTxRow{
+  grid-template-columns:36px minmax(0,1fr);
+ }
+
+ .driverTxAmount{
+  grid-column:2;
+  text-align:left;
+ }
+
+ .driverTxAmount b,
+ .driverTxAmount small{
+  display:inline;
+  margin-right:8px;
+ }
+}
+
+.driverTxRow{
+ width:100%;
+ border-top:0;
+ border-left:0;
+ border-right:0;
+ text-align:left;
+ font:inherit;
+ cursor:pointer;
+}
+
+.driverTxRow:hover{
+ background:#f8fafc;
+}
+
+.driverTxRow:focus-visible{
+ outline:2px solid #2563eb;
+ outline-offset:-2px;
+}
+
+.transactionDetailLayer{
+ z-index:70;
+}

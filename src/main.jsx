@@ -3,7 +3,7 @@ import { App } from '@capacitor/app';
 import React,{useEffect,useMemo,useRef,useState}from'react';
 import{createRoot}from'react-dom/client';
 import { QRCodeSVG } from 'qrcode.react';
-import{Activity,AlertTriangle,ArrowRight,ArrowUpRight,BadgePoundSterling,Banknote,Bell,CalendarDays,CheckCircle2,ChevronRight,Clock3,CreditCard,Database,FileClock,Hash,Home,Info,KeyRound,LayoutDashboard,LogIn,LogOut,Mail,Menu,Phone,PlayCircle,RefreshCw,Search,Send,Settings,ShieldCheck,Smartphone,Users,UserCheck,WalletCards,X,Sun,Moon,Eye,EyeOff}from'lucide-react';
+import{Activity,AlertTriangle,ArrowDownLeft,ArrowRight,ArrowUpRight,BadgePoundSterling,Banknote,Bell,CalendarDays,CheckCircle2,ChevronRight,Clock3,CreditCard,Database,FileClock,Hash,Home,Info,KeyRound,LayoutDashboard,LogIn,LogOut,Mail,Menu,Phone,PlayCircle,RefreshCw,Search,Send,Settings,ShieldCheck,Smartphone,Users,UserCheck,WalletCards,X,Sun,Moon,Eye,EyeOff}from'lucide-react';
 import fleetpayMark from './assets/fleetpay-mark.png';
 import'./styles.css';
 const money=v=>v==null?'—':new Intl.NumberFormat('en-GB',{style:'currency',currency:'GBP'}).format(v);
@@ -158,6 +158,10 @@ function AdminApp(){
  const[driverUsers,setDriverUsers]=useState([]),[staff,setStaff]=useState([]),[securityLogs,setSecurityLogs]=useState([]);
  const[txQ,setTxQ]=useState(''),[txType,setTxType]=useState('all'),[txStatus,setTxStatus]=useState('all'),[txCategory,setTxCategory]=useState('all'),[txDateFrom,setTxDateFrom]=useState(''),[txDateTo,setTxDateTo]=useState('');
  const[q,setQ]=useState(''),[filter,setFilter]=useState('all'),[selected,setSelected]=useState(null),[selectedTx,setSelectedTx]=useState(null);
+ const[driverDrawerTab,setDriverDrawerTab]=useState('overview');
+ const[driverTxFilter,setDriverTxFilter]=useState('all');
+ const[driverTransactions,setDriverTransactions]=useState([]);
+ const[driverTransactionsLoading,setDriverTransactionsLoading]=useState(false);
  const[selectedWeeklyPayouts,setSelectedWeeklyPayouts]=useState([]);
  const[mobileNav,setMobileNav]=useState(false),[loading,setLoading]=useState(false),[err,setErr]=useState('');
  const[sessionBooting,setSessionBooting]=useState(Boolean(token));
@@ -185,6 +189,21 @@ function AdminApp(){
  setTransactions((await api(`/api/admin/transactions?${p}`)).transactions||[])
 });
  const loadDrivers=()=>safeLoad(async()=>{setLoading(true);try{const j=await api('/api/drivers');setDrivers(j.drivers||[]);setMeta(j)}finally{setLoading(false)}});
+
+ const loadDriverTransactions=driverId=>safeLoad(async()=>{
+  setDriverTransactionsLoading(true);
+  try{
+   const p=new URLSearchParams({
+    limit:'500',
+    driverId:String(driverId)
+   });
+   const j=await api(`/api/admin/transactions?${p}`);
+   setDriverTransactions(j.transactions||[]);
+  }finally{
+   setDriverTransactionsLoading(false);
+  }
+ });
+
  const loadSettings=()=>safeLoad(async()=>setSettings(await api('/api/admin/operations-settings')));
  const loadIntegrations=()=>safeLoad(async()=>setIntegrations(await api('/api/admin/integrations')));
  const loadTwilioBalance=()=>safeLoad(async()=>setTwilioBalance(await api('/api/admin/twilio/balance')));
@@ -205,6 +224,20 @@ function AdminApp(){
  const loadStaff=()=>safeLoad(async()=>setStaff((await api('/api/admin/staff')).staff||[]));
  const loadSecurity=()=>safeLoad(async()=>setSecurityLogs((await api('/api/admin/security')).logs||[]));
  const loadDemo=()=>safeLoad(async()=>setDemo(await api('/api/admin/demo')));
+
+ useEffect(()=>{
+  if(!selected?.driverId){
+   setDriverTransactions([]);
+   setDriverDrawerTab('overview');
+   return;
+  }
+
+  setDriverDrawerTab('overview');
+  setDriverTxFilter('all');
+  setDriverTransactions([]);
+  loadDriverTransactions(selected.driverId);
+ },[selected?.driverId]);
+
  async function refreshCore(){await Promise.all([loadOverview(),loadTransactions(),loadDrivers(),loadSettings(),loadIntegrations(),loadTwilioBalance(),loadSett(),loadMonday(),loadOutstanding(),loadFees(),loadEarlySummary(),loadCustomerAdmin()])}
  useEffect(()=>{
   let alive=true;
@@ -2776,7 +2809,7 @@ function AdminApp(){
     </div></>}
    </div>
   </main>
-  {selectedTx&&<div className="drawerBack" onClick={()=>setSelectedTx(null)}><aside className="drawer txDrawer" onClick={e=>e.stopPropagation()}><button className="drawerClose" onClick={()=>setSelectedTx(null)}><X/></button><div className="txDrawerHead">
+  {selectedTx&&<div className="drawerBack transactionDetailLayer" onClick={()=>setSelectedTx(null)}><aside className="drawer txDrawer" onClick={e=>e.stopPropagation()}><button className="drawerClose" onClick={()=>setSelectedTx(null)}><X/></button><div className="txDrawerHead">
    <div className={`txIcon large ${selectedTx.direction}`}><CreditCard/></div>
    <div>
     <span>{selectedTx.typeLabel}</span>
@@ -2831,25 +2864,233 @@ function AdminApp(){
     ['Provider reference',selectedTx.providerRef||'—']
    ].map(([a,b])=><div key={a}><span>{a}</span><b>{b}</b></div>)}
   </div><div className="secureFoot"><ShieldCheck/><span>Transaction detail is read-only. Changes are made through controlled workflows and recorded in the audit trail.</span></div></aside></div>}
-  {selected&&<div className="drawerBack" onClick={()=>setSelected(null)}><aside className="drawer" onClick={e=>e.stopPropagation()}><button className="drawerClose" onClick={()=>setSelected(null)}><X/></button><div className="driverIdentity"><div className="avatar">{selected.forename?.[0]}{selected.surname?.[0]}</div><div><span>CALLSIGN {selected.callsign}</span><h2>{selected.fullName}</h2><p>Autocab Driver ID {selected.driverId}</p></div></div><div className={`balanceHero ${(selected.currentBalance??0)<0?'red':''}`}><span>Current balance</span><strong>{money(selected.currentBalance)}</strong><small>Previous {money(selected.previousBalance)}</small></div><div className="infoGrid"><div><Phone/><span>Mobile</span><b>{selected.mobile||'Not stored'}</b></div><div><Mail/><span>Email</span><b>{selected.email||'Not stored'}</b></div><div><Clock3/><span>Last processed</span><b>{dt(selected.lastProcessed)}</b></div><div><Hash/><span>Processed by</span><b>{selected.lastProcessedBy||'—'}</b></div></div><div className="payoutAccountCard"><div className="payoutAccountHead"><div className="payoutAccountIcon"><Banknote/></div><div><span>PAYOUT ACCOUNT</span><h3>Driver bank details</h3></div><Pill tone={bankTone(selected.bankAccount)}>{selected.bankAccount?.label||'Bank details missing'}</Pill></div>{selected.bankAccount?.ready?<div className="payoutAccountDetails"><div><span>Account holder</span><b>{selected.bankAccount.accountHolder||'Saved securely'}</b></div><div><span>Sort code</span><b>{selected.bankAccount.sortCodeMasked}</b></div><div><span>Account number</span><b>{selected.bankAccount.accountNumberMasked}</b></div><div><span>Added</span><b>{dt(selected.bankAccount.createdAt)}</b></div><div><span>Last changed</span><b>{dt(selected.bankAccount.updatedAt)}</b></div></div>:<div className="bankMissingNotice"><AlertTriangle/><div><b>No payout bank account</b><span>This driver must add bank details in the FleetPay app before a payout can be released.</span></div></div>} {selected.bankAccount?.changedRecently&&<div className="bankRecentNotice"><Clock3/><div><b>Bank details changed recently</b><span>Changed {dt(selected.bankAccount.updatedAt)}. Confirm the driver expected this change if anything looks unusual.</span></div></div>}<small className="bankSecurityNote"><ShieldCheck/> FleetPay only exposes masked account details to office users. Full bank details remain encrypted.</small></div>
+  {selected&&<div className="drawerBack" onClick={()=>setSelected(null)}>
+   <aside className="drawer driverFinanceDrawer" onClick={e=>e.stopPropagation()}>
+    <button className="drawerClose" onClick={()=>setSelected(null)}><X/></button>
 
-<div className={`payoutControlCard ${selected.payoutExcluded?'excluded':''}`}>
- <div>
-  <span>PAYOUT ELIGIBILITY</span>
-  <h3>{selected.payoutExcluded?'Excluded from payouts':'Payouts enabled'}</h3>
-  <p>{selected.payoutExcluded
-   ?(selected.payoutExclusionReason||'This driver is permanently excluded from FleetPay payouts.')
-   :'This driver can be included in eligible FleetPay payout runs.'}</p>
- </div>
- {canMoney&&<button
-  className={selected.payoutExcluded?'secondary':'dangerAction'}
-  onClick={()=>setDriverPayoutExclusion(selected)}
- >
-  {selected.payoutExcluded?'Enable payouts':'Exclude from payouts'}
- </button>}
-</div>
+    <div className="driverIdentity">
+     <div className="avatar">{selected.forename?.[0]}{selected.surname?.[0]}</div>
+     <div>
+      <span>CALLSIGN {selected.callsign}</span>
+      <h2>{selected.fullName}</h2>
+      <p>Autocab Driver ID {selected.driverId}</p>
+     </div>
+    </div>
 
-</aside></div>}
+    <div className={`balanceHero ${(selected.currentBalance??0)<0?'red':''}`}>
+     <span>Current balance</span>
+     <strong>{money(selected.currentBalance)}</strong>
+     <small>Previous {money(selected.previousBalance)}</small>
+    </div>
+
+    <div className="driverDrawerTabs">
+     <button
+      className={driverDrawerTab==='overview'?'active':''}
+      onClick={()=>setDriverDrawerTab('overview')}
+     >
+      Overview
+     </button>
+     <button
+      className={driverDrawerTab==='transactions'?'active':''}
+      onClick={()=>setDriverDrawerTab('transactions')}
+     >
+      Transactions
+      {driverTransactions.length>0&&<span>{driverTransactions.length}</span>}
+     </button>
+    </div>
+
+    {driverDrawerTab==='overview'&&<>
+     <div className="infoGrid">
+      <div><Phone/><span>Mobile</span><b>{selected.mobile||'Not stored'}</b></div>
+      <div><Mail/><span>Email</span><b>{selected.email||'Not stored'}</b></div>
+      <div><Clock3/><span>Last processed</span><b>{dt(selected.lastProcessed)}</b></div>
+      <div><Hash/><span>Processed by</span><b>{selected.lastProcessedBy||'—'}</b></div>
+     </div>
+
+     <div className="payoutAccountCard">
+      <div className="payoutAccountHead">
+       <div className="payoutAccountIcon"><Banknote/></div>
+       <div><span>PAYOUT ACCOUNT</span><h3>Driver bank details</h3></div>
+       <Pill tone={bankTone(selected.bankAccount)}>
+        {selected.bankAccount?.label||'Bank details missing'}
+       </Pill>
+      </div>
+
+      {selected.bankAccount?.ready
+       ?<div className="payoutAccountDetails">
+         <div><span>Account holder</span><b>{selected.bankAccount.accountHolder||'Saved securely'}</b></div>
+         <div><span>Sort code</span><b>{selected.bankAccount.sortCodeMasked}</b></div>
+         <div><span>Account number</span><b>{selected.bankAccount.accountNumberMasked}</b></div>
+         <div><span>Added</span><b>{dt(selected.bankAccount.createdAt)}</b></div>
+         <div><span>Last changed</span><b>{dt(selected.bankAccount.updatedAt)}</b></div>
+        </div>
+       :<div className="bankMissingNotice">
+         <AlertTriangle/>
+         <div>
+          <b>No payout bank account</b>
+          <span>This driver must add bank details in the FleetPay app before a payout can be released.</span>
+         </div>
+        </div>
+      }
+
+      {selected.bankAccount?.changedRecently&&
+       <div className="bankRecentNotice">
+        <Clock3/>
+        <div>
+         <b>Bank details changed recently</b>
+         <span>Changed {dt(selected.bankAccount.updatedAt)}. Confirm the driver expected this change if anything looks unusual.</span>
+        </div>
+       </div>
+      }
+
+      <small className="bankSecurityNote">
+       <ShieldCheck/> FleetPay only exposes masked account details to office users. Full bank details remain encrypted.
+      </small>
+     </div>
+
+     <div className={`payoutControlCard ${selected.payoutExcluded?'excluded':''}`}>
+      <div>
+       <span>PAYOUT ELIGIBILITY</span>
+       <h3>{selected.payoutExcluded?'Excluded from payouts':'Payouts enabled'}</h3>
+       <p>
+        {selected.payoutExcluded
+         ?(selected.payoutExclusionReason||'This driver is permanently excluded from FleetPay payouts.')
+         :'This driver can be included in eligible FleetPay payout runs.'}
+       </p>
+      </div>
+
+      {canMoney&&<button
+       className={selected.payoutExcluded?'secondary':'dangerAction'}
+       onClick={()=>setDriverPayoutExclusion(selected)}
+      >
+       {selected.payoutExcluded?'Enable payouts':'Exclude from payouts'}
+      </button>}
+     </div>
+    </>}
+
+    {driverDrawerTab==='transactions'&&
+     <div className="driverTransactionsPane">
+
+      <div className="driverTxHead">
+       <div>
+        <span>FINANCIAL HISTORY</span>
+        <h3>Driver transactions</h3>
+        <p>Payments, payouts, fees and manual adjustments recorded by FleetPay.</p>
+       </div>
+       <button
+        className="mini"
+        disabled={driverTransactionsLoading}
+        onClick={()=>loadDriverTransactions(selected.driverId)}
+       >
+        <RefreshCw className={driverTransactionsLoading?'spin':''}/>
+        Refresh
+       </button>
+      </div>
+
+      <div className="driverTxFilters">
+       {[
+        ['all','All'],
+        ['payments','Payments'],
+        ['payouts','Payouts'],
+        ['fees','Fees'],
+        ['adjustments','Adjustments']
+       ].map(([key,label])=>
+        <button
+         key={key}
+         className={driverTxFilter===key?'active':''}
+         onClick={()=>setDriverTxFilter(key)}
+        >
+         {label}
+        </button>
+       )}
+      </div>
+
+      {driverTransactionsLoading&&driverTransactions.length===0
+       ?<div className="driverTxEmpty">
+         <RefreshCw className="spin"/>
+         <b>Loading financial history…</b>
+        </div>
+       :(()=>{
+        const rows=driverTransactions.filter(x=>{
+         if(driverTxFilter==='all')return true;
+         if(driverTxFilter==='payments')
+          return x.type==='driver_payment'||
+                 x.type==='customer_payment'||
+                 x.type==='customer_refund';
+         if(driverTxFilter==='payouts')
+          return x.type==='weekly_payout'||x.type==='early_payout';
+         if(driverTxFilter==='fees')return x.type==='fee';
+         if(driverTxFilter==='adjustments')return x.type==='manual_adjustment';
+         return true;
+        });
+
+        return rows.length
+         ?<div className="driverTxList">
+           {rows.map(x=>
+            <button
+             type="button"
+             className="driverTxRow"
+             key={`${x.type}:${x.id}`}
+             onClick={()=>setSelectedTx(x)}
+            >
+             <div className={`driverTxIcon ${x.direction==='out'?'out':'in'}`}>
+              {x.direction==='out'?<ArrowUpRight/>:<ArrowDownLeft/>}
+             </div>
+
+             <div className="driverTxMain">
+              <div>
+               <b>{x.typeLabel}</b>
+               <Pill tone={statusTone(x.status)}>{String(x.status||'recorded').replaceAll('_',' ')}</Pill>
+              </div>
+              <span>
+               {dt(x.createdAt)}
+               {x.bookingId?` · Booking ${x.bookingId}`:''}
+              </span>
+              <small>
+               {x.bookingId
+                ?`Booking ${x.bookingId}`
+                :x.type==='driver_payment'
+                ?'Driver payment'
+                :x.type==='weekly_payout'
+                ?'Weekly payout'
+                :x.type==='early_payout'
+                ?'Early payout'
+                :x.type==='fee'
+                ?'FleetPay fee'
+                :x.type==='manual_adjustment'
+                ?'Manual adjustment'
+                :'FleetPay transaction'}
+              </small>
+             </div>
+
+             <div className={`driverTxAmount ${x.direction==='out'?'out':''}`}>
+              <b>
+               {x.direction==='out'?'-':''}{money(x.amount||0)}
+              </b>
+              {Number(x.feeAmount||0)>0&&
+               <small>Fee {money(x.feeAmount)}</small>
+              }
+             </div>
+            </button>
+           )}
+          </div>
+         :<div className="driverTxEmpty">
+           <Banknote/>
+           <b>No transactions found</b>
+           <span>No records match this filter for this driver.</span>
+          </div>;
+       })()
+      }
+
+      <div className="driverTxFoot">
+       <ShieldCheck/>
+       <span>Financial history is read-only here. Money movements are made through controlled FleetPay workflows.</span>
+      </div>
+     </div>
+    }
+
+   </aside>
+  </div>}
  </div>
 }
 
