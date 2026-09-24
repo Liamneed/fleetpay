@@ -5726,8 +5726,8 @@ app.get(
    FROM driver_payment_plans
    ORDER BY
     CASE status
-     WHEN 'active' THEN 0
-     WHEN 'defaulted' THEN 1
+     WHEN 'defaulted' THEN 0
+     WHEN 'active' THEN 1
      WHEN 'paused' THEN 2
      WHEN 'draft' THEN 3
      ELSE 4
