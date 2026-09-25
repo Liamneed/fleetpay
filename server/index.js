@@ -5720,9 +5720,26 @@ function serializePaymentPlan(row,{instalments=true,events=false}={}){
      :null;
    }catch{}
 
+   let actorName=null;
+   let actorRole=null;
+
+   if(x.actor_type==='staff'&&x.actor_id){
+    const staff=db.prepare(`
+     SELECT name,role
+     FROM staff_users
+     WHERE lower(email)=lower(?)
+     LIMIT 1
+    `).get(x.actor_id);
+
+    actorName=staff?.name||null;
+    actorRole=staff?.role||null;
+   }
+
    return {
     ...x,
-    metadata
+    metadata,
+    actorName,
+    actorRole
    };
   });
  }

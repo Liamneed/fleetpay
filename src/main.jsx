@@ -4432,8 +4432,19 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
 
             <small>
              {event.actorType==='system'
-              ?'FleetPay system'
-              :event.actorId||event.actorType||'FleetPay'}
+              ?event.actorId==='stripe'
+               ?'Stripe'
+               :'FleetPay system'
+              :event.actorType==='staff'
+               ?[
+                 event.actorName||event.actorId||'FleetPay staff',
+                 event.actorRole
+                  ?String(event.actorRole)
+                    .replaceAll('_',' ')
+                    .replace(/\b\w/g,c=>c.toUpperCase())
+                  :''
+                ].filter(Boolean).join(' · ')
+               :event.actorId||event.actorType||'FleetPay'}
             </small>
            </div>
           </div>
