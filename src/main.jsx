@@ -3655,7 +3655,11 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
        <p>Manage agreed instalment plans for outstanding driver balances. FleetPay tracks payments, remaining balances and the next instalment automatically.</p>
       </div>
       <div className="rowActions">
-       <button className="secondary" onClick={downloadPaymentPlansCsv}>
+       <button
+        className="secondary"
+        disabled={!paymentPlans?.plans?.length}
+        onClick={downloadPaymentPlansCsv}
+       >
         Export CSV
        </button>
        <button className="secondary" onClick={loadPaymentPlans}>
