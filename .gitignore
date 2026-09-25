@@ -47,3 +47,17 @@ logs/
 tmp/
 temp/
 .cache/
+
+# FleetPay local backups / working copies
+server/*.before-*
+src/*.before-*
+booking-*-before.json
+*.backup.png
+
+# Android release output / signing secrets
+android/app/release/
+*.jks
+*.keystore
+
+# Accidental duplicate Capacitor config copies
+ios/App/App/config\ *.xml
