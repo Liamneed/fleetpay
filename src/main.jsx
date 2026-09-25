@@ -4318,6 +4318,28 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
        <div><span>Next due</span><b>{dateOnly(selectedPaymentPlan.nextDueAt)}</b></div>
       </div>
 
+      <div className="paymentPlanNotes">
+       <span>Audit details</span>
+       <div className="detailList">
+        <div>
+         <span>Created</span>
+         <b>{selectedPaymentPlan.createdAt?dt(selectedPaymentPlan.createdAt):'—'}</b>
+        </div>
+        <div>
+         <span>Created by</span>
+         <b>{selectedPaymentPlan.createdBy||'FleetPay'}</b>
+        </div>
+        <div>
+         <span>Last updated</span>
+         <b>{selectedPaymentPlan.updatedAt?dt(selectedPaymentPlan.updatedAt):'—'}</b>
+        </div>
+        <div>
+         <span>Updated by</span>
+         <b>{selectedPaymentPlan.updatedBy||'FleetPay'}</b>
+        </div>
+       </div>
+      </div>
+
       {selectedPaymentPlan.status==='defaulted'&&
        <div className="paymentPlanNotice danger">
         <AlertTriangle/>
