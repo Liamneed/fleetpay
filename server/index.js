@@ -5748,6 +5748,102 @@ function serializePaymentPlan(row,{instalments=true,events=false}={}){
 }
 
 app.get(
+ '/api/admin/payment-plans/csv',
+ adminAuth,
+ requireStaffRole('administrator','finance','office','readonly'),
+ (req,res)=>{
+  refreshPaymentPlanStatuses();
+
+  const rows=db.prepare(`
+   SELECT
+    p.*,
+    (
+     SELECT COUNT(*)
+     FROM driver_payment_plan_instalments i
+     WHERE i.plan_id=p.id
+       AND i.status='overdue'
+    ) overdue_instalments
+   FROM driver_payment_plans p
+   ORDER BY
+    CASE p.status
+     WHEN 'defaulted' THEN 0
+     WHEN 'active' THEN 1
+     WHEN 'paused' THEN 2
+     WHEN 'draft' THEN 3
+     ELSE 4
+    END,
+    p.created_at DESC
+  `).all();
+
+  const esc=v=>{
+   let value=String(v??'');
+
+   if(/^[=+\-@]/.test(value)){
+    value=`'${value}`;
+   }
+
+   return `"${value.replaceAll('"','""')}"`;
+  };
+
+  const csv=[
+   [
+    'Plan ID',
+    'Driver ID',
+    'Callsign',
+    'Driver Name',
+    'Status',
+    'Original Amount',
+    'Plan Amount',
+    'Paid Amount',
+    'Remaining Amount',
+    'Frequency',
+    'Instalment Amount',
+    'Start Date',
+    'Next Due',
+    'Overdue Instalments',
+    'Created By',
+    'Created At',
+    'Updated By',
+    'Updated At',
+    'Default Reason',
+    'Pause Reason',
+    'Cancellation Reason'
+   ].join(','),
+   ...rows.map(x=>[
+    esc(x.id),
+    Number(x.driver_id||0),
+    esc(x.callsign),
+    esc(x.driver_name),
+    esc(x.status),
+    Number(x.original_amount||0).toFixed(2),
+    Number(x.plan_amount||0).toFixed(2),
+    Number(x.paid_amount||0).toFixed(2),
+    Number(x.remaining_amount||0).toFixed(2),
+    esc(x.frequency),
+    Number(x.instalment_amount||0).toFixed(2),
+    esc(x.start_date),
+    esc(x.next_due_at),
+    Number(x.overdue_instalments||0),
+    esc(x.created_by),
+    esc(x.created_at),
+    esc(x.updated_by),
+    esc(x.updated_at),
+    esc(x.default_reason),
+    esc(x.pause_reason),
+    esc(x.cancellation_reason)
+   ].join(','))
+  ].join('\n');
+
+  res.setHeader('Content-Type','text/csv');
+  res.setHeader(
+   'Content-Disposition',
+   'attachment; filename=FleetPay-payment-plans.csv'
+  );
+  res.send(csv);
+ }
+);
+
+app.get(
  '/api/admin/payment-plans',
  adminAuth,
  requireStaffRole('administrator','finance','office','readonly'),
