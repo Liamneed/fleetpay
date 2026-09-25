@@ -1400,6 +1400,50 @@ function AdminApp(){
   );
  }
 
+ async function recordManualExtraPlanPayment(plan){
+  const current=plan?.instalments?.find(x=>['due','overdue'].includes(x.status));
+  if(!current)return alert('No current payment-plan instalment could be found.');
+
+  const currentRemaining=Math.max(0,Number(current.amount||0)-Number(current.paidAmount||0));
+  const maxExtra=Math.max(0,Number(plan.remainingAmount||0)-currentRemaining);
+
+  if(maxExtra<=0.00001){
+   return alert('There is no future principal available for an extra payment. Pay the current instalment or use Settle early.');
+  }
+
+  const raw=prompt(
+   `Record an extra payment already received?\n\nMaximum extra payment: ${money(maxExtra)}\nCurrent instalment remaining: ${money(currentRemaining)}\n\nThis reduces future plan principal only.`,
+   ''
+  );
+  if(raw===null)return;
+
+  const amount=Number(raw);
+  if(!Number.isFinite(amount)||amount<=0)return alert('Enter a valid extra payment amount.');
+  if(amount>maxExtra+0.00001)return alert(`Extra payment cannot exceed ${money(maxExtra)}.`);
+
+  if(!confirm(
+   `FINAL CHECK\n\nRecord ${money(amount)} as money already received from callsign ${plan.callsign}?\n\n`+
+   `This will reduce the FleetPay payment-plan principal.\n`+
+   `It will NOT post another adjustment to Autocab.\n`+
+   `The current ${money(currentRemaining)} instalment remains due.`
+  ))return;
+
+  setPlanActionBusy(true);
+  try{
+   const j=await api(`/api/admin/payment-plans/${plan.id}/extra-payment/manual`,{
+    method:'POST',
+    body:JSON.stringify({amount})
+   });
+   setSelectedPaymentPlan(j.plan);
+   await Promise.all([loadPaymentPlans(),loadOutstanding(),loadOverview()]);
+   alert(`${money(amount)} extra payment recorded. Remaining plan balance: ${money(j.plan.remainingAmount)}.`);
+  }catch(e){
+   alert(e.message);
+  }finally{
+   setPlanActionBusy(false);
+  }
+ }
+
  async function settlePaymentPlanEarly(plan){
   const remaining=Number(plan.remainingAmount||0);
 
@@ -1496,6 +1540,7 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
  async function markFeesInvoiced(){const invoiceRef=prompt('Enter the invoice reference/number:');if(!invoiceRef?.trim())return;try{const j=await api('/api/admin/fees/mark-invoiced',{method:'POST',body:JSON.stringify({invoiceRef})});alert(`${j.count} fee records marked invoiced.`);await loadFees()}catch(e){alert(e.message)}}
  async function downloadFeesCsv(){try{const r=await fetch(`${API_BASE}/api/admin/fees/csv?status=all`,{headers:{Authorization:`Bearer ${token}`}});if(!r.ok)throw new Error('Could not export fees');const b=await r.blob(),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download='FleetPay-fees.csv';a.click();URL.revokeObjectURL(u)}catch(e){alert(e.message)}}
  async function downloadPaymentPlansCsv(){try{const r=await fetch(`${API_BASE}/api/admin/payment-plans/csv`,{headers:{Authorization:`Bearer ${token}`}});if(!r.ok)throw new Error('Could not export payment plans');const b=await r.blob(),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download='FleetPay-payment-plans.csv';a.click();URL.revokeObjectURL(u)}catch(e){alert(e.message)}}
+ async function downloadOfficeCsv(dataset,filename){try{const r=await fetch(`${API_BASE}/api/admin/exports/${dataset}.csv`,{headers:{Authorization:`Bearer ${token}`}});if(!r.ok){let message='Could not export CSV';try{const j=await r.json();message=j.error||message}catch{}throw new Error(message)}const b=await r.blob(),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download=filename||`FleetPay-${dataset}.csv`;a.click();URL.revokeObjectURL(u)}catch(e){alert(e.message)}}
  async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff',{method:'POST',body:JSON.stringify(newStaff)});setNewStaff({name:'',email:'',role:'office',password:''});setShowNewStaff(false);await loadStaff()}catch(e){alert(e.message)}}
  async function updateStaff(u,changes){try{await api(`/api/admin/staff/${u.id}`,{method:'PATCH',body:JSON.stringify(changes)});await loadStaff()}catch(e){alert(e.message)}}
  async function setApproval(u,approved){try{await api(`/api/admin/users/${u.id}`,{method:'PATCH',body:JSON.stringify({approved})});await loadDriverUsers()}catch(e){alert(e.message)}}
@@ -1555,6 +1600,23 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
  async function launchReset(){if(resetPhrase!=='RESET FLEETPAY FOR LIVE LAUNCH')return alert('Type the confirmation phrase exactly.');if(!confirm('FINAL CHECK: create a backup and clear FleetPay operational data for live launch?'))return;try{const j=await api('/api/admin/launch-reset',{method:'POST',body:JSON.stringify({phrase:resetPhrase,includeDriverAccounts:resetDrivers})});setResetPhrase('');alert(`Launch reset complete. Backup: ${j.backupFile}`);await refreshCore()}catch(e){alert(e.message)}}
  const LiveRunCard=({r})=>{const idx=r.status==='ready'?3:r.status==='funding_pending'?4:r.status==='funded'?5:['submitted_sandbox','submitted','processing'].includes(r.status)?6:r.status==='paid'?7:r.status==='cancelled'?-1:3;const steps=r.runType==='weekly'?['Rent Sheets','Sync & approve','Lock run','Funding','Funds cleared','Release','Autocab','Reconciled']:['Sync balance','Approve','Lock run','Funding','Funds cleared','Release','Autocab','Reconciled'];const canCancel=['ready','funding_pending','funded'].includes(r.status)&&!r.providerRef&&!r.releasedAt;return <div className={`liveWorkflowCard ${r.status==='cancelled'?'cancelled':''}`}><div className="liveWorkflowHead"><div><span>{r.runType==='weekly'?'WEEKLY PAYMENT RUN':'EARLY PAYOUT RUN'} · {dt(r.createdAt)}</span><h3>{money(r.totalAmount)}</h3><p>{r.itemCount} drivers · {r.id}</p></div><Pill tone={statusTone(r.status)}>{String(r.status).replaceAll('_',' ')}</Pill></div><div className="liveSteps">{steps.map((x,i)=><div key={x} className={`${idx>=0&&i<=idx?'done':''} ${i===idx?'current':''}`}><span>{i<idx?'✓':i+1}</span><b>{x}</b></div>)}</div>{r.status==='ready'&&<div className="operatorWarning"><AlertTriangle/><div><b>Funding required before release</b><span>Approved drivers are locked into this run. Transfer the required funds, then record that the transfer has been sent.</span></div></div>}{r.status==='funding_pending'&&<div className="operatorWarning blue"><Clock3/><div><b>Waiting for cleared funds</b><span>Do not release the payment run until the funds are visible as cleared in the payout account.</span></div></div>}{r.status==='funded'&&<div className="operatorWarning green"><CheckCircle2/><div><b>Funding gate passed</b><span>Cleared funds have been confirmed. One final operator check is required before release.</span></div></div>}<div className="runCardActions liveRunActions">{canCancel&&canMoney&&<button className="dangerOutline" onClick={()=>cancelPayoutRun(r)}><X/>Cancel run</button>}{r.status==='ready'&&canMoney&&<button className="secondary" onClick={()=>confirmFundingSent(r)}><Banknote/>Funding transfer sent</button>}{r.status==='funding_pending'&&canMoney&&<button className="primary" onClick={()=>confirmFundsCleared(r)}><CheckCircle2/>Confirm funds cleared</button>}{r.status==='funded'&&integrations?.wise?.environment==='sandbox'&&canMoney&&<button className="primary" onClick={()=>sendWiseSandbox(r)}><Send/>Release to Wise sandbox</button>}{r.status==='funded'&&integrations?.wise?.environment!=='sandbox'&&<span className="tinyNote">Live provider release will unlock when Wise production payout API is connected.</span>}{['submitted_sandbox','submitted','processing'].includes(r.status)&&canMoney&&<button className="primary" onClick={()=>markRunPaid(r)}><ShieldCheck/>Confirm paid & update Autocab</button>}</div>{r.status==='paid'&&<div className="demoComplete"><CheckCircle2/><div><b>Run reconciled</b><span>Provider payment confirmed and matching Autocab updates completed.</span></div></div>}{r.status==='cancelled'&&<div className="cancelledRunNote"><X/><span>Cancelled before release. Included drivers were returned to Approved.</span></div>}</div>};
    const txTypes=[['all','All activity'],['customer_payment','Customer payments'],['customer_refund','Customer refunds'],['driver_payment','Driver payments'],['weekly_payout','Weekly payouts'],['early_payout','Early payouts'],['fee','Fees']];
+   const officeExportByView={
+    transactions:{dataset:'transactions',filename:'FleetPay-transactions.csv'},
+    customerPayments:{dataset:'customer-payments',filename:'FleetPay-customer-payments.csv'},
+    monday:{dataset:'monday-settlements',filename:'FleetPay-monday-settlements.csv'},
+    early:{dataset:'early-payouts',filename:'FleetPay-early-payouts.csv'},
+    outstanding:{dataset:'outstanding',filename:'FleetPay-outstanding.csv'},
+    drivers:{dataset:'drivers',filename:'FleetPay-drivers.csv'},
+    access:{dataset:'access',filename:'FleetPay-access.csv'},
+    security:{dataset:'audit',filename:'FleetPay-audit.csv'}
+   };
+   const currentOfficeExport=officeExportByView[view]||null;
+   const exportCurrentOfficeView=()=>{
+    if(view==='paymentPlans')return downloadPaymentPlansCsv();
+    if(view==='fees')return downloadFeesCsv();
+    if(currentOfficeExport)return downloadOfficeCsv(currentOfficeExport.dataset,currentOfficeExport.filename);
+   };
+   const canExportCurrentView=Boolean(currentOfficeExport)||view==='paymentPlans'||view==='fees';
  return <div className="shell officeV2">
   <aside className={`sidebar officeSidebar ${mobileNav?'open':''}`}>
    <div className="sideTop"><Logo/><button className="mobileClose" onClick={()=>setMobileNav(false)}><X/></button></div>
@@ -1564,7 +1626,7 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
    <button className="logoutBtn" onClick={logout}><LogOut/>Sign out</button>
   </aside>
   <main className="main officeMain">
-   <header className="topbar officeTopbar"><button className="menuBtn" onClick={()=>setMobileNav(true)}><Menu/></button><div><span className="eyebrow">FLEETPAY OFFICE</span><h1>{nav.find(x=>x[0]===view)?.[2]||'Office'}</h1></div><div className="topActions"><span className={`envBadge ${integrations?.stripe?.testMode||integrations?.wise?.environment==='sandbox'?'test':'live'}`}>{integrations?.stripe?.testMode||integrations?.wise?.environment==='sandbox'?'TEST ENVIRONMENT':'LIVE'}</span><button className="iconTextButton" onClick={refreshCore}><RefreshCw className={loading?'spin':''}/>Refresh</button></div></header>
+   <header className="topbar officeTopbar"><button className="menuBtn" onClick={()=>setMobileNav(true)}><Menu/></button><div><span className="eyebrow">FLEETPAY OFFICE</span><h1>{nav.find(x=>x[0]===view)?.[2]||'Office'}</h1></div><div className="topActions"><span className={`envBadge ${integrations?.stripe?.testMode||integrations?.wise?.environment==='sandbox'?'test':'live'}`}>{integrations?.stripe?.testMode||integrations?.wise?.environment==='sandbox'?'TEST ENVIRONMENT':'LIVE'}</span>{canExportCurrentView&&<button className="iconTextButton" onClick={exportCurrentOfficeView}><FileClock/>Export CSV</button>}<button className="iconTextButton" onClick={refreshCore}><RefreshCw className={loading?'spin':''}/>Refresh</button></div></header>
    <div className="content officeContent">
     {err&&<div className="inlineError"><AlertTriangle/>{err}</div>}
     {view==='dashboard'&&<>
@@ -4946,6 +5008,13 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
          >
           <CheckCircle2/>
           {planActionBusy?'Working…':'Resume plan'}
+         </button>
+        }
+
+        {['active','defaulted'].includes(selectedPaymentPlan.status)&&
+         <button className="secondary full" disabled={planActionBusy} onClick={()=>recordManualExtraPlanPayment(selectedPaymentPlan)}>
+          <Banknote/>
+          {planActionBusy?'Working…':'Record extra payment'}
          </button>
         }
 

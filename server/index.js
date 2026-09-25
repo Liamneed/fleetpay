@@ -3793,6 +3793,10 @@ function officeTransactions(limit=250){
     x.provider_payment_intent_id||
     x.provider_session_id||
     '',
+   requestType:x.request_type||'standard',
+   paymentPlanId:x.payment_plan_id||null,
+   paymentPlanInstalmentId:x.payment_plan_instalment_id||null,
+   dueAt:x.due_at||null,
    createdAt:x.created_at,
    completedAt:x.paid_at
   });
@@ -3982,6 +3986,181 @@ app.get('/api/admin/transactions',adminAuth,(req,res)=>{
   filters:{category,type,status,dateFrom,dateTo}
  });
 });
+
+function officeCsvEscape(value){
+ let out=value;
+ if(out!==null && typeof out==='object'){
+  try{out=JSON.stringify(out)}catch{out=String(out)}
+ }
+ out=String(out??'');
+ if(/^[=+\-@]/.test(out))out=`'${out}`;
+ return `"${out.replaceAll('"','""')}"`;
+}
+
+function sendOfficeCsv(res,filename,rows,columns=null){
+ const safeRows=Array.isArray(rows)?rows:[];
+ const keys=columns?.length
+  ?columns
+  :[...new Set(safeRows.flatMap(row=>Object.keys(row||{})))];
+ const csv=[
+  keys.map(officeCsvEscape).join(','),
+  ...safeRows.map(row=>keys.map(key=>officeCsvEscape(row?.[key])).join(','))
+ ].join('\n');
+ res.setHeader('Content-Type','text/csv; charset=utf-8');
+ res.setHeader('Content-Disposition',`attachment; filename=${filename}`);
+ res.send(csv);
+}
+
+app.get('/api/admin/exports/:dataset.csv',adminAuth,requireStaffRole('administrator','finance','office','readonly'),(req,res)=>{
+ try{
+  const dataset=String(req.params.dataset||'').trim().toLowerCase();
+  let rows=[],filename=`FleetPay-${dataset}.csv`;
+
+  switch(dataset){
+   case 'transactions':
+    rows=officeTransactions(10000);
+    break;
+
+   case 'customer-payments':
+    rows=db.prepare(`
+     SELECT id,driver_id driverId,callsign,driver_name driverName,
+      booking_id bookingId,customer_name customerName,customer_mobile customerMobile,
+      customer_email customerEmail,pickup,destination,journey_at journeyAt,
+      fare_amount fareAmount,fee_amount feeAmount,total_amount totalAmount,
+      refunded_amount refundedAmount,refund_status refundStatus,status,
+      payment_status paymentStatus,job_status jobStatus,
+      driver_settlement_status driverSettlementStatus,
+      driver_settlement_amount driverSettlementAmount,
+      driver_settlement_note driverSettlementNote,provider,
+      provider_session_id providerSessionId,
+      stripe_payment_intent_id stripePaymentIntentId,payment_method paymentMethod,
+      autocab_release_status autocabReleaseStatus,
+      autocab_release_attempts autocabReleaseAttempts,
+      autocab_release_error autocabReleaseError,source,created_by createdBy,
+      created_at createdAt,updated_at updatedAt,paid_at paidAt
+     FROM customer_payments ORDER BY created_at DESC
+    `).all();
+    break;
+
+   case 'monday-settlements':
+    rows=db.prepare(`
+     SELECT id,run_date runDate,status,created_by createdBy,created_at createdAt,
+      approved_at approvedAt,payout_run_id payoutRunId
+     FROM settlement_runs WHERE run_date IS NOT NULL ORDER BY created_at DESC
+    `).all();
+    break;
+
+   case 'early-payouts':
+    rows=db.prepare(`SELECT * FROM payouts WHERE type='early' ORDER BY created_at DESC`).all();
+    break;
+
+   case 'outstanding':
+    rows=db.prepare(`
+     SELECT id,run_id runId,driver_id driverId,callsign,driver_name driverName,
+      balance,weekly_fee weeklyFee,carried_charges carriedCharges,amount,status,
+      provider,provider_session_id providerSessionId,
+      provider_payment_intent_id providerPaymentIntentId,paid_at paidAt,due_at dueAt,
+      email_sent_at emailSentAt,sms_sent_at smsSentAt,
+      communication_error communicationError,payment_plan_id paymentPlanId,
+      payment_plan_instalment_id paymentPlanInstalmentId,request_type requestType,
+      created_at createdAt,updated_at updatedAt
+     FROM payment_requests
+     WHERE status NOT IN ('paid','cancelled')
+     ORDER BY created_at DESC
+    `).all();
+    break;
+
+   case 'payment-requests':
+    rows=db.prepare(`
+     SELECT id,run_id runId,driver_id driverId,callsign,driver_name driverName,
+      balance,weekly_fee weeklyFee,carried_charges carriedCharges,amount,status,
+      provider,provider_session_id providerSessionId,
+      provider_payment_intent_id providerPaymentIntentId,paid_at paidAt,due_at dueAt,
+      email_sent_at emailSentAt,sms_sent_at smsSentAt,
+      communication_error communicationError,payment_plan_id paymentPlanId,
+      payment_plan_instalment_id paymentPlanInstalmentId,request_type requestType,
+      created_at createdAt,updated_at updatedAt
+     FROM payment_requests ORDER BY created_at DESC
+    `).all();
+    break;
+
+   case 'payouts':
+    rows=db.prepare(`SELECT * FROM payouts ORDER BY created_at DESC`).all();
+    break;
+
+   case 'payout-runs':
+    rows=db.prepare(`SELECT * FROM payout_runs ORDER BY created_at DESC`).all();
+    break;
+
+   case 'drivers':
+    rows=cacheRows().map(x=>({
+     driverId:x.driverId,callsign:x.callsign,fullName:x.fullName,forename:x.forename,
+     surname:x.surname,mobile:x.mobile,email:x.email,active:x.active,suspended:x.suspended,
+     previousBalance:x.previousBalance,currentBalance:x.currentBalance,
+     payoutExcluded:x.payoutExcluded,payoutExclusionReason:x.payoutExclusionReason,
+     lastProcessed:x.lastProcessed,lastProcessedBy:x.lastProcessedBy,syncedAt:x.syncedAt
+    }));
+    break;
+
+   case 'access':{
+    const staffRows=db.prepare(`
+     SELECT id,name,email,role,mfa_enabled mfaEnabled,active,
+      created_at createdAt,updated_at updatedAt,last_login_at lastLoginAt
+     FROM staff_users ORDER BY name,email
+    `).all().map(x=>({
+     recordType:'staff',id:x.id,driverId:'',callsign:'',name:x.name,email:x.email,
+     role:x.role,status:x.active?'active':'disabled',mfaEnabled:Boolean(x.mfaEnabled),
+     createdAt:x.createdAt,updatedAt:x.updatedAt,lastLoginAt:x.lastLoginAt
+    }));
+    const driverRows=db.prepare(`
+     SELECT id,driver_id driverId,callsign,email,approved,
+      created_at createdAt,updated_at updatedAt,last_login_at lastLoginAt
+     FROM driver_users ORDER BY callsign
+    `).all().map(x=>({
+     recordType:'driver',id:x.id,driverId:x.driverId,callsign:x.callsign,name:'',
+     email:x.email,role:'driver',status:x.approved?'approved':'suspended',mfaEnabled:'',
+     createdAt:x.createdAt,updatedAt:x.updatedAt,lastLoginAt:x.lastLoginAt
+    }));
+    rows=[...staffRows,...driverRows];
+    break;
+   }
+
+   case 'security':
+   case 'audit':
+    rows=db.prepare(`
+     SELECT id,created_at createdAt,actor_type actorType,actor_id actorId,action,
+      entity_type entityType,entity_id entityId,details_json detailsJson,ip
+     FROM audit_logs ORDER BY id DESC
+    `).all();
+    filename='FleetPay-audit.csv';
+    break;
+
+   case 'refunds':
+    rows=db.prepare(`SELECT * FROM customer_refunds ORDER BY created_at DESC`).all();
+    break;
+
+   case 'adjustments':
+    rows=db.prepare(`SELECT * FROM autocab_adjustments ORDER BY created_at DESC`).all();
+    break;
+
+   case 'communications':
+    rows=db.prepare(`SELECT * FROM communications_log ORDER BY created_at DESC`).all();
+    break;
+
+   case 'plan-allocations':
+    rows=db.prepare(`SELECT * FROM payment_plan_settlement_allocations ORDER BY created_at DESC`).all();
+    break;
+
+   default:
+    return res.status(404).json({error:'Unknown export dataset'});
+  }
+
+  sendOfficeCsv(res,filename,rows);
+ }catch(e){
+  res.status(500).json({error:e.message});
+ }
+});
+
 app.get('/api/admin/security',adminAuth,requireStaffRole('administrator'),(req,res)=>{const logs=db.prepare("SELECT id,created_at createdAt,actor_type actorType,actor_id actorId,action,entity_type entityType,entity_id entityId,details_json detailsJson,ip FROM audit_logs WHERE action LIKE 'office_%' OR action LIKE '%login%' OR action LIKE '%mfa%' ORDER BY id DESC LIMIT 300").all().map(r=>({...r,details:JSON.parse(r.detailsJson||'{}')}));res.json({logs})});
 
 
@@ -6599,7 +6778,7 @@ function applyPaymentPlanExtraPayment(paymentRequest,paidAt,options={}){
  if(paidAmount>maxExtra+0.00001)throw new Error(`Extra payment of £${paidAmount.toFixed(2)} exceeds the £${maxExtra.toFixed(2)} principal currently available for an extra payment. Manual review is required.`);
  const newPaidAmount=Number(Math.min(Number(plan.plan_amount||0),Number(plan.paid_amount||0)+paidAmount).toFixed(2));
  const newRemaining=Number(Math.max(0,planRemaining-paidAmount).toFixed(2));
- const now=paidAt||new Date().toISOString(),actorId=String(options?.actorId||'stripe');
+ const now=paidAt||new Date().toISOString(),actorId=String(options?.actorId||'stripe'),actorType=String(options?.actorType||'system');
  const future=db.prepare(`SELECT * FROM driver_payment_plan_instalments WHERE plan_id=? AND instalment_number>? AND status='scheduled' ORDER BY instalment_number DESC`).all(plan.id,current.instalment_number);
  let reduction=paidAmount;
  db.exec('BEGIN IMMEDIATE');
@@ -6612,7 +6791,7 @@ function applyPaymentPlanExtraPayment(paymentRequest,paidAt,options={}){
   }
   if(reduction>0.00001)throw new Error(`Payment-plan future schedule is short by £${reduction.toFixed(2)}. Extra payment was received but automatic plan progression requires manual review.`);
   db.prepare(`UPDATE driver_payment_plans SET paid_amount=?,remaining_amount=?,updated_at=? WHERE id=?`).run(newPaidAmount,newRemaining,now,plan.id);
-  db.prepare(`INSERT INTO driver_payment_plan_events(id,plan_id,driver_id,event_type,description,actor_type,actor_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)`).run(id('planevent'),plan.id,plan.driver_id,'extra_payment_applied',`Extra principal payment of £${paidAmount.toFixed(2)} applied`,'system',actorId,JSON.stringify({paymentRequestId:paymentRequest.id,amount:paidAmount,paidAmount:newPaidAmount,remainingAmount:newRemaining,currentInstalmentId:current.id,currentInstalmentRemaining:currentRemaining,autocabAdjusted:false}),now);
+  db.prepare(`INSERT INTO driver_payment_plan_events(id,plan_id,driver_id,event_type,description,actor_type,actor_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)`).run(id('planevent'),plan.id,plan.driver_id,'extra_payment_applied',`Extra principal payment of £${paidAmount.toFixed(2)} applied`,actorType,actorId,JSON.stringify({paymentRequestId:paymentRequest.id,amount:paidAmount,paidAmount:newPaidAmount,remainingAmount:newRemaining,currentInstalmentId:current.id,currentInstalmentRemaining:currentRemaining,autocabAdjusted:false}),now);
   db.exec('COMMIT');
  }catch(e){try{db.exec('ROLLBACK')}catch{}throw e}
  notify(plan.driver_id,'Extra payment applied',`Your extra payment of £${paidAmount.toFixed(2)} has reduced your FleetPay payment-plan balance to £${newRemaining.toFixed(2)}. Your current instalment remains £${currentRemaining.toFixed(2)}.`,'success',plan.id);
@@ -7057,6 +7236,118 @@ app.get(
   });
  }
 );
+
+app.post(
+ '/api/admin/payment-plans/:id/extra-payment/manual',
+ adminAuth,
+ requireStaffRole('administrator','finance'),
+ async(req,res)=>{
+  try{
+   refreshPaymentPlanStatuses();
+   const plan=db.prepare(`SELECT * FROM driver_payment_plans WHERE id=?`).get(req.params.id);
+   if(!plan)return res.status(404).json({error:'Payment plan not found'});
+   if(!['active','defaulted'].includes(plan.status)){
+    return res.status(409).json({error:'Manual extra payments can be recorded only while the plan is active or needs attention.'});
+   }
+
+   const current=db.prepare(`
+    SELECT * FROM driver_payment_plan_instalments
+    WHERE plan_id=? AND status IN ('due','overdue')
+    ORDER BY instalment_number LIMIT 1
+   `).get(plan.id);
+   if(!current)return res.status(409).json({error:'No current payment-plan instalment could be found.'});
+
+   const currentRemaining=Number(Math.max(0,Number(current.amount||0)-Number(current.paid_amount||0)).toFixed(2));
+   const planRemaining=Number(plan.remaining_amount||0);
+   const maxExtra=Number(Math.max(0,planRemaining-currentRemaining).toFixed(2));
+   const amount=Number(req.body.amount||0);
+
+   if(!(amount>0))return res.status(400).json({error:'Enter an extra payment amount greater than zero.'});
+   if(maxExtra<=0.00001)return res.status(409).json({error:'There is no future principal available for an extra payment. Pay the current instalment or use settle early.'});
+   if(amount>maxExtra+0.00001)return res.status(400).json({error:`Extra payment cannot exceed £${maxExtra.toFixed(2)} while the current £${currentRemaining.toFixed(2)} instalment remains due.`});
+
+   /*
+    * Pre-flight the future schedule before recording money as received.
+    * This prevents an inconsistent schedule leaving a paid request behind
+    * that cannot then be applied to plan principal.
+    */
+   const futurePrincipal=Number(
+    db.prepare(`
+     SELECT COALESCE(SUM(amount),0) total
+     FROM driver_payment_plan_instalments
+     WHERE plan_id=?
+       AND instalment_number>?
+       AND status='scheduled'
+    `).get(plan.id,current.instalment_number)?.total||0
+   );
+
+   if(amount>futurePrincipal+0.00001){
+    return res.status(409).json({
+     error:`The payment-plan schedule contains only £${futurePrincipal.toFixed(2)} of future principal. No payment has been recorded. Review the plan before continuing.`
+    });
+   }
+
+   const existing=db.prepare(`
+    SELECT * FROM payment_requests
+    WHERE payment_plan_id=? AND request_type='payment_plan_extra' AND status='open'
+    ORDER BY created_at DESC LIMIT 1
+   `).get(plan.id);
+
+   if(existing){
+    await safelyExpirePlanPaymentSession(existing);
+    db.prepare(`
+     UPDATE payment_requests
+     SET status='cancelled',payment_url=NULL,provider=NULL,
+      provider_session_id=NULL,provider_payment_intent_id=NULL,updated_at=?
+     WHERE id=? AND status='open'
+    `).run(new Date().toISOString(),existing.id);
+    audit(req,'staff',req.auth.email,'payment_plan_extra_payment_cancelled','driver_payment_plan',plan.id,{paymentRequestId:existing.id,reason:'office_manual_extra_payment_recorded'});
+   }
+
+   const now=new Date().toISOString(),today=londonWindow().date,requestId=id('request');
+
+   db.prepare(`
+    INSERT INTO payment_requests(
+     id,run_id,driver_id,callsign,driver_name,balance,weekly_fee,carried_charges,
+     amount,status,payment_url,created_at,updated_at,due_at,payment_plan_id,
+     payment_plan_instalment_id,request_type,provider,paid_at
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+   `).run(
+    requestId,null,plan.driver_id,plan.callsign,plan.driver_name,-planRemaining,0,0,
+    amount,'paid',null,now,now,today,plan.id,null,'payment_plan_extra','manual_office',now
+   );
+
+   db.prepare(`
+    INSERT INTO driver_payment_plan_events(
+     id,plan_id,driver_id,event_type,description,actor_type,actor_id,metadata_json,created_at
+    ) VALUES(?,?,?,?,?,?,?,?,?)
+   `).run(
+    id('planevent'),plan.id,plan.driver_id,'extra_payment_requested',
+    `Manual extra principal payment of £${amount.toFixed(2)} recorded`,
+    'staff',req.auth.email,
+    JSON.stringify({paymentRequestId:requestId,amount,maxExtra,currentInstalmentRemaining:currentRemaining,source:'office_manual'}),
+    now
+   );
+
+   ledger(plan.driver_id,'payment_received','debit',amount,0,'Manual extra payment received',requestId,'paid');
+   notify(plan.driver_id,'Payment received',`We have received your extra payment of £${amount.toFixed(2)}.`,'success',requestId);
+
+   const paidRequest=db.prepare(`SELECT * FROM payment_requests WHERE id=?`).get(requestId);
+   const progression=applyPaymentPlanExtraPayment(paidRequest,now,{actorId:req.auth.email,actorType:'staff'});
+
+   audit(req,'staff',req.auth.email,'payment_plan_manual_extra_payment_applied','driver_payment_plan',plan.id,{
+    paymentRequestId:requestId,amount,maxExtra,currentInstalmentRemaining:currentRemaining,
+    remainingAmount:progression?.remainingAmount,autocabAdjusted:false
+   });
+
+   const updated=db.prepare(`SELECT * FROM driver_payment_plans WHERE id=?`).get(plan.id);
+   res.json({ok:true,paymentRequestId:requestId,maxExtra,progression,plan:serializePaymentPlan(updated,{instalments:true,events:true})});
+  }catch(e){
+   res.status(409).json({error:e.message});
+  }
+ }
+);
+
 
 app.post(
  '/api/admin/payment-plans',
@@ -10134,7 +10425,117 @@ app.post('/api/admin/demo/payment-plan/cancel',adminAuth,requireStaffRole('admin
  res.json(state);
 });
 
-app.post('/api/admin/demo/payment-plan/extra-payment',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const state=readDemoState(),p=state.paymentPlan;if(!['active','defaulted'].includes(p.status))return res.status(400).json({error:'Demo extra payments are available only while the plan is active or defaulted.'});const current=p.instalments.find(x=>['due','overdue'].includes(x.status));if(!current)return res.status(400).json({error:'No current demo instalment is payable.'});const currentRemaining=Number(Math.max(0,Number(current.amount||0)-Number(current.paidAmount||0)).toFixed(2)),maxExtra=Number(Math.max(0,Number(p.remainingAmount||0)-currentRemaining).toFixed(2)),amount=Number(req.body.amount||0);if(!(amount>0))return res.status(400).json({error:'Enter a positive demo extra payment.'});if(amount>maxExtra+0.00001)return res.status(400).json({error:`Demo extra payment cannot exceed £${maxExtra.toFixed(2)} while the current instalment remains due.`});let reduction=Number(amount.toFixed(2));const future=p.instalments.filter(x=>x.instalmentNumber>current.instalmentNumber&&x.status==='scheduled').sort((a,b)=>b.instalmentNumber-a.instalmentNumber);for(const inst of future){if(reduction<=0.00001)break;const value=Number(inst.amount||0);if(reduction+0.00001>=value){inst.status='cancelled';reduction=Number(Math.max(0,reduction-value).toFixed(2))}else{inst.amount=Number((value-reduction).toFixed(2));reduction=0}}if(reduction>0.00001)return res.status(400).json({error:'Demo schedule could not absorb the extra payment.'});p.paidAmount=Number((Number(p.paidAmount||0)+amount).toFixed(2));p.remainingAmount=Number((Number(p.remainingAmount||0)-amount).toFixed(2));p.events.push({type:'extra_payment_applied',amount,at:demoStamp(),note:`Demo extra principal payment applied. Remaining plan balance £${p.remainingAmount.toFixed(2)}. Autocab unchanged.`});p.communications.push({title:'Extra payment applied',message:`Your extra payment of £${amount.toFixed(2)} reduced your payment-plan balance to £${p.remainingAmount.toFixed(2)}.`,at:demoStamp()});writeDemoState(state);res.json(state)});
+app.post('/api/admin/demo/payment-plan/extra-payment',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{
+ const state=readDemoState();
+ const p=state.paymentPlan;
+
+ if(!['active','defaulted'].includes(p.status)){
+  return res.status(400).json({error:'Demo extra payments are available only while the plan is active or defaulted.'});
+ }
+
+ const current=p.instalments.find(x=>['due','overdue'].includes(x.status));
+
+ if(!current){
+  return res.status(400).json({error:'No current demo instalment is payable.'});
+ }
+
+ const currentRemaining=Number(
+  Math.max(
+   0,
+   Number(current.amount||0)-Number(current.paidAmount||0)
+  ).toFixed(2)
+ );
+
+ const maxExtra=Number(
+  Math.max(
+   0,
+   Number(p.remainingAmount||0)-currentRemaining
+  ).toFixed(2)
+ );
+
+ const amount=Number(req.body.amount||0);
+
+ if(!(amount>0)){
+  return res.status(400).json({error:'Enter a positive demo extra payment.'});
+ }
+
+ if(amount>maxExtra+0.00001){
+  return res.status(400).json({
+   error:`Demo extra payment cannot exceed £${maxExtra.toFixed(2)} while the current instalment remains due.`
+  });
+ }
+
+ const future=p.instalments
+  .filter(
+   x=>
+    x.instalmentNumber>current.instalmentNumber &&
+    x.status==='scheduled'
+  )
+  .sort((a,b)=>b.instalmentNumber-a.instalmentNumber);
+
+ const futurePrincipal=Number(
+  future.reduce(
+   (total,x)=>total+Number(x.amount||0),
+   0
+  ).toFixed(2)
+ );
+
+ if(amount>futurePrincipal+0.00001){
+  return res.status(400).json({
+   error:`The demo schedule contains only £${futurePrincipal.toFixed(2)} of future principal. No payment has been recorded.`
+  });
+ }
+
+ let reduction=Number(amount.toFixed(2));
+
+ for(const inst of future){
+  if(reduction<=0.00001)break;
+
+  const value=Number(inst.amount||0);
+
+  if(reduction+0.00001>=value){
+   inst.status='cancelled';
+   reduction=Number(
+    Math.max(0,reduction-value).toFixed(2)
+   );
+  }else{
+   inst.amount=Number((value-reduction).toFixed(2));
+   reduction=0;
+  }
+ }
+
+ if(reduction>0.00001){
+  return res.status(400).json({
+   error:'Demo schedule could not absorb the extra payment.'
+  });
+ }
+
+ const now=demoStamp();
+
+ p.paidAmount=Number(
+  (Number(p.paidAmount||0)+amount).toFixed(2)
+ );
+
+ p.remainingAmount=Number(
+  (Number(p.remainingAmount||0)-amount).toFixed(2)
+ );
+
+ p.events.push({
+  type:'extra_payment_applied',
+  amount,
+  at:now,
+  note:`Demo extra principal payment applied. Remaining plan balance £${p.remainingAmount.toFixed(2)}. Autocab unchanged.`
+ });
+
+ p.communications.push({
+  title:'Extra payment applied',
+  message:`Your extra payment of £${amount.toFixed(2)} reduced your payment-plan balance to £${p.remainingAmount.toFixed(2)}.`,
+  at:now
+ });
+
+ writeDemoState(state);
+ res.json(state);
+});
 
 app.post('/api/admin/demo/payment-plan/settle-early',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{
  const state=readDemoState();
