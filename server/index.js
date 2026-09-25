@@ -1034,8 +1034,12 @@ app.post('/api/stripe/webhook', express.raw({type:'application/json'}), async (r
               item.payment_plan_id &&
               item.payment_plan_instalment_id
             );
+          const isPaymentPlanExtra=Boolean(
+            item.payment_plan_id &&
+            item.request_type==='payment_plan_extra'
+          );
 
-          if(!isPaymentPlanInstalment){
+          if(!isPaymentPlanInstalment&&!isPaymentPlanExtra){
             try{
               await settlePaymentRequestInAutocab(item);
 
@@ -1088,10 +1092,7 @@ app.post('/api/stripe/webhook', express.raw({type:'application/json'}), async (r
            * ignored. Instalment requests update their plan and create
            * the next payment request automatically.
            */
-          if(
-            item.payment_plan_id &&
-            item.payment_plan_instalment_id
-          ){
+          if(isPaymentPlanInstalment||isPaymentPlanExtra){
             try{
               /*
                * Reload the request so the helper receives the Stripe
@@ -1104,19 +1105,19 @@ app.post('/api/stripe/webhook', express.raw({type:'application/json'}), async (r
                 WHERE id=?
               `).get(item.id);
 
-              const progression=
-                progressPaymentPlanAfterPayment(
-                  paidPlanRequest,
-                  now
-                );
+              const progression=isPaymentPlanExtra
+                ?applyPaymentPlanExtraPayment(paidPlanRequest,now)
+                :progressPaymentPlanAfterPayment(paidPlanRequest,now);
 
               audit(
                 null,
                 'system',
                 'stripe',
-                progression?.completed
-                  ?'payment_plan_completed'
-                  :'payment_plan_instalment_paid',
+                isPaymentPlanExtra
+                  ?'payment_plan_extra_payment_applied'
+                  :progression?.completed
+                   ?'payment_plan_completed'
+                   :'payment_plan_instalment_paid',
                 'driver_payment_plan',
                 item.payment_plan_id,
                 progression||{
@@ -5125,8 +5126,22 @@ app.post('/api/admin/payout-runs/:id/wise-sandbox',adminAuth,requireStaffRole('a
  }catch(e){res.status(500).json({error:e.message})}});
 app.get('/api/admin/payout-runs/:id/csv',adminAuth,(req,res)=>{const run=db.prepare('SELECT * FROM payout_runs WHERE id=?').get(req.params.id);if(!run)return res.status(404).json({error:'Payout run not found'});const items=db.prepare('SELECT callsign,driver_name,net_amount,amount,type,status FROM payouts WHERE payout_run_id=? ORDER BY CAST(callsign AS INTEGER),callsign').all(run.id);const esc=v=>`"${String(v??'').replaceAll('"','""')}"`;const csv=['Callsign,Driver,Amount,Type,Status',...items.map(x=>[esc(x.callsign),esc(x.driver_name),Number(x.net_amount||x.amount||0).toFixed(2),x.type,x.status].join(','))].join('\n');res.setHeader('Content-Type','text/csv');res.setHeader('Content-Disposition',`attachment; filename=FleetPay-${run.run_type}-${run.id}.csv`);res.send(csv)});
 
-app.post('/api/admin/payment-requests/:id/stripe',adminAuth,requireStaffRole('administrator','finance','office'),async(req,res)=>{try{if(!stripe)return res.status(400).json({error:'Stripe is not configured. Add STRIPE_SECRET_KEY to .env'});const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(req.params.id);if(!item)return res.status(404).json({error:'Payment request not found'});if(item.status==='paid')return res.status(400).json({error:'This payment request is already paid'});const session=await createStripePaymentRequest(item);audit(req,'admin',req.auth.email,'stripe_payment_request_created','payment_request',item.id,{callsign:item.callsign,amount:item.amount,sessionId:session.id});res.json({ok:true,paymentUrl:session.url})}catch(e){res.status(500).json({error:e.message})}});
-app.patch('/api/admin/payment-requests/:id',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(req.params.id);if(!item)return res.status(404).json({error:'Payment request not found'});const status='status'in req.body?String(req.body.status):item.status,url='paymentUrl'in req.body?(req.body.paymentUrl?String(req.body.paymentUrl):null):item.payment_url;const now=new Date().toISOString();db.prepare('UPDATE payment_requests SET status=?,payment_url=?,paid_at=CASE WHEN ?=\'paid\' THEN ? ELSE paid_at END,updated_at=? WHERE id=?').run(status,url,status,now,now,item.id);if(status==='paid'&&item.status!=='paid'){ledger(item.driver_id,'payment_received','debit',Number(item.amount||0),0,'Payment received',item.id,'paid');notify(item.driver_id,'Payment received',`We have received your payment of £${Number(item.amount||0).toFixed(2)}.`,'success',item.id);const isPaymentPlanInstalment=Boolean(item.payment_plan_id&&item.payment_plan_instalment_id);if(isPaymentPlanInstalment){db.prepare("UPDATE payment_requests SET provider=COALESCE(provider,'manual') WHERE id=?").run(item.id);const paidPlanRequest=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(item.id);const progression=progressPaymentPlanAfterPayment(paidPlanRequest,now);audit(req,'staff',req.auth.email,progression?.completed?'payment_plan_completed':'payment_plan_instalment_paid','driver_payment_plan',item.payment_plan_id,progression||{paymentRequestId:item.id,source:'manual'})}else{try{await settlePaymentRequestInAutocab(item);audit(req,'system','autocab','autocab_payment_adjusted','payment_request',item.id,{callsign:item.callsign,amount:item.amount})}catch(e){audit(req,'system','autocab','autocab_adjustment_failed','payment_request',item.id,{callsign:item.callsign,error:e.message})}}}audit(req,'admin',req.auth.email,'payment_request_updated','payment_request',item.id,{status,paymentUrl:Boolean(url)});res.json({ok:true,status,paymentUrl:url})});
+app.post('/api/admin/payment-requests/:id/stripe',adminAuth,requireStaffRole('administrator','finance','office'),async(req,res)=>{try{if(!stripe)return res.status(400).json({error:'Stripe is not configured. Add STRIPE_SECRET_KEY to .env'});const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(req.params.id);if(!item)return res.status(404).json({error:'Payment request not found'});if(item.status==='paid')return res.status(400).json({error:'This payment request is already paid'});if(item.payment_plan_id&&item.request_type==='payment_plan_instalment'){const pendingExtra=db.prepare(`SELECT * FROM payment_requests WHERE payment_plan_id=? AND request_type='payment_plan_extra' AND status='open' ORDER BY created_at DESC LIMIT 1`).get(item.payment_plan_id);if(pendingExtra){await safelyExpirePlanPaymentSession(pendingExtra);db.prepare(`UPDATE payment_requests SET status='cancelled',payment_url=NULL,provider=NULL,provider_session_id=NULL,provider_payment_intent_id=NULL,updated_at=? WHERE id=? AND status='open'`).run(new Date().toISOString(),pendingExtra.id);audit(req,'staff',req.auth.email,'payment_plan_extra_payment_cancelled','driver_payment_plan',item.payment_plan_id,{paymentRequestId:pendingExtra.id,reason:'scheduled_instalment_checkout_started'})}}const session=await createStripePaymentRequest(item);audit(req,'admin',req.auth.email,'stripe_payment_request_created','payment_request',item.id,{callsign:item.callsign,amount:item.amount,sessionId:session.id});res.json({ok:true,paymentUrl:session.url})}catch(e){res.status(500).json({error:e.message})}});
+app.patch('/api/admin/payment-requests/:id',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{
+ const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(req.params.id);if(!item)return res.status(404).json({error:'Payment request not found'});
+ const status='status'in req.body?String(req.body.status):item.status,url='paymentUrl'in req.body?(req.body.paymentUrl?String(req.body.paymentUrl):null):item.payment_url,now=new Date().toISOString();
+ db.prepare("UPDATE payment_requests SET status=?,payment_url=?,paid_at=CASE WHEN ?='paid' THEN ? ELSE paid_at END,updated_at=? WHERE id=?").run(status,url,status,now,now,item.id);
+ if(status==='paid'&&item.status!=='paid'){
+  ledger(item.driver_id,'payment_received','debit',Number(item.amount||0),0,'Payment received',item.id,'paid');notify(item.driver_id,'Payment received',`We have received your payment of £${Number(item.amount||0).toFixed(2)}.`,'success',item.id);
+  const isPaymentPlanInstalment=Boolean(item.payment_plan_id&&item.payment_plan_instalment_id),isPaymentPlanExtra=Boolean(item.payment_plan_id&&item.request_type==='payment_plan_extra');
+  if(isPaymentPlanInstalment||isPaymentPlanExtra){
+   db.prepare("UPDATE payment_requests SET provider=COALESCE(provider,'manual') WHERE id=?").run(item.id);const paidPlanRequest=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(item.id);
+   const progression=isPaymentPlanExtra?applyPaymentPlanExtraPayment(paidPlanRequest,now,{actorId:req.auth.email}):progressPaymentPlanAfterPayment(paidPlanRequest,now,{actorId:req.auth.email});
+   audit(req,'staff',req.auth.email,isPaymentPlanExtra?'payment_plan_extra_payment_applied':progression?.completed?'payment_plan_completed':'payment_plan_instalment_paid','driver_payment_plan',item.payment_plan_id,progression||{paymentRequestId:item.id,source:'manual'});
+  }else{try{await settlePaymentRequestInAutocab(item);audit(req,'system','autocab','autocab_payment_adjusted','payment_request',item.id,{callsign:item.callsign,amount:item.amount})}catch(e){audit(req,'system','autocab','autocab_adjustment_failed','payment_request',item.id,{callsign:item.callsign,error:e.message})}}
+ }
+ audit(req,'admin',req.auth.email,'payment_request_updated','payment_request',item.id,{status,paymentUrl:Boolean(url)});res.json({ok:true,status,paymentUrl:url});
+});
 
 app.get('/api/admin/logs',adminAuth,(req,res)=>{const limit=Math.min(500,Math.max(1,Number(req.query.limit||200)));const rows=db.prepare('SELECT id,created_at as createdAt,actor_type as actorType,actor_id as actorId,action,entity_type as entityType,entity_id as entityId,details_json as detailsJson,ip FROM audit_logs ORDER BY id DESC LIMIT ?').all(limit).map(r=>{const details=JSON.parse(r.detailsJson||'{}');let actorId=r.actorId;if(r.actorType==='driver'&&/^\d+$/.test(String(actorId||''))){actorId=cachedDriver(Number(actorId))?.callsign||actorId}return {...r,actorId,details}});res.json({logs:rows})});
 
@@ -6566,6 +6581,43 @@ function progressPaymentPlanAfterPayment(paymentRequest,paidAt,options={}){
  };
 }
 
+
+function applyPaymentPlanExtraPayment(paymentRequest,paidAt,options={}){
+ if(!paymentRequest?.payment_plan_id || String(paymentRequest?.request_type||'')!=='payment_plan_extra')return null;
+ const plan=db.prepare(`SELECT * FROM driver_payment_plans WHERE id=?`).get(paymentRequest.payment_plan_id);
+ if(!plan)throw new Error(`Payment plan ${paymentRequest.payment_plan_id} was not found`);
+ if(!['active','paused','defaulted'].includes(plan.status))throw new Error(`Payment plan is not in a payable state: ${plan.status}`);
+ const prior=db.prepare(`SELECT metadata_json FROM driver_payment_plan_events WHERE plan_id=? AND event_type='extra_payment_applied' ORDER BY created_at DESC`).all(plan.id).find(row=>{try{return JSON.parse(row.metadata_json||'{}').paymentRequestId===paymentRequest.id}catch{return false}});
+ if(prior)return {duplicate:true,planId:plan.id,paymentRequestId:paymentRequest.id,remainingAmount:Number(plan.remaining_amount||0)};
+ const current=db.prepare(`SELECT * FROM driver_payment_plan_instalments WHERE plan_id=? AND status IN ('due','overdue') ORDER BY instalment_number LIMIT 1`).get(plan.id);
+ if(!current)throw new Error('No current payment-plan instalment could be found');
+ const currentRemaining=Number(Math.max(0,Number(current.amount||0)-Number(current.paid_amount||0)).toFixed(2));
+ const planRemaining=Number(plan.remaining_amount||0);
+ const maxExtra=Number(Math.max(0,planRemaining-currentRemaining).toFixed(2));
+ const paidAmount=Number(paymentRequest.amount||0);
+ if(!(paidAmount>0))throw new Error('Extra payment amount must be greater than zero');
+ if(paidAmount>maxExtra+0.00001)throw new Error(`Extra payment of £${paidAmount.toFixed(2)} exceeds the £${maxExtra.toFixed(2)} principal currently available for an extra payment. Manual review is required.`);
+ const newPaidAmount=Number(Math.min(Number(plan.plan_amount||0),Number(plan.paid_amount||0)+paidAmount).toFixed(2));
+ const newRemaining=Number(Math.max(0,planRemaining-paidAmount).toFixed(2));
+ const now=paidAt||new Date().toISOString(),actorId=String(options?.actorId||'stripe');
+ const future=db.prepare(`SELECT * FROM driver_payment_plan_instalments WHERE plan_id=? AND instalment_number>? AND status='scheduled' ORDER BY instalment_number DESC`).all(plan.id,current.instalment_number);
+ let reduction=paidAmount;
+ db.exec('BEGIN IMMEDIATE');
+ try{
+  for(const inst of future){
+   if(reduction<=0.00001)break;
+   const amount=Number(inst.amount||0);
+   if(reduction+0.00001>=amount){db.prepare(`UPDATE driver_payment_plan_instalments SET status='cancelled',updated_at=? WHERE id=? AND status='scheduled'`).run(now,inst.id);reduction=Number(Math.max(0,reduction-amount).toFixed(2));}
+   else{db.prepare(`UPDATE driver_payment_plan_instalments SET amount=?,updated_at=? WHERE id=? AND status='scheduled'`).run(Number((amount-reduction).toFixed(2)),now,inst.id);reduction=0;}
+  }
+  if(reduction>0.00001)throw new Error(`Payment-plan future schedule is short by £${reduction.toFixed(2)}. Extra payment was received but automatic plan progression requires manual review.`);
+  db.prepare(`UPDATE driver_payment_plans SET paid_amount=?,remaining_amount=?,updated_at=? WHERE id=?`).run(newPaidAmount,newRemaining,now,plan.id);
+  db.prepare(`INSERT INTO driver_payment_plan_events(id,plan_id,driver_id,event_type,description,actor_type,actor_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)`).run(id('planevent'),plan.id,plan.driver_id,'extra_payment_applied',`Extra principal payment of £${paidAmount.toFixed(2)} applied`,'system',actorId,JSON.stringify({paymentRequestId:paymentRequest.id,amount:paidAmount,paidAmount:newPaidAmount,remainingAmount:newRemaining,currentInstalmentId:current.id,currentInstalmentRemaining:currentRemaining,autocabAdjusted:false}),now);
+  db.exec('COMMIT');
+ }catch(e){try{db.exec('ROLLBACK')}catch{}throw e}
+ notify(plan.driver_id,'Extra payment applied',`Your extra payment of £${paidAmount.toFixed(2)} has reduced your FleetPay payment-plan balance to £${newRemaining.toFixed(2)}. Your current instalment remains £${currentRemaining.toFixed(2)}.`,'success',plan.id);
+ return {completed:false,extraPayment:true,planId:plan.id,paymentRequestId:paymentRequest.id,amount:paidAmount,paidAmount:newPaidAmount,remainingAmount:newRemaining,currentInstalmentId:current.id,currentInstalmentRemaining:currentRemaining,autocabAdjusted:false};
+}
 
 function refreshPaymentPlanStatuses(){
  const today=londonWindow().date;
@@ -10082,6 +10134,8 @@ app.post('/api/admin/demo/payment-plan/cancel',adminAuth,requireStaffRole('admin
  res.json(state);
 });
 
+app.post('/api/admin/demo/payment-plan/extra-payment',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const state=readDemoState(),p=state.paymentPlan;if(!['active','defaulted'].includes(p.status))return res.status(400).json({error:'Demo extra payments are available only while the plan is active or defaulted.'});const current=p.instalments.find(x=>['due','overdue'].includes(x.status));if(!current)return res.status(400).json({error:'No current demo instalment is payable.'});const currentRemaining=Number(Math.max(0,Number(current.amount||0)-Number(current.paidAmount||0)).toFixed(2)),maxExtra=Number(Math.max(0,Number(p.remainingAmount||0)-currentRemaining).toFixed(2)),amount=Number(req.body.amount||0);if(!(amount>0))return res.status(400).json({error:'Enter a positive demo extra payment.'});if(amount>maxExtra+0.00001)return res.status(400).json({error:`Demo extra payment cannot exceed £${maxExtra.toFixed(2)} while the current instalment remains due.`});let reduction=Number(amount.toFixed(2));const future=p.instalments.filter(x=>x.instalmentNumber>current.instalmentNumber&&x.status==='scheduled').sort((a,b)=>b.instalmentNumber-a.instalmentNumber);for(const inst of future){if(reduction<=0.00001)break;const value=Number(inst.amount||0);if(reduction+0.00001>=value){inst.status='cancelled';reduction=Number(Math.max(0,reduction-value).toFixed(2))}else{inst.amount=Number((value-reduction).toFixed(2));reduction=0}}if(reduction>0.00001)return res.status(400).json({error:'Demo schedule could not absorb the extra payment.'});p.paidAmount=Number((Number(p.paidAmount||0)+amount).toFixed(2));p.remainingAmount=Number((Number(p.remainingAmount||0)-amount).toFixed(2));p.events.push({type:'extra_payment_applied',amount,at:demoStamp(),note:`Demo extra principal payment applied. Remaining plan balance £${p.remainingAmount.toFixed(2)}. Autocab unchanged.`});p.communications.push({title:'Extra payment applied',message:`Your extra payment of £${amount.toFixed(2)} reduced your payment-plan balance to £${p.remainingAmount.toFixed(2)}.`,at:demoStamp()});writeDemoState(state);res.json(state)});
+
 app.post('/api/admin/demo/payment-plan/settle-early',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{
  const state=readDemoState();
  const p=state.paymentPlan;
@@ -10438,6 +10492,29 @@ app.post('/api/driver/forgot-password/complete',(req,res)=>{const c=db.prepare("
 app.get('/api/driver/push-config',driverAuth,(req,res)=>res.json({enabled:Boolean(VAPID_PUBLIC_KEY&&VAPID_PRIVATE_KEY),publicKey:VAPID_PUBLIC_KEY||null}));
 app.post('/api/driver/push-subscription',driverAuth,(req,res)=>{try{const sub=req.body.subscription;if(!sub?.endpoint)return res.status(400).json({error:'Invalid push subscription'});const now=new Date().toISOString();db.prepare('INSERT INTO push_subscriptions(id,driver_id,endpoint,subscription_json,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET driver_id=excluded.driver_id,subscription_json=excluded.subscription_json,updated_at=excluded.updated_at').run(id('push'),req.auth.driverId,sub.endpoint,JSON.stringify(sub),now,now);audit(req,'driver',req.auth.driverId,'push_notifications_enabled','driver',req.auth.driverId);res.json({ok:true})}catch(e){res.status(500).json({error:e.message})}});
 app.post('/api/driver/push-test',driverAuth,async(req,res)=>{const d=cachedDriver(req.auth.driverId);await sendPush(req.auth.driverId,'FleetPay test notification',`Push notifications are working for callsign ${d?.callsign||''}.`);res.json({ok:true})});
+app.post('/api/driver/payment-plans/:id/extra-payment',driverAuth,async(req,res)=>{
+ try{
+  const plan=db.prepare(`SELECT * FROM driver_payment_plans WHERE id=? AND driver_id=?`).get(req.params.id,req.auth.driverId);
+  if(!plan)return res.status(404).json({error:'Payment plan not found'});
+  if(!['active','defaulted'].includes(plan.status))return res.status(409).json({error:'Extra payments are available only while the payment plan is active or needs attention.'});
+  const existing=db.prepare(`SELECT * FROM payment_requests WHERE payment_plan_id=? AND request_type='payment_plan_extra' AND status='open' ORDER BY created_at DESC LIMIT 1`).get(plan.id);
+  if(existing)return res.json({ok:true,reused:true,paymentRequest:{id:existing.id,amount:Number(existing.amount||0),status:existing.status,requestType:existing.request_type,paymentPlanId:existing.payment_plan_id}});
+  const current=db.prepare(`SELECT * FROM driver_payment_plan_instalments WHERE plan_id=? AND status IN ('due','overdue') ORDER BY instalment_number LIMIT 1`).get(plan.id);
+  if(!current)return res.status(409).json({error:'No current payment-plan instalment could be found.'});
+  const currentRemaining=Number(Math.max(0,Number(current.amount||0)-Number(current.paid_amount||0)).toFixed(2)),maxExtra=Number(Math.max(0,Number(plan.remaining_amount||0)-currentRemaining).toFixed(2)),amount=Number(req.body.amount||0);
+  if(!(amount>0))return res.status(400).json({error:'Enter an extra payment amount greater than zero.'});
+  if(maxExtra<=0.00001)return res.status(409).json({error:'There is no future principal available for an extra payment. Pay the current instalment or use settle early.'});
+  if(amount>maxExtra+0.00001)return res.status(400).json({error:`Extra payment cannot exceed £${maxExtra.toFixed(2)} while the current £${currentRemaining.toFixed(2)} instalment remains due.`});
+  const currentRequest=current.payment_request_id?db.prepare('SELECT * FROM payment_requests WHERE id=?').get(current.payment_request_id):null;
+  if(currentRequest?.provider_session_id){await safelyExpirePlanPaymentSession(currentRequest);db.prepare(`UPDATE payment_requests SET payment_url=NULL,provider=NULL,provider_session_id=NULL,provider_payment_intent_id=NULL,updated_at=? WHERE id=?`).run(new Date().toISOString(),currentRequest.id)}
+  const requestId=id('request'),now=new Date().toISOString(),today=londonWindow().date;
+  db.prepare(`INSERT INTO payment_requests(id,run_id,driver_id,callsign,driver_name,balance,weekly_fee,carried_charges,amount,status,payment_url,created_at,updated_at,due_at,payment_plan_id,payment_plan_instalment_id,request_type) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(requestId,currentRequest?.run_id||null,plan.driver_id,plan.callsign,plan.driver_name,-Number(plan.remaining_amount||0),0,0,amount,'open',null,now,now,today,plan.id,null,'payment_plan_extra');
+  db.prepare(`INSERT INTO driver_payment_plan_events(id,plan_id,driver_id,event_type,description,actor_type,actor_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)`).run(id('planevent'),plan.id,plan.driver_id,'extra_payment_requested',`Extra principal payment of £${amount.toFixed(2)} requested`,'driver',String(plan.driver_id),JSON.stringify({paymentRequestId:requestId,amount,maxExtra,currentInstalmentRemaining:currentRemaining}),now);
+  audit(req,'driver',plan.driver_id,'payment_plan_extra_payment_requested','driver_payment_plan',plan.id,{paymentRequestId:requestId,amount,maxExtra,currentInstalmentRemaining:currentRemaining});
+  res.json({ok:true,maxExtra,paymentRequest:{id:requestId,amount,status:'open',dueAt:today,requestType:'payment_plan_extra',paymentPlanId:plan.id}});
+ }catch(e){res.status(500).json({error:e.message})}
+});
+
 app.post('/api/driver/payment-requests/:id/checkout',driverAuth,async(req,res)=>{try{if(!stripe)return res.status(400).json({error:'Card payments are not currently available. Please contact the office.'});const item=db.prepare('SELECT * FROM payment_requests WHERE id=? AND driver_id=?').get(req.params.id,req.auth.driverId);if(!item)return res.status(404).json({error:'Payment request not found'});if(item.status!=='open'){
  return res.status(400).json({
   error:item.status==='paid'
@@ -10446,6 +10523,14 @@ app.post('/api/driver/payment-requests/:id/checkout',driverAuth,async(req,res)=>
     ?'This balance is now being managed through a FleetPay payment plan'
     :'This payment request is not currently available for payment'
  });
+}
+if(item.payment_plan_id&&item.request_type==='payment_plan_instalment'){
+ const pendingExtra=db.prepare(`SELECT * FROM payment_requests WHERE payment_plan_id=? AND request_type='payment_plan_extra' AND status='open' ORDER BY created_at DESC LIMIT 1`).get(item.payment_plan_id);
+ if(pendingExtra){
+  await safelyExpirePlanPaymentSession(pendingExtra);
+  db.prepare(`UPDATE payment_requests SET status='cancelled',payment_url=NULL,provider=NULL,provider_session_id=NULL,provider_payment_intent_id=NULL,updated_at=? WHERE id=? AND status='open'`).run(new Date().toISOString(),pendingExtra.id);
+  audit(req,'driver',req.auth.driverId,'payment_plan_extra_payment_cancelled','driver_payment_plan',item.payment_plan_id,{paymentRequestId:pendingExtra.id,reason:'scheduled_instalment_checkout_started'});
+ }
 }
 const session=await createStripePaymentRequest(item);audit(req,'driver',req.auth.driverId,'stripe_checkout_started','payment_request',item.id,{callsign:item.callsign,amount:item.amount,sessionId:session.id});res.json({ok:true,paymentUrl:session.url})}catch(e){res.status(500).json({error:e.message})}});
 app.post('/api/driver/customer-payment',driverAuth,async(req,res)=>{

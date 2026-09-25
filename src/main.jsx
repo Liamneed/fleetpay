@@ -21,6 +21,8 @@ const paymentPlanEventMeta=type=>({
  plan_cancelled:{label:'Cancelled',tone:'bad'},
  early_settlement_requested:{label:'Early settlement',tone:'warn'},
  plan_amended:{label:'Amended',tone:'neutral'},
+ extra_payment_requested:{label:'Extra payment requested',tone:'neutral'},
+ extra_payment_applied:{label:'Extra payment applied',tone:'good'},
  schedule_exhausted:{label:'Schedule exhausted',tone:'bad'}
 })[type]||{
  label:String(type||'Plan event').replaceAll('_',' '),
@@ -197,6 +199,14 @@ function DemoLab({demo,loadDemo,resetDemo,action,demoEmail,setDemoEmail,demoMobi
    );
   };
 
+  const extraPayment=()=>{
+   const currentRemaining=current?Number(current.amount||0)-Number(current.paidAmount||0):0;
+   const maxExtra=Math.max(0,Number(plan.remainingAmount||0)-currentRemaining);
+   const amount=askAmount(`Extra principal payment (maximum ${money(maxExtra)}):`,maxExtra>0?String(Math.min(100,maxExtra)):'');
+   if(amount===null)return;
+   action('/api/admin/demo/payment-plan/extra-payment',`Apply ${money(amount)} as an extra principal payment? The current instalment stays unchanged and simulated Autocab stays at ${money(plan.autocab?.balanceAfter||0)}.`,{amount});
+  };
+
   const cancel=()=>{
    const reason=prompt('Reason for cancelling this demo payment plan:');
    if(reason===null||!reason.trim())return;
@@ -273,6 +283,10 @@ function DemoLab({demo,loadDemo,resetDemo,action,demoEmail,setDemoEmail,demoMobi
      )}>
       Pay current instalment
      </button>
+    }
+
+    {['active','defaulted'].includes(status)&&current&&
+     <button className="secondary" onClick={extraPayment}>Extra principal payment</button>
     }
 
     {live&&current&&
@@ -5456,6 +5470,7 @@ function DriverApp(){
  async function payout(){setErr('');setNotice('');try{const j=await api('/api/driver/early-payout',{method:'POST',body:JSON.stringify({amount:Number(amt)})});setAmt('');setNotice(`Payout request received. ${j.message}`);await load()}catch(x){setErr(x.message)}}
  async function enablePush(){setErr('');try{if(!('serviceWorker'in navigator)||!('PushManager'in window))throw new Error('Push notifications are not supported on this device/browser.');const cfg=await api('/api/driver/push-config');if(!cfg.enabled)throw new Error('Push notifications are not configured on the FleetPay server.');const reg=await navigator.serviceWorker.register('/fleetpay-sw.js');const perm=await Notification.requestPermission();if(perm!=='granted')throw new Error('Notification permission was not granted.');let sub=await reg.pushManager.getSubscription();if(!sub){const padded=cfg.publicKey.replace(/-/g,'+').replace(/_/g,'/').padEnd(Math.ceil(cfg.publicKey.length/4)*4,'=');const bytes=Uint8Array.from(atob(padded),c=>c.charCodeAt(0));sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:bytes})}await api('/api/driver/push-subscription',{method:'POST',body:JSON.stringify({subscription:sub})});setPushReady(true);setNotice('Push notifications are enabled.');await api('/api/driver/push-test',{method:'POST'})}catch(e){setErr(e.message)}}
  async function payRequest(request){setErr('');setPaymentBusy(true);try{const j=await api(`/api/driver/payment-requests/${request.id}/checkout`,{method:'POST'});window.location.assign(j.paymentUrl)}catch(e){setErr(e.message);setPaymentBusy(false)}}
+ async function createExtraPlanPayment(plan,maxExtra){setErr('');setNotice('');if(currentExtraPlanPayment)return payRequest(currentExtraPlanPayment);const raw=prompt(`How much extra would you like to pay?\n\nMaximum extra payment: ${money(maxExtra)}\nYour current instalment remains due separately.`,'');if(raw===null)return;const amount=Number(raw);if(!Number.isFinite(amount)||amount<=0){setErr('Enter a valid extra payment amount.');return}if(amount>maxExtra+0.00001){setErr(`Extra payment cannot exceed ${money(maxExtra)}.`);return}setPaymentBusy(true);try{const j=await api(`/api/driver/payment-plans/${plan.id}/extra-payment`,{method:'POST',body:JSON.stringify({amount})});await payRequest(j.paymentRequest)}catch(e){setErr(e.message);setPaymentBusy(false)}}
 
  async function createCustomerPayment(){
   setErr('');setNotice('');
@@ -5524,19 +5539,21 @@ function DriverApp(){
  const bankAccount=me.bankAccount||{configured:false,status:'missing'};
  const paymentRequests=me.paymentRequests||[];
  const standardPaymentRequests=paymentRequests.filter(
-  x=>x.requestType!=='payment_plan_instalment'
+  x=>!['payment_plan_instalment','payment_plan_extra'].includes(x.requestType)
  );
  const planPaymentRequests=paymentRequests.filter(
   x=>x.requestType==='payment_plan_instalment'
  );
+ const extraPlanPaymentRequests=paymentRequests.filter(x=>x.requestType==='payment_plan_extra');
  const paymentPlans=me.paymentPlans||[];
  const activePaymentPlan=paymentPlans.find(
   x=>['active','paused','defaulted'].includes(x.status)
  )||null;
  const currentPlanPayment=activePaymentPlan
-  ?planPaymentRequests.find(
-    x=>x.paymentPlanId===activePaymentPlan.id
-   )||null
+  ?planPaymentRequests.find(x=>x.paymentPlanId===activePaymentPlan.id)||null
+  :null;
+ const currentExtraPlanPayment=activePaymentPlan
+  ?extraPlanPaymentRequests.find(x=>x.paymentPlanId===activePaymentPlan.id)||null
   :null;
  const totalDue=standardPaymentRequests.reduce(
   (sum,x)=>sum+Number(x.amount||0),
@@ -5600,6 +5617,9 @@ function DriverApp(){
    plan.nextDueAt||
    nextInstalment?.dueAt||
    null;
+  const currentInstalment=plan.instalments?.find(x=>['due','overdue'].includes(x.status))||null;
+  const currentInstalmentRemaining=currentInstalment?Math.max(0,Number(currentInstalment.amount||0)-Number(currentInstalment.paid_amount??currentInstalment.paidAmount??0)):0;
+  const maxExtraPayment=Math.max(0,Number((remaining-currentInstalmentRemaining).toFixed(2)));
 
   const planStatusLabel={
    active:'Active',
@@ -5771,6 +5791,10 @@ function DriverApp(){
        :`Pay ${money(nextAmount)} instalment`}
      </button>
     </div>
+   }
+
+   {['active','defaulted'].includes(plan.status)&&maxExtraPayment>0&&
+    <div className="driverPlanNotice"><Banknote/><div><b>Pay extra off your plan</b><span>An extra payment reduces future principal. Your current {money(currentInstalmentRemaining)} instalment stays due separately.</span></div><button className="mini goodBtn" disabled={paymentBusy||!me.stripeConfigured} onClick={()=>createExtraPlanPayment(plan,maxExtraPayment)}>{currentExtraPlanPayment?'Continue extra payment':'Make extra payment'}</button></div>
    }
 
    {!currentPlanPayment&&plan.status==='active'&&remaining>0&&
