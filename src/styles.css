@@ -6728,3 +6728,31 @@ body {
  .transactionSearchSubmit{grid-column:1/-1;width:100%}
  .txDrawerV2{padding:20px}
 }
+
+/* =========================================================
+   FAIVOPAY BRAND ASSETS
+   ========================================================= */
+.logoMark.branded{
+  overflow:hidden;
+  padding:6px;
+  background:#fff;
+  border:1px solid rgba(148,163,184,.18);
+  box-shadow:0 8px 24px rgba(15,23,42,.16);
+}
+.logoMark.branded img{
+  width:100%;
+  height:100%;
+  object-fit:contain;
+  display:block;
+}
+.publicPayLogo{
+  overflow:hidden;
+  padding:6px;
+  background:#fff;
+}
+.publicPayLogo img{
+  width:100%;
+  height:100%;
+  display:block;
+  object-fit:contain;
+}

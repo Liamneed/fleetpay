@@ -24,10 +24,10 @@ const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || 'ChangeMe123!');
 const APP_ENV_LABEL = String(process.env.APP_ENV_LABEL || 'LOCAL').trim().toUpperCase();
 const DEV_AUTH_CODES = String(process.env.DEV_AUTH_CODES || 'true').toLowerCase() === 'true';
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
-const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'FleetPay <payments@example.com>';
+const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'FaivoPay <payments@example.com>';
 const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || '';
 const SENDGRID_FROM_EMAIL = process.env.SENDGRID_FROM_EMAIL || '';
-const SENDGRID_FROM_NAME = process.env.SENDGRID_FROM_NAME || 'FleetPay';
+const SENDGRID_FROM_NAME = process.env.SENDGRID_FROM_NAME || 'FaivoPay';
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || '';
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || '';
 const TWILIO_MESSAGING_SERVICE_SID = process.env.TWILIO_MESSAGING_SERVICE_SID || '';
@@ -631,9 +631,9 @@ const defaultSettings = {
 
  customerPaymentFeeType: 'fixed',
  customerPaymentFeeValue: 0.50,
- customerPaymentSmsTemplate: 'FleetPay: Your taxi journey payment is £{total}. Pay securely here: {paymentLink}',
+ customerPaymentSmsTemplate: 'FaivoPay: Your taxi journey payment is £{total}. Pay securely here: {paymentLink}',
  customerPaymentEmailSubject: 'Your taxi journey payment – £{total}',
- customerPaymentEmailBody: 'Hello {customer},\n\nYour taxi journey payment is ready.\n\nJourney fare: £{fare}\nFleetPay service fee: £{fee}\nTotal to pay: £{total}\n\nPay securely here: {paymentLink}\n\nBooking reference: {bookingId}',
+ customerPaymentEmailBody: 'Hello {customer},\n\nYour taxi journey payment is ready.\n\nJourney fare: £{fare}\nFaivoPay service fee: £{fee}\nTotal to pay: £{total}\n\nPay securely here: {paymentLink}\n\nBooking reference: {bookingId}',
 
  earlyPayoutCutoffTime: '11:00',
  earlyPayoutCutoffHour: 11,
@@ -641,15 +641,15 @@ const defaultSettings = {
  syncMinutes: 10,
  requireAdminApproval: false,
  companyName: 'Need-A-Cab',
- productName: 'FleetPay',
- weeklyPayoutReasonTemplate: 'FleetPay Weekly Payout {date} {time}',
- earlyPayoutReasonTemplate: 'FleetPay Early Payout {date} {time}',
- manualPayInReasonDefault: 'FleetPay Manual Pay In',
- manualPayoutReasonDefault: 'FleetPay Manual Payout',
+ productName: 'FaivoPay',
+ weeklyPayoutReasonTemplate: 'FaivoPay Weekly Payout {date} {time}',
+ earlyPayoutReasonTemplate: 'FaivoPay Early Payout {date} {time}',
+ manualPayInReasonDefault: 'FaivoPay Manual Pay In',
+ manualPayoutReasonDefault: 'FaivoPay Manual Payout',
  outstandingDueTime: '17:00',
- outstandingSmsTemplate: 'FleetPay: £{amount} is outstanding on your driver account. Payment is due by {dueTime} on {dueDate} to avoid suspension. Open FleetPay to pay securely.',
- outstandingEmailSubject: 'FleetPay payment due – £{amount}',
- outstandingEmailBody: 'Hello {driver},\n\nYour FleetPay account has an outstanding commission payment of £{amount}. Payment is due by {dueTime} on {dueDate} to avoid suspension.\n\nPlease open FleetPay to pay securely.\n\nFleetPay',
+ outstandingSmsTemplate: 'FaivoPay: £{amount} is outstanding on your driver account. Payment is due by {dueTime} on {dueDate} to avoid suspension. Open FaivoPay to pay securely.',
+ outstandingEmailSubject: 'FaivoPay payment due – £{amount}',
+ outstandingEmailBody: 'Hello {driver},\n\nYour FaivoPay account has an outstanding commission payment of £{amount}. Payment is due by {dueTime} on {dueDate} to avoid suspension.\n\nPlease open FaivoPay to pay securely.\n\nFaivoPay',
  smsEndpoint: '',
  smsMethod: 'POST',
  smsAuthHeader: 'Authorization',
@@ -668,7 +668,7 @@ const defaultSettings = {
  smtpPort: 587,
  smtpSecure: false,
  smtpUser: '',
- smtpFromName: 'FleetPay',
+ smtpFromName: 'FaivoPay',
  smtpFromEmail: '',
  officeNotificationEmail: 'office@needacab247.com',
  customerFeeFleetPayPercent: 100,
@@ -701,7 +701,7 @@ app.post('/api/stripe/webhook', express.raw({type:'application/json'}), async (r
     /*
      * STRIPE REFUND RECONCILIATION
      *
-     * Refund events may originate in FleetPay or directly in Stripe.
+     * Refund events may originate in FaivoPay or directly in Stripe.
      * Stripe remains the authority for the final refund status and amount.
      */
     if([
@@ -726,7 +726,7 @@ app.post('/api/stripe/webhook', express.raw({type:'application/json'}), async (r
        if(item){
         /*
          * Always re-read all refunds for this PaymentIntent. A single
-         * webhook event only describes one refund, while FleetPay's
+         * webhook event only describes one refund, while FaivoPay's
          * current-state fields represent the cumulative Stripe outcome.
          */
         const stripeRefunds=await stripe.refunds.list({
@@ -811,7 +811,7 @@ app.post('/api/stripe/webhook', express.raw({type:'application/json'}), async (r
         );
 
         console.log(
-         '[FleetPay] Stripe refund reconciled',
+         '[FaivoPay] Stripe refund reconciled',
          {
           eventType:event.type,
           paymentId:item.id,
@@ -883,7 +883,7 @@ app.post('/api/stripe/webhook', express.raw({type:'application/json'}), async (r
           if(Number(item.driver_id)>0) notify(
             item.driver_id,
             'Customer payment received',
-            `Customer payment received. Fare £${Number(item.fare_amount).toFixed(2)} plus £${Number(item.fee_amount).toFixed(2)} FleetPay service fee.`,
+            `Customer payment received. Fare £${Number(item.fare_amount).toFixed(2)} plus £${Number(item.fee_amount).toFixed(2)} FaivoPay service fee.`,
             'success',
             item.id
           );
@@ -938,7 +938,7 @@ app.post('/api/stripe/webhook', express.raw({type:'application/json'}), async (r
             );
           }catch(e){
             console.error(
-              `FleetPay Autocab release failed for payment ${customerPaymentId}:`,
+              `FaivoPay Autocab release failed for payment ${customerPaymentId}:`,
               e.message
             );
 
@@ -1147,7 +1147,7 @@ app.post('/api/stripe/webhook', express.raw({type:'application/json'}), async (r
               );
 
               console.error(
-                `FleetPay payment plan progression failed for ${item.payment_plan_id}:`,
+                `FaivoPay payment plan progression failed for ${item.payment_plan_id}:`,
                 e
               );
             }
@@ -1340,7 +1340,7 @@ app.post(['/api/webhooks/autocab/booking-created','/created'],async(req,res)=>{
   }
 
   console.log(
-   `[FleetPay] Autocab BookingCreated received`,
+   `[FaivoPay] Autocab BookingCreated received`,
    {
     bookingId:bookingId||null,
     companyId:b.Company?.Id??b.companyId??null,
@@ -1359,7 +1359,7 @@ app.post(['/api/webhooks/autocab/booking-created','/created'],async(req,res)=>{
   });
 
  }catch(e){
-  console.error('[FleetPay] BookingCreated webhook error',e);
+  console.error('[FaivoPay] BookingCreated webhook error',e);
   res.status(500).json({ok:false,error:'Webhook could not be stored'});
  }
 });
@@ -1368,7 +1368,7 @@ app.post(['/api/webhooks/autocab/booking-created','/created'],async(req,res)=>{
 /*
  * AUTOCAB BOOKING MODIFIED
  *
- * Keep an existing FleetPay customer payment aligned with the latest
+ * Keep an existing FaivoPay customer payment aligned with the latest
  * operational booking details. Booking ID is the permanent join key.
  *
  * Important:
@@ -1504,7 +1504,7 @@ app.post(['/api/webhooks/autocab/booking-modified','/modified'],async(req,res)=>
    ''
   ).trim();
 
-  // Resolve missing driver details from FleetPay's Autocab driver cache.
+  // Resolve missing driver details from FaivoPay's Autocab driver cache.
   let cached=null;
 
   if(driverId){
@@ -1574,7 +1574,7 @@ app.post(['/api/webhooks/autocab/booking-modified','/modified'],async(req,res)=>
    /*
     * A BookingCreated webhook can arrive before Autocab has populated
     * the final price. If a later BookingModified contains a valid price
-    * and the FleetPay + capability is still present, create the missing
+    * and the FaivoPay + capability is still present, create the missing
     * customer payment here.
     */
    if(!payment && hasFleetPayCapability(capabilities)){
@@ -1770,7 +1770,7 @@ app.post(['/api/webhooks/autocab/booking-modified','/modified'],async(req,res)=>
   }
 
   console.log(
-   '[FleetPay] Autocab BookingModified received',
+   '[FaivoPay] Autocab BookingModified received',
    {
     bookingId:bookingId||null,
     driverId:driverId||null,
@@ -1789,7 +1789,7 @@ app.post(['/api/webhooks/autocab/booking-modified','/modified'],async(req,res)=>
   });
 
  }catch(e){
-  console.error('[FleetPay] BookingModified webhook error',e);
+  console.error('[FaivoPay] BookingModified webhook error',e);
   res.status(500).json({
    ok:false,
    error:'Modified booking webhook could not be processed'
@@ -2025,7 +2025,7 @@ async function expireUnpaidCustomerCheckout(row){
   await stripe.checkout.sessions.expire(row.provider_session_id);
  }catch(e){
   console.warn(
-   '[FleetPay] Stripe checkout expiry skipped/failed',
+   '[FaivoPay] Stripe checkout expiry skipped/failed',
    {
     paymentId:row.id,
     bookingId:row.booking_id,
@@ -2044,7 +2044,7 @@ app.post(['/api/webhooks/autocab/booking-complete','/complete'],async(req,res)=>
    'completed'
   );
 
-  console.log('[FleetPay] Autocab BookingComplete received',{
+  console.log('[FaivoPay] Autocab BookingComplete received',{
    bookingId:x.bookingId||null
   });
 
@@ -2056,7 +2056,7 @@ app.post(['/api/webhooks/autocab/booking-complete','/complete'],async(req,res)=>
    bookingId:x.bookingId||null
   });
  }catch(e){
-  console.error('[FleetPay] BookingComplete webhook error',e);
+  console.error('[FaivoPay] BookingComplete webhook error',e);
   res.status(500).json({ok:false,error:'BookingComplete webhook could not be stored'});
  }
 });
@@ -2070,7 +2070,7 @@ app.post(['/api/webhooks/autocab/booking-nofare','/nofare'],async(req,res)=>{
    'no_fare'
   );
 
-  console.log('[FleetPay] Autocab NoFare received',{
+  console.log('[FaivoPay] Autocab NoFare received',{
    bookingId:x.bookingId||null
   });
 
@@ -2082,7 +2082,7 @@ app.post(['/api/webhooks/autocab/booking-nofare','/nofare'],async(req,res)=>{
    bookingId:x.bookingId||null
   });
  }catch(e){
-  console.error('[FleetPay] NoFare webhook error',e);
+  console.error('[FaivoPay] NoFare webhook error',e);
   res.status(500).json({ok:false,error:'NoFare webhook could not be stored'});
  }
 });
@@ -2112,7 +2112,7 @@ app.post(['/api/webhooks/autocab/booking-cancelled','/cancelled'],async(req,res)
    await expireUnpaidCustomerCheckout(existing);
   }
 
-  console.log('[FleetPay] Autocab BookingCancelled received',{
+  console.log('[FaivoPay] Autocab BookingCancelled received',{
    bookingId:x.bookingId||null
   });
 
@@ -2124,7 +2124,7 @@ app.post(['/api/webhooks/autocab/booking-cancelled','/cancelled'],async(req,res)
    bookingId:x.bookingId||null
   });
  }catch(e){
-  console.error('[FleetPay] BookingCancelled webhook error',e);
+  console.error('[FaivoPay] BookingCancelled webhook error',e);
   res.status(500).json({ok:false,error:'BookingCancelled webhook could not be stored'});
  }
 });
@@ -2216,7 +2216,7 @@ app.post(
    );
 
    console.log(
-    '[FleetPay] Autocab DocketModified received',
+    '[FaivoPay] Autocab DocketModified received',
     {
      webhookId,
      docketId:docketId||null,
@@ -2226,7 +2226,7 @@ app.post(
    );
 
    console.log(
-    '[FleetPay] Autocab DocketModified RAW\n'+
+    '[FaivoPay] Autocab DocketModified RAW\n'+
     JSON.stringify(raw,null,2)
    );
 
@@ -2239,7 +2239,7 @@ app.post(
 
   }catch(e){
    console.error(
-    '[FleetPay] DocketModified webhook capture error',
+    '[FaivoPay] DocketModified webhook capture error',
     e
    );
 
@@ -2311,7 +2311,7 @@ function verifyTotp(secret,code){const c=String(code||'').replace(/\D/g,'');if(c
 function newMfaSecret(){return base32Encode(crypto.randomBytes(20))}
 function staffSafe(u){return {id:u.id,email:u.email,name:u.name,role:u.role,mfaEnabled:Boolean(u.mfa_enabled),active:Boolean(u.active),createdAt:u.created_at,updatedAt:u.updated_at,lastLoginAt:u.last_login_at}}
 function makeOtpAuth(email,secret){
- const issuer=`FleetPay ${APP_ENV_LABEL}`;
+ const issuer=`FaivoPay ${APP_ENV_LABEL}`;
  const label=`${issuer}:${email}`;
  return `otpauth://totp/${encodeURIComponent(label)}?secret=${encodeURIComponent(secret)}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`
 }
@@ -2319,7 +2319,7 @@ function ensureBootstrapAdmin(){
  const email=safeEmail(ADMIN_EMAIL);if(!email||!ADMIN_PASSWORD)return;
  const existing=db.prepare('SELECT id FROM staff_users WHERE email=?').get(email);if(existing)return;
  const hp=hashPassword(ADMIN_PASSWORD),now=new Date().toISOString();
- db.prepare('INSERT INTO staff_users(id,email,name,role,password_hash,password_salt,mfa_enabled,active,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id('staff'),email,'FleetPay Administrator','administrator',hp.hash,hp.salt,0,1,now,now);
+ db.prepare('INSERT INTO staff_users(id,email,name,role,password_hash,password_salt,mfa_enabled,active,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id('staff'),email,'FaivoPay Administrator','administrator',hp.hash,hp.salt,0,1,now,now);
 }
 
 function signToken(payload,hours=24*30){const body=Buffer.from(JSON.stringify({...payload,exp:Date.now()+hours*3600000})).toString('base64url');const sig=crypto.createHmac('sha256',TOKEN_SECRET).update(body).digest('base64url');return `${body}.${sig}`}
@@ -2395,7 +2395,7 @@ async function releaseFleetPayBooking(paymentId){
  }
 
  /*
-  * FleetPay service fee is NOT written to Autocab.
+  * FaivoPay service fee is NOT written to Autocab.
   * Autocab receives the journey fare only.
   */
  booking.customerId=AUTOCAB_FLEETPAY_CUSTOMER_ID;
@@ -2502,7 +2502,7 @@ async function postAutocabAdjustmentSafelyOnce(args){
  if(existing){
   throw new Error(
    `Autocab adjustment ${eventKey} is ${existing.status}. `+
-   'FleetPay will not resend it automatically because the previous Autocab outcome may be uncertain. Review the adjustment before retrying.'
+   'FaivoPay will not resend it automatically because the previous Autocab outcome may be uncertain. Review the adjustment before retrying.'
   );
  }
 
@@ -2525,7 +2525,7 @@ async function settlePaymentPlanActivationInAutocab(plan,source){
     callsign,
     amount:fee,
     isCredit:false,
-    description:'FleetPay weekly app fee',
+    description:'FaivoPay weekly app fee',
     adjustmentReason:'FleetPay Fee',
     eventKey:`plan:${plan.id}:activation:fee`
    })
@@ -2539,7 +2539,7 @@ async function settlePaymentPlanActivationInAutocab(plan,source){
     callsign,
     amount:carried,
     isCredit:false,
-    description:'FleetPay carried charge',
+    description:'FaivoPay carried charge',
     adjustmentReason:'FleetPay Carried Charge',
     eventKey:`plan:${plan.id}:activation:carried`
    })
@@ -2553,7 +2553,7 @@ async function settlePaymentPlanActivationInAutocab(plan,source){
     callsign,
     amount:principal,
     isCredit:true,
-    description:'FleetPay payment plan activated',
+    description:'FaivoPay payment plan activated',
     adjustmentReason:'FleetPay Payment Plan',
     eventKey:`plan:${plan.id}:activation:principal`
    })
@@ -2567,17 +2567,17 @@ async function settlePayoutInAutocab(item){
  const d=cachedDriver(item.driver_id); const callsign=item.callsign||d?.callsign||String(item.driver_id),settings=getSettings();
  const adjustments=[];
  const fee=Number(item.type==='early'?item.fee:item.weekly_fee||0); const carried=Number(item.type==='weekly'?item.carried_charges||0:0); const paid=Number(item.net_amount||item.amount||0);
- if(fee>0) adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:fee,isCredit:false,description:item.type==='early'?'FleetPay early payout fee':'FleetPay weekly app fee',adjustmentReason:'FleetPay Fee',eventKey:`payout:${item.id}:fee`}));
- if(carried>0) adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:carried,isCredit:false,description:'FleetPay carried charge',adjustmentReason:'FleetPay Carried Charge',eventKey:`payout:${item.id}:carried`}));
- if(paid>0){const vars=dateTimeVars({callsign,amount:paid.toFixed(2)}),description=templateText(item.type==='early'?settings.earlyPayoutReasonTemplate:settings.weeklyPayoutReasonTemplate,vars)||`${item.type==='early'?'FleetPay Early Payout':'FleetPay Weekly Payout'} ${vars.date} ${vars.time}`;adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:paid,isCredit:false,description,adjustmentReason:item.type==='early'?'FleetPay Early Payout':'FleetPay Weekly Payout',eventKey:`payout:${item.id}:payment`}))}
+ if(fee>0) adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:fee,isCredit:false,description:item.type==='early'?'FaivoPay early payout fee':'FaivoPay weekly app fee',adjustmentReason:'FleetPay Fee',eventKey:`payout:${item.id}:fee`}));
+ if(carried>0) adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:carried,isCredit:false,description:'FaivoPay carried charge',adjustmentReason:'FleetPay Carried Charge',eventKey:`payout:${item.id}:carried`}));
+ if(paid>0){const vars=dateTimeVars({callsign,amount:paid.toFixed(2)}),description=templateText(item.type==='early'?settings.earlyPayoutReasonTemplate:settings.weeklyPayoutReasonTemplate,vars)||`${item.type==='early'?'FaivoPay Early Payout':'FaivoPay Weekly Payout'} ${vars.date} ${vars.time}`;adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:paid,isCredit:false,description,adjustmentReason:item.type==='early'?'FleetPay Early Payout':'FleetPay Weekly Payout',eventKey:`payout:${item.id}:payment`}))}
  return adjustments;
 }
 async function settlePaymentRequestInAutocab(item){
  const d=cachedDriver(item.driver_id); const callsign=item.callsign||d?.callsign||String(item.driver_id); const adjustments=[];
  const fee=Number(item.weekly_fee||0),carried=Number(item.carried_charges||0),received=Number(item.amount||0);
- if(fee>0) adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:fee,isCredit:false,description:'FleetPay weekly app fee',adjustmentReason:'FleetPay Fee',eventKey:`request:${item.id}:fee`}));
- if(carried>0) adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:carried,isCredit:false,description:'FleetPay carried charge',adjustmentReason:'FleetPay Carried Charge',eventKey:`request:${item.id}:carried`}));
- if(received>0) adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:received,isCredit:true,description:'FleetPay payment received',adjustmentReason:'FleetPay Payment',eventKey:`request:${item.id}:payment`}));
+ if(fee>0) adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:fee,isCredit:false,description:'FaivoPay weekly app fee',adjustmentReason:'FleetPay Fee',eventKey:`request:${item.id}:fee`}));
+ if(carried>0) adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:carried,isCredit:false,description:'FaivoPay carried charge',adjustmentReason:'FleetPay Carried Charge',eventKey:`request:${item.id}:carried`}));
+ if(received>0) adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:received,isCredit:true,description:'FaivoPay payment received',adjustmentReason:'FleetPay Payment',eventKey:`request:${item.id}:payment`}));
  return adjustments;
 }
 async function sendPush(driverId,title,message,url='/driver'){
@@ -2624,7 +2624,7 @@ async function createStripePaymentRequest(item){
      );
    }catch(e){
     throw new Error(
-     `FleetPay could not verify the existing Stripe payment link: ${e.message}`
+     `FaivoPay could not verify the existing Stripe payment link: ${e.message}`
     );
    }
 
@@ -2638,7 +2638,7 @@ async function createStripePaymentRequest(item){
 
    if(existingSession?.status==='complete'){
     throw new Error(
-     'This Stripe payment has already completed. Refresh FleetPay and allow the payment confirmation to finish before creating another payment link.'
+     'This Stripe payment has already completed. Refresh FaivoPay and allow the payment confirmation to finish before creating another payment link.'
     );
    }
 
@@ -2699,8 +2699,8 @@ async function createStripePaymentRequest(item){
          currency:'gbp',
          unit_amount:Math.round(Number(item.amount)*100),
          product_data:{
-           name:`FleetPay balance payment – Callsign ${item.callsign}`,
-           description:'FleetPay weekly driver account payment request'
+           name:`FaivoPay balance payment – Callsign ${item.callsign}`,
+           description:'FaivoPay weekly driver account payment request'
          }
        }
      }
@@ -2746,7 +2746,7 @@ async function createStripeCustomerPayment(item){
          name:'Taxi fare',
          description:item.booking_id
            ? `Booking ${item.booking_id}`
-           : `FleetPay taxi fare – Callsign ${item.callsign}`
+           : `FaivoPay taxi fare – Callsign ${item.callsign}`
        }
      }
    }
@@ -2759,7 +2759,7 @@ async function createStripeCustomerPayment(item){
        currency:'gbp',
        unit_amount:Math.round(Number(item.fee_amount)*100),
        product_data:{
-         name:'FleetPay service fee'
+         name:'FaivoPay service fee'
        }
      }
    });
@@ -2848,7 +2848,7 @@ async function sendEmail(to,subject,html){
 
  const settings=getSettings(),smtpHost=String(settings.smtpHost||'').trim(),smtpUser=String(settings.smtpUser||'').trim(),smtpPassword=getSecureSetting('smtpPassword');
  if(smtpHost){
-  try{const nodemailer=await import('nodemailer');const transporter=nodemailer.default.createTransport({host:smtpHost,port:Number(settings.smtpPort||587),secure:Boolean(settings.smtpSecure),auth:smtpUser?{user:smtpUser,pass:smtpPassword}:undefined});const info=await transporter.sendMail({from:`${settings.smtpFromName||'FleetPay'} <${settings.smtpFromEmail||smtpUser}>`,to,subject,html});return {sent:true,provider:'smtp',id:info.messageId||''}}catch(e){throw new Error(`SMTP email failed: ${e.message}. If nodemailer is not installed, run npm install nodemailer.`)}
+  try{const nodemailer=await import('nodemailer');const transporter=nodemailer.default.createTransport({host:smtpHost,port:Number(settings.smtpPort||587),secure:Boolean(settings.smtpSecure),auth:smtpUser?{user:smtpUser,pass:smtpPassword}:undefined});const info=await transporter.sendMail({from:`${settings.smtpFromName||'FaivoPay'} <${settings.smtpFromEmail||smtpUser}>`,to,subject,html});return {sent:true,provider:'smtp',id:info.messageId||''}}catch(e){throw new Error(`SMTP email failed: ${e.message}. If nodemailer is not installed, run npm install nodemailer.`)}
  }
  if(!RESEND_API_KEY||!RESEND_FROM_EMAIL)return {sent:false,provider:'none'};const r=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${RESEND_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({from:RESEND_FROM_EMAIL,to:[to],subject,html})});if(!r.ok)throw new Error(`Email provider error ${r.status}`);const out=await r.json().catch(()=>({}));return {sent:true,provider:'resend',id:out.id||''}
 }
@@ -3030,7 +3030,7 @@ async function sendCustomerPaymentCommunications(item){
     <div style="margin:0;padding:28px 14px;background:#f3f6f5;font-family:Arial,Helvetica,sans-serif;color:#172033">
      <div style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:18px;overflow:hidden;border:1px solid #e4e9e7">
       <div style="background:#173b32;padding:24px 28px;color:#ffffff">
-       <div style="font-size:12px;font-weight:700;letter-spacing:1.5px;opacity:.8">FLEETPAY</div>
+       <div style="font-size:12px;font-weight:700;letter-spacing:1.5px;opacity:.8">FAIVOPAY</div>
        <div style="font-size:25px;font-weight:700;margin-top:7px">Your taxi payment is ready</div>
       </div>
 
@@ -3055,7 +3055,7 @@ async function sendCustomerPaymentCommunications(item){
          <td style="padding:9px 0;border-bottom:1px solid #edf0ef;text-align:right;font-weight:700">£${fare}</td>
         </tr>
         <tr>
-         <td style="padding:9px 0;border-bottom:1px solid #edf0ef;color:#66736f">FleetPay service fee</td>
+         <td style="padding:9px 0;border-bottom:1px solid #edf0ef;color:#66736f">FaivoPay service fee</td>
          <td style="padding:9px 0;border-bottom:1px solid #edf0ef;text-align:right;font-weight:700">£${fee}</td>
         </tr>
        </table>
@@ -3070,7 +3070,7 @@ async function sendCustomerPaymentCommunications(item){
        </div>`:''}
 
        <p style="margin:26px 0 0;font-size:12px;line-height:1.55;color:#7a8581;text-align:center">
-        Secure payment powered by FleetPay. If you were not expecting this payment request, please contact your taxi provider.
+        Secure payment powered by FaivoPay. If you were not expecting this payment request, please contact your taxi provider.
        </p>
       </div>
      </div>
@@ -3152,7 +3152,7 @@ app.post('/api/webhooks/twilio/sms-status',express.urlencoded({extended:false}),
    );
 
    if(!valid){
-    console.warn('[FleetPay] Rejected invalid Twilio SMS status signature');
+    console.warn('[FaivoPay] Rejected invalid Twilio SMS status signature');
     return res.status(403).end();
    }
   }
@@ -3196,7 +3196,7 @@ app.post('/api/webhooks/twilio/sms-status',express.urlencoded({extended:false}),
 
   res.status(204).end();
  }catch(e){
-  console.error('[FleetPay] Twilio SMS status webhook error',e);
+  console.error('[FaivoPay] Twilio SMS status webhook error',e);
   res.status(204).end();
  }
 });
@@ -3215,7 +3215,7 @@ app.get('/api/admin/twilio/balance',adminAuth,async(req,res)=>{
 
   res.json(result);
  }catch(e){
-  console.error('[FleetPay] Twilio balance error',e);
+  console.error('[FaivoPay] Twilio balance error',e);
   res.status(502).json({
    error:'Unable to retrieve Twilio balance'
   });
@@ -3264,7 +3264,7 @@ app.post('/api/admin/mfa/recovery/start',async(req,res)=>{
   const expires=Date.now()+10*60000;
   db.prepare("DELETE FROM auth_challenges WHERE type='office_mfa_recovery' AND email=?").run(u.email);
   db.prepare('INSERT INTO auth_challenges(id,type,driver_id,callsign,email,code_hash,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?)').run(challenge,'office_mfa_recovery',null,null,u.email,crypto.createHash('sha256').update(code).digest('hex'),expires,new Date().toISOString());
-  const sent=await sendEmail(u.email,'FleetPay authenticator recovery code',`<div style="font-family:Arial,sans-serif;max-width:560px"><h2>FleetPay authenticator recovery</h2><p>Your one-time recovery code is:</p><p style="font-size:30px;font-weight:700;letter-spacing:6px">${code}</p><p>This code expires in 10 minutes. If you did not request this, do not share the code.</p></div>`);
+  const sent=await sendEmail(u.email,'FaivoPay authenticator recovery code',`<div style="font-family:Arial,sans-serif;max-width:560px"><h2>FaivoPay authenticator recovery</h2><p>Your one-time recovery code is:</p><p style="font-size:30px;font-weight:700;letter-spacing:6px">${code}</p><p>This code expires in 10 minutes. If you did not request this, do not share the code.</p></div>`);
   if(!sent?.sent){db.prepare('DELETE FROM auth_challenges WHERE id=?').run(challenge);return res.status(503).json({error:'Office recovery email is not configured. Ask an administrator to reset MFA.'})}
   audit(req,'staff',u.email,'office_mfa_recovery_started','staff_user',u.id,{provider:sent.provider||''});
   res.json({challengeId:challenge,emailHint:u.email.replace(/^(.{1,2}).*(@.*)$/,'$1••••$2'),message:'Recovery code sent'});
@@ -3339,15 +3339,15 @@ app.post('/api/admin/staff',adminAuth,requireStaffRole('administrator'),async(re
     <div style="margin:0;padding:28px 14px;background:#f3f6f5;font-family:Arial,Helvetica,sans-serif;color:#172033">
      <div style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:18px;overflow:hidden;border:1px solid #e4e9e7">
       <div style="background:#173b32;padding:24px 28px;color:#ffffff">
-       <div style="font-size:12px;font-weight:700;letter-spacing:1.5px;opacity:.8">FLEETPAY</div>
-       <div style="font-size:25px;font-weight:700;margin-top:7px">Your FleetPay account is ready</div>
+       <div style="font-size:12px;font-weight:700;letter-spacing:1.5px;opacity:.8">FAIVOPAY</div>
+       <div style="font-size:25px;font-weight:700;margin-top:7px">Your FaivoPay account is ready</div>
       </div>
 
       <div style="padding:28px">
        <p style="margin:0 0 18px;font-size:16px;line-height:1.6">Hello ${String(name).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))},</p>
 
        <p style="font-size:15px;line-height:1.65;color:#40504a">
-        An administrator has created a FleetPay Office account for you.
+        An administrator has created a FaivoPay Office account for you.
        </p>
 
        <div style="background:#f7f9f8;border:1px solid #e7ece9;border-radius:14px;padding:18px;margin:22px 0">
@@ -3361,17 +3361,17 @@ app.post('/api/admin/staff',adminAuth,requireStaffRole('administrator'),async(re
        </p>
 
        <p style="font-size:15px;line-height:1.65;color:#40504a">
-        When you first sign in, FleetPay will require you to set up authenticator-based multi-factor authentication.
+        When you first sign in, FaivoPay will require you to set up authenticator-based multi-factor authentication.
        </p>
 
        <div style="text-align:center;margin:28px 0">
         <a href="${PUBLIC_BASE_URL}" style="display:inline-block;background:#24845b;color:#ffffff;text-decoration:none;font-size:16px;font-weight:700;padding:14px 26px;border-radius:10px">
-         Sign in to FleetPay
+         Sign in to FaivoPay
         </a>
        </div>
 
        <p style="margin:24px 0 0;font-size:12px;line-height:1.55;color:#7a8581;text-align:center">
-        If you were not expecting this account, please contact your FleetPay administrator.
+        If you were not expecting this account, please contact your FaivoPay administrator.
        </p>
       </div>
      </div>
@@ -3379,7 +3379,7 @@ app.post('/api/admin/staff',adminAuth,requireStaffRole('administrator'),async(re
 
    const out=await sendEmail(
     email,
-    'Your FleetPay Office account is ready',
+    'Your FaivoPay Office account is ready',
     html
    );
 
@@ -3409,7 +3409,7 @@ app.post('/api/admin/staff',adminAuth,requireStaffRole('administrator'),async(re
     error:e.message
    });
 
-   console.error('[FleetPay] Office welcome email failed',e);
+   console.error('[FaivoPay] Office welcome email failed',e);
   }
 
   res.json({
@@ -3879,7 +3879,7 @@ function officeTransactions(limit=250){
      ? 'Customer payment fee'
      : String(x.fee_type)==='early_payout'
      ? 'Early payout fee'
-     : 'Weekly FleetPay fee',
+     : 'Weekly FaivoPay fee',
    direction:'in',
    driverId:x.driver_id||null,
    callsign:x.callsign,
@@ -3888,7 +3888,7 @@ function officeTransactions(limit=250){
    feeAmount:Number(effectiveFee.toFixed(2)),
    originalAmount:Number(x.gross_fee||0),
    status:x.status,
-   provider:'FleetPay',
+   provider:'FaivoPay',
    providerRef:x.source_id||'',
    createdAt:x.created_at,
    completedAt:x.invoiced_at||x.created_at
@@ -4014,7 +4014,7 @@ function sendOfficeCsv(res,filename,rows,columns=null){
 app.get('/api/admin/exports/:dataset.csv',adminAuth,requireStaffRole('administrator','finance','office','readonly'),(req,res)=>{
  try{
   const dataset=String(req.params.dataset||'').trim().toLowerCase();
-  let rows=[],filename=`FleetPay-${dataset}.csv`;
+  let rows=[],filename=`FaivoPay-${dataset}.csv`;
 
   switch(dataset){
    case 'transactions':
@@ -4132,7 +4132,7 @@ app.get('/api/admin/exports/:dataset.csv',adminAuth,requireStaffRole('administra
       entity_type entityType,entity_id entityId,details_json detailsJson,ip
      FROM audit_logs ORDER BY id DESC
     `).all();
-    filename='FleetPay-audit.csv';
+    filename='FaivoPay-audit.csv';
     break;
 
    case 'refunds':
@@ -4323,7 +4323,7 @@ app.post('/api/admin/customer-payments',adminAuth,requireStaffRole('administrato
   const taxiCompany=String(req.body.taxiCompany||getSettings().companyName||'Taxi company').trim();
   const callsign=String(req.body.callsign||'').trim();
   let driverId=0,driverName='Office payment';
-  if(callsign){const d=cacheRows().find(x=>String(x.callsign)===callsign);if(!d)return res.status(400).json({error:`Callsign ${callsign} was not found in the FleetPay driver cache.`});driverId=d.driverId;driverName=d.fullName||`Callsign ${callsign}`;}
+  if(callsign){const d=cacheRows().find(x=>String(x.callsign)===callsign);if(!d)return res.status(400).json({error:`Callsign ${callsign} was not found in the FaivoPay driver cache.`});driverId=d.driverId;driverName=d.fullName||`Callsign ${callsign}`;}
   const feeAmount=customerPaymentFeeFor(fareAmount);
   const totalAmount=Math.round((fareAmount+feeAmount)*100)/100;
   const paymentId=id('customerpay'),now=new Date().toISOString(),paymentUrl=`${PUBLIC_BASE_URL}/pay/${paymentId}`;
@@ -4468,7 +4468,7 @@ app.post(
    /*
     * Read Stripe first so Stripe remains the authority for how much
     * has actually been refunded. This protects against duplicate clicks
-    * or a previous refund succeeding before FleetPay saved its state.
+    * or a previous refund succeeding before FaivoPay saved its state.
     */
    const stripeRefunds=await stripe.refunds.list({
     payment_intent:paymentIntentId,
@@ -4558,7 +4558,7 @@ app.post(
      return res.status(400).json({
       error:
        `Enter a refund amount between £0.01 and £${refundableAmount.toFixed(2)}. `+
-       `The £${fee.toFixed(2)} FleetPay service fee is non-refundable.`
+       `The £${fee.toFixed(2)} FaivoPay service fee is non-refundable.`
      });
     }
 
@@ -4704,7 +4704,7 @@ app.post(
    });
 
   }catch(e){
-   console.error('[FleetPay] customer refund failed',e);
+   console.error('[FaivoPay] customer refund failed',e);
 
    res.status(500).json({
     error:e.message||'Customer refund could not be processed.'
@@ -4788,7 +4788,7 @@ async function findFleetPayUnpostedDocket(row){
   docketAccountCode!==AUTOCAB_FLEETPAY_ACCOUNT_CODE
  ){
   throw new Error(
-   `Autocab docket ${docket.docketNumber||docket.id} does not belong to the FleetPay account.`
+   `Autocab docket ${docket.docketNumber||docket.id} does not belong to the FaivoPay account.`
   );
  }
 
@@ -5002,7 +5002,7 @@ app.post(
    /*
     * Autocab remains the source of truth for driver accounting.
     * Update and approve the unposted docket BEFORE recording the
-    * FleetPay settlement decision. No driver_ledger credit is created.
+    * FaivoPay settlement decision. No driver_ledger credit is created.
     */
    let autocabSettlement;
 
@@ -5207,7 +5207,7 @@ app.get('/api/admin/autocab-booking-webhooks',adminAuth,requireStaffRole('admini
 
 app.get('/api/admin/integrations',adminAuth,(req,res)=>{res.json({stripe:{configured:Boolean(STRIPE_SECRET_KEY),testMode:STRIPE_SECRET_KEY.startsWith('sk_test_')},wise:{configured:Boolean(WISE_API_TOKEN),environment:WISE_ENV,profileId:WISE_PROFILE_ID||null},autocab:{configured:Boolean(API_KEY),adjustmentsEnabled:AUTOCAB_ADJUSTMENTS_ENABLED},push:{configured:Boolean(VAPID_PUBLIC_KEY&&VAPID_PRIVATE_KEY),publicKey:VAPID_PUBLIC_KEY||null}})});
 app.post('/api/admin/integrations/wise/test',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{const out=await testWiseConnection();audit(req,'admin',req.auth.email,'wise_connection_test','integration','wise',{environment:WISE_ENV});res.json(out)}catch(e){res.status(500).json({error:e.message})}});
-app.post('/api/admin/autocab/test-adjustment',adminAuth,requireStaffRole('administrator'),async(req,res)=>{try{const callsign=String(req.body.callsign||'').trim();const d=cacheRows().find(x=>String(x.callsign)===callsign);if(!d)return res.status(404).json({error:'Callsign not found in FleetPay cache'});const amount=Number(req.body.amount||0);if(!(amount>0))return res.status(400).json({error:'Amount must be greater than zero'});const result=await postAutocabAdjustment({driverId:d.driverId,callsign:d.callsign,amount,isCredit:Boolean(req.body.isCredit),description:String(req.body.description||'FleetPay test adjustment'),adjustmentReason:String(req.body.adjustmentReason||'FleetPay Test'),eventKey:`test:${Date.now()}:${d.driverId}`,force:true});audit(req,'admin',req.auth.email,'autocab_test_adjustment','driver',d.callsign,{callsign:d.callsign,amount,isCredit:Boolean(req.body.isCredit)});setTimeout(()=>syncAutocab().catch(()=>{}),500);res.json({ok:true,driver:{driverId:d.driverId,callsign:d.callsign,fullName:d.fullName},result})}catch(e){res.status(500).json({error:e.message})}});
+app.post('/api/admin/autocab/test-adjustment',adminAuth,requireStaffRole('administrator'),async(req,res)=>{try{const callsign=String(req.body.callsign||'').trim();const d=cacheRows().find(x=>String(x.callsign)===callsign);if(!d)return res.status(404).json({error:'Callsign not found in FaivoPay cache'});const amount=Number(req.body.amount||0);if(!(amount>0))return res.status(400).json({error:'Amount must be greater than zero'});const result=await postAutocabAdjustment({driverId:d.driverId,callsign:d.callsign,amount,isCredit:Boolean(req.body.isCredit),description:String(req.body.description||'FaivoPay test adjustment'),adjustmentReason:String(req.body.adjustmentReason||'FleetPay Test'),eventKey:`test:${Date.now()}:${d.driverId}`,force:true});audit(req,'admin',req.auth.email,'autocab_test_adjustment','driver',d.callsign,{callsign:d.callsign,amount,isCredit:Boolean(req.body.isCredit)});setTimeout(()=>syncAutocab().catch(()=>{}),500);res.json({ok:true,driver:{driverId:d.driverId,callsign:d.callsign,fullName:d.fullName},result})}catch(e){res.status(500).json({error:e.message})}});
 app.get('/api/admin/autocab/adjustments',adminAuth,(req,res)=>{const rows=db.prepare('SELECT id,event_key eventKey,driver_id driverId,callsign,amount,is_credit isCredit,description,adjustment_reason adjustmentReason,status,created_at createdAt,completed_at completedAt,error FROM autocab_adjustments ORDER BY created_at DESC LIMIT 250').all().map(x=>({...x,isCredit:Boolean(x.isCredit)}));res.json({adjustments:rows})});
 app.get('/api/admin/dashboard',adminAuth,(req,res)=>{const drivers=cacheRows();const matched=drivers.filter(d=>d.currentBalance!==null).length;const owedOut=drivers.reduce((s,d)=>s+Math.max(0,Number(d.currentBalance||0)),0),owedIn=drivers.reduce((s,d)=>s+Math.max(0,-Number(d.currentBalance||0)),0);const stats={count:drivers.length,matched,unmatched:drivers.length-matched,owedOut,owedIn,openPaymentRequests:Number(db.prepare("SELECT COUNT(*) c FROM payment_requests WHERE status='open'").get().c),queuedPayouts:Number(db.prepare("SELECT COUNT(*) c FROM payouts WHERE status IN ('queued','requested','approved','batched')").get().c),pendingUsers:Number(db.prepare('SELECT COUNT(*) c FROM driver_users WHERE approved=0').get().c)};const lastSync=db.prepare('SELECT MAX(synced_at) lastSync FROM driver_cache').get()?.lastSync||null;res.json({fetchedAt:new Date().toISOString(),lastSync,stats,drivers})});
 app.get('/api/drivers',adminAuth,(req,res)=>{const drivers=cacheRows().map(d=>({...d,bankAccount:adminBankAccountInfo(d.driverId)}));const matched=drivers.filter(d=>d.currentBalance!==null).length;const lastSync=db.prepare('SELECT MAX(synced_at) lastSync FROM driver_cache').get()?.lastSync||null;const bankReady=drivers.filter(d=>d.bankAccount?.ready).length,bankMissing=drivers.length-bankReady,bankRecentlyChanged=drivers.filter(d=>d.bankAccount?.changedRecently).length;res.json({fetchedAt:new Date().toISOString(),lastSync,count:drivers.length,matched,unmatched:drivers.length-matched,bankReady,bankMissing,bankRecentlyChanged,drivers})});
@@ -5223,13 +5223,13 @@ app.patch('/api/admin/drivers/:driverId/payout-exclusion',adminAuth,requireStaff
 });
 app.post('/api/admin/sync',adminAuth,requireStaffRole('administrator','finance','office'),async(req,res)=>{try{const out=await syncAutocab();audit(req,'admin',req.auth.email,'autocab_sync','driver_cache','all',{count:out.drivers.length});res.json({ok:true,count:out.drivers.length,syncedAt:out.syncedAt})}catch(e){res.status(500).json({error:e.message})}});
 app.get('/api/settings',adminAuth,(req,res)=>res.json(getSettings()));
-app.put('/api/settings',adminAuth,requireStaffRole('administrator'),(req,res)=>{const cur=getSettings(),s=req.body||{};let cutoff=String(s.earlyPayoutCutoffTime??cur.earlyPayoutCutoffTime??`${String(cur.earlyPayoutCutoffHour??11).padStart(2,'0')}:00`);if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(cutoff))cutoff='11:00';const next={negativeThreshold:Math.max(0,Number(s.negativeThreshold??cur.negativeThreshold)),minimumPayoutThreshold:Math.max(0,Number(s.minimumPayoutThreshold??cur.minimumPayoutThreshold??0)),chargeWeeklyFeeWhenInactive:Boolean(s.chargeWeeklyFeeWhenInactive??cur.chargeWeeklyFeeWhenInactive??true),weeklyAppFee:Math.max(0,Number(s.weeklyAppFee??cur.weeklyAppFee)),earlyPayoutFee:Math.max(0,Number(s.earlyPayoutFee??cur.earlyPayoutFee)),customerPaymentFeeType:['fixed','percentage'].includes(String(s.customerPaymentFeeType||cur.customerPaymentFeeType))?String(s.customerPaymentFeeType||cur.customerPaymentFeeType):'fixed',customerPaymentFeeValue:Math.max(0,Number(s.customerPaymentFeeValue??cur.customerPaymentFeeValue)),earlyPayoutCutoffTime:cutoff,earlyPayoutCutoffHour:Number(cutoff.split(':')[0]),syncMinutes:Math.min(60,Math.max(2,Number(s.syncMinutes??cur.syncMinutes))),requireAdminApproval:Boolean(s.requireAdminApproval),companyName:String(s.companyName||cur.companyName),productName:'FleetPay'};setSettings(next);audit(req,'admin',req.auth.email,'settings_updated','settings','global',next);res.json(next)});
+app.put('/api/settings',adminAuth,requireStaffRole('administrator'),(req,res)=>{const cur=getSettings(),s=req.body||{};let cutoff=String(s.earlyPayoutCutoffTime??cur.earlyPayoutCutoffTime??`${String(cur.earlyPayoutCutoffHour??11).padStart(2,'0')}:00`);if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(cutoff))cutoff='11:00';const next={negativeThreshold:Math.max(0,Number(s.negativeThreshold??cur.negativeThreshold)),minimumPayoutThreshold:Math.max(0,Number(s.minimumPayoutThreshold??cur.minimumPayoutThreshold??0)),chargeWeeklyFeeWhenInactive:Boolean(s.chargeWeeklyFeeWhenInactive??cur.chargeWeeklyFeeWhenInactive??true),weeklyAppFee:Math.max(0,Number(s.weeklyAppFee??cur.weeklyAppFee)),earlyPayoutFee:Math.max(0,Number(s.earlyPayoutFee??cur.earlyPayoutFee)),customerPaymentFeeType:['fixed','percentage'].includes(String(s.customerPaymentFeeType||cur.customerPaymentFeeType))?String(s.customerPaymentFeeType||cur.customerPaymentFeeType):'fixed',customerPaymentFeeValue:Math.max(0,Number(s.customerPaymentFeeValue??cur.customerPaymentFeeValue)),earlyPayoutCutoffTime:cutoff,earlyPayoutCutoffHour:Number(cutoff.split(':')[0]),syncMinutes:Math.min(60,Math.max(2,Number(s.syncMinutes??cur.syncMinutes))),requireAdminApproval:Boolean(s.requireAdminApproval),companyName:String(s.companyName||cur.companyName),productName:'FaivoPay'};setSettings(next);audit(req,'admin',req.auth.email,'settings_updated','settings','global',next);res.json(next)});
 
 app.get('/api/admin/users',adminAuth,(req,res)=>{res.json(db.prepare('SELECT id,driver_id as driverId,callsign,email,approved,created_at as createdAt,last_login_at as lastLoginAt FROM driver_users ORDER BY CAST(callsign AS INTEGER), callsign').all().map(x=>({...x,approved:Boolean(x.approved)})))});
 app.patch('/api/admin/users/:id',adminAuth,requireStaffRole('administrator','office'),(req,res)=>{const u=db.prepare('SELECT * FROM driver_users WHERE id=?').get(req.params.id);if(!u)return res.status(404).json({error:'User not found'});const approved='approved'in req.body?(req.body.approved?1:0):u.approved;db.prepare('UPDATE driver_users SET approved=?,updated_at=? WHERE id=?').run(approved,new Date().toISOString(),u.id);audit(req,'admin',req.auth.email,approved?'driver_user_approved':'driver_user_suspended','driver_user',u.id,{driverId:u.driver_id,callsign:u.callsign});res.json({ok:true})});
 
 app.get('/api/admin/settlements',adminAuth,(req,res)=>{const runs=db.prepare('SELECT * FROM settlement_runs ORDER BY created_at DESC').all().map(r=>({id:r.id,createdAt:r.created_at,status:r.status,settings:JSON.parse(r.settings_json),items:JSON.parse(r.items_json)}));const payouts=db.prepare('SELECT *, driver_id driverId, driver_name driverName, gross_balance grossBalance, weekly_fee weeklyFee, carried_charges carriedCharges, gross_amount grossAmount, net_amount netAmount, payout_run_id payoutRunId, created_at createdAt, updated_at updatedAt, paid_at paidAt, decline_reason declineReason, eligible_run_date eligibleRunDate, submitted_after_cutoff submittedAfterCutoff FROM payouts ORDER BY created_at DESC').all();const paymentRequests=db.prepare('SELECT *, driver_id driverId, driver_name driverName, weekly_fee weeklyFee, carried_charges carriedCharges, payment_url paymentUrl, provider_session_id providerSessionId, created_at createdAt, updated_at updatedAt, paid_at paidAt FROM payment_requests ORDER BY created_at DESC').all();const payoutRuns=db.prepare('SELECT * FROM payout_runs ORDER BY created_at DESC').all().map(serializePayoutRun);res.json({runs,payoutRuns,payouts,paymentRequests,earlyPayoutRequests:payouts.filter(x=>x.type==='early')})});
-app.post('/api/admin/settlements/monday',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{const settings=getSettings(),sync=await syncAutocab(),drivers=sync.drivers,runId=id('run'),createdAt=new Date().toISOString(),items=[];const insP=db.prepare('INSERT INTO payouts(id,run_id,driver_id,callsign,driver_name,gross_balance,weekly_fee,carried_charges,amount,type,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)');const insR=db.prepare('INSERT INTO payment_requests(id,run_id,driver_id,callsign,driver_name,balance,weekly_fee,carried_charges,amount,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)');for(const d of drivers){if(d.currentBalance==null)continue;const row=db.prepare('SELECT amount FROM carried_charges WHERE driver_id=?').get(d.driverId);const carried=Number(row?.amount||0),fee=Number(settings.weeklyAppFee||0),adjusted=Number(d.currentBalance)-fee-carried;let action='none',amount=0;if(adjusted>0.00001){action='payout';amount=adjusted;insP.run(id('payout'),runId,d.driverId,d.callsign,d.fullName,d.currentBalance,fee,carried,amount,'weekly','queued',createdAt);db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,0) ON CONFLICT(driver_id) DO UPDATE SET amount=0').run(d.driverId)}else if(adjusted<-0.00001){const due=Math.abs(adjusted);amount=due;if(due>=Number(settings.negativeThreshold||0)){action='payment_request';const requestId=id('request');insR.run(requestId,runId,d.driverId,d.callsign,d.fullName,d.currentBalance,fee,carried,due,'open',createdAt);notify(d.driverId,'Payment due',`Your Monday FleetPay settlement has an amount due of £${due.toFixed(2)}. Open FleetPay to pay securely by card.`,'warning',requestId);db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,0) ON CONFLICT(driver_id) DO UPDATE SET amount=0').run(d.driverId)}else{action='carry_forward';db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,?) ON CONFLICT(driver_id) DO UPDATE SET amount=excluded.amount').run(d.driverId,due)}}else{db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,0) ON CONFLICT(driver_id) DO UPDATE SET amount=0').run(d.driverId)}if(fee>0)ledger(d.driverId,'weekly_fee','debit',fee,fee,'Weekly FleetPay fee',runId,'charged');items.push({driverId:d.driverId,callsign:d.callsign,driverName:d.fullName,currentBalance:d.currentBalance,previousBalance:d.previousBalance,weeklyFee:fee,carriedCharges:carried,adjustedBalance:adjusted,action,amount})}db.prepare('INSERT INTO settlement_runs(id,created_at,status,settings_json,items_json) VALUES(?,?,?,?,?)').run(runId,createdAt,'completed',JSON.stringify(settings),JSON.stringify(items));audit(req,'admin',req.auth.email,'monday_settlement_run','settlement_run',runId,{drivers:items.length,payouts:items.filter(x=>x.action==='payout').length,paymentRequests:items.filter(x=>x.action==='payment_request').length});res.json({id:runId,createdAt,status:'completed',settings,items})}catch(e){res.status(500).json({error:e.message})}});
+app.post('/api/admin/settlements/monday',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{const settings=getSettings(),sync=await syncAutocab(),drivers=sync.drivers,runId=id('run'),createdAt=new Date().toISOString(),items=[];const insP=db.prepare('INSERT INTO payouts(id,run_id,driver_id,callsign,driver_name,gross_balance,weekly_fee,carried_charges,amount,type,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)');const insR=db.prepare('INSERT INTO payment_requests(id,run_id,driver_id,callsign,driver_name,balance,weekly_fee,carried_charges,amount,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)');for(const d of drivers){if(d.currentBalance==null)continue;const row=db.prepare('SELECT amount FROM carried_charges WHERE driver_id=?').get(d.driverId);const carried=Number(row?.amount||0),fee=Number(settings.weeklyAppFee||0),adjusted=Number(d.currentBalance)-fee-carried;let action='none',amount=0;if(adjusted>0.00001){action='payout';amount=adjusted;insP.run(id('payout'),runId,d.driverId,d.callsign,d.fullName,d.currentBalance,fee,carried,amount,'weekly','queued',createdAt);db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,0) ON CONFLICT(driver_id) DO UPDATE SET amount=0').run(d.driverId)}else if(adjusted<-0.00001){const due=Math.abs(adjusted);amount=due;if(due>=Number(settings.negativeThreshold||0)){action='payment_request';const requestId=id('request');insR.run(requestId,runId,d.driverId,d.callsign,d.fullName,d.currentBalance,fee,carried,due,'open',createdAt);notify(d.driverId,'Payment due',`Your Monday FaivoPay settlement has an amount due of £${due.toFixed(2)}. Open FaivoPay to pay securely by card.`,'warning',requestId);db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,0) ON CONFLICT(driver_id) DO UPDATE SET amount=0').run(d.driverId)}else{action='carry_forward';db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,?) ON CONFLICT(driver_id) DO UPDATE SET amount=excluded.amount').run(d.driverId,due)}}else{db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,0) ON CONFLICT(driver_id) DO UPDATE SET amount=0').run(d.driverId)}if(fee>0)ledger(d.driverId,'weekly_fee','debit',fee,fee,'Weekly FaivoPay fee',runId,'charged');items.push({driverId:d.driverId,callsign:d.callsign,driverName:d.fullName,currentBalance:d.currentBalance,previousBalance:d.previousBalance,weeklyFee:fee,carriedCharges:carried,adjustedBalance:adjusted,action,amount})}db.prepare('INSERT INTO settlement_runs(id,created_at,status,settings_json,items_json) VALUES(?,?,?,?,?)').run(runId,createdAt,'completed',JSON.stringify(settings),JSON.stringify(items));audit(req,'admin',req.auth.email,'monday_settlement_run','settlement_run',runId,{drivers:items.length,payouts:items.filter(x=>x.action==='payout').length,paymentRequests:items.filter(x=>x.action==='payment_request').length});res.json({id:runId,createdAt,status:'completed',settings,items})}catch(e){res.status(500).json({error:e.message})}});
 app.patch('/api/admin/payouts/:id',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{const item=db.prepare('SELECT * FROM payouts WHERE id=?').get(req.params.id);if(!item)return res.status(404).json({error:'Payout not found'});const status=String(req.body.status||item.status),reason=String(req.body.reason||'').trim(),now=new Date().toISOString();if(status==='declined'&&!reason)return res.status(400).json({error:'A decline reason is required'});db.prepare('UPDATE payouts SET status=?,decline_reason=?,decision_at=?,decision_by=?,updated_at=? WHERE id=?').run(status,status==='declined'?reason:null,['approved','declined'].includes(status)?now:item.decision_at,['approved','declined'].includes(status)?req.auth.email:item.decision_by,now,item.id);if(item.type==='early'&&status==='approved'&&item.status!=='approved'){const runDate=item.eligible_run_date||londonWindow().date;const today=londonWindow().date;const timing=runDate===today?'Payment will be made to your assigned bank account by midday today.':`It has been approved for the ${formatRunDate(runDate)} payment run.`;notify(item.driver_id,'Early payout approved',`Your early payout of £${Number(item.net_amount||item.amount||0).toFixed(2)} has been approved. ${timing}`,'success',item.id)}if(item.type==='early'&&status==='declined'&&item.status!=='declined'){notify(item.driver_id,'Early payout declined',`Your early payout request was declined. Reason: ${reason}`,'warning',item.id)}if(status==='paid'&&item.status!=='paid'){await markPayoutPaid(item,req)}audit(req,'admin',req.auth.email,'payout_status_changed','payout',item.id,{from:item.status,to:status,reason});res.json({ok:true,status,reason})});
 
 app.post('/api/admin/payout-runs',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{
@@ -5294,7 +5294,7 @@ app.post('/api/admin/payout-runs/:id/funds-cleared',adminAuth,requireStaffRole('
 app.post('/api/admin/payout-runs/:id/wise-sandbox',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{
  if(WISE_ENV!=='sandbox')return res.status(400).json({error:'WISE_ENV must be sandbox for demo submission'});
  const run=db.prepare('SELECT * FROM payout_runs WHERE id=?').get(req.params.id);if(!run)return res.status(404).json({error:'Payout run not found'});
- if(run.status!=='funded')return res.status(400).json({error:'FleetPay will not release this run until cleared funds have been confirmed.'});
+ if(run.status!=='funded')return res.status(400).json({error:'FaivoPay will not release this run until cleared funds have been confirmed.'});
  const payoutItems=db.prepare('SELECT * FROM payouts WHERE payout_run_id=?').all(run.id);
  const bankIssues=payoutBankIssues(payoutItems);
  if(bankIssues.length)return res.status(400).json({error:`Payout release blocked: ${bankIssues.length} driver${bankIssues.length===1?' is':'s are'} missing payout bank details (${bankIssues.map(x=>x.item.callsign).join(', ')}).`});
@@ -5303,7 +5303,7 @@ app.post('/api/admin/payout-runs/:id/wise-sandbox',adminAuth,requireStaffRole('a
  audit(req,'admin',req.auth.email,'wise_sandbox_run_submitted','payout_run',run.id,{runType:run.run_type,itemCount:run.item_count,totalAmount:run.total_amount,providerRef:ref});
  res.json({ok:true,demo:true,message:'Wise sandbox demo submission recorded. No real money moved.',providerRef:ref,wiseEnvironment:wise.environment});
  }catch(e){res.status(500).json({error:e.message})}});
-app.get('/api/admin/payout-runs/:id/csv',adminAuth,(req,res)=>{const run=db.prepare('SELECT * FROM payout_runs WHERE id=?').get(req.params.id);if(!run)return res.status(404).json({error:'Payout run not found'});const items=db.prepare('SELECT callsign,driver_name,net_amount,amount,type,status FROM payouts WHERE payout_run_id=? ORDER BY CAST(callsign AS INTEGER),callsign').all(run.id);const esc=v=>`"${String(v??'').replaceAll('"','""')}"`;const csv=['Callsign,Driver,Amount,Type,Status',...items.map(x=>[esc(x.callsign),esc(x.driver_name),Number(x.net_amount||x.amount||0).toFixed(2),x.type,x.status].join(','))].join('\n');res.setHeader('Content-Type','text/csv');res.setHeader('Content-Disposition',`attachment; filename=FleetPay-${run.run_type}-${run.id}.csv`);res.send(csv)});
+app.get('/api/admin/payout-runs/:id/csv',adminAuth,(req,res)=>{const run=db.prepare('SELECT * FROM payout_runs WHERE id=?').get(req.params.id);if(!run)return res.status(404).json({error:'Payout run not found'});const items=db.prepare('SELECT callsign,driver_name,net_amount,amount,type,status FROM payouts WHERE payout_run_id=? ORDER BY CAST(callsign AS INTEGER),callsign').all(run.id);const esc=v=>`"${String(v??'').replaceAll('"','""')}"`;const csv=['Callsign,Driver,Amount,Type,Status',...items.map(x=>[esc(x.callsign),esc(x.driver_name),Number(x.net_amount||x.amount||0).toFixed(2),x.type,x.status].join(','))].join('\n');res.setHeader('Content-Type','text/csv');res.setHeader('Content-Disposition',`attachment; filename=FaivoPay-${run.run_type}-${run.id}.csv`);res.send(csv)});
 
 app.post('/api/admin/payment-requests/:id/stripe',adminAuth,requireStaffRole('administrator','finance','office'),async(req,res)=>{try{if(!stripe)return res.status(400).json({error:'Stripe is not configured. Add STRIPE_SECRET_KEY to .env'});const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(req.params.id);if(!item)return res.status(404).json({error:'Payment request not found'});if(item.status==='paid')return res.status(400).json({error:'This payment request is already paid'});if(item.payment_plan_id&&item.request_type==='payment_plan_instalment'){const pendingExtra=db.prepare(`SELECT * FROM payment_requests WHERE payment_plan_id=? AND request_type='payment_plan_extra' AND status='open' ORDER BY created_at DESC LIMIT 1`).get(item.payment_plan_id);if(pendingExtra){await safelyExpirePlanPaymentSession(pendingExtra);db.prepare(`UPDATE payment_requests SET status='cancelled',payment_url=NULL,provider=NULL,provider_session_id=NULL,provider_payment_intent_id=NULL,updated_at=? WHERE id=? AND status='open'`).run(new Date().toISOString(),pendingExtra.id);audit(req,'staff',req.auth.email,'payment_plan_extra_payment_cancelled','driver_payment_plan',item.payment_plan_id,{paymentRequestId:pendingExtra.id,reason:'scheduled_instalment_checkout_started'})}}const session=await createStripePaymentRequest(item);audit(req,'admin',req.auth.email,'stripe_payment_request_created','payment_request',item.id,{callsign:item.callsign,amount:item.amount,sessionId:session.id});res.json({ok:true,paymentUrl:session.url})}catch(e){res.status(500).json({error:e.message})}});
 app.patch('/api/admin/payment-requests/:id',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{
@@ -5326,7 +5326,7 @@ app.get('/api/admin/logs',adminAuth,(req,res)=>{const limit=Math.min(500,Math.ma
 
 
 /* =========================
-   FleetPay Office V2 workflow
+   FaivoPay Office V2 workflow
    ========================= */
 function nextTuesdayDueLabel(){
  const now=londonWindow();let d=new Date(`${now.date}T12:00:00Z`);do{d.setUTCDate(d.getUTCDate()+1)}while(d.getUTCDay()!==2);const date=d.toISOString().slice(0,10);return {date,dueAt:`${date}T${String(getSettings().outstandingDueTime||'17:00')}:00`,label:new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/London',weekday:'long',day:'numeric',month:'long',year:'numeric'}).format(new Date(`${date}T12:00:00Z`))}
@@ -5346,17 +5346,17 @@ function officeSettingsPayload(){const s=getSettings();return {...s,smsAuthConfi
 app.get('/api/admin/operations-settings',adminAuth,(req,res)=>res.json(officeSettingsPayload()));
 app.put('/api/admin/operations-settings',adminAuth,requireStaffRole('administrator'),(req,res)=>{
  const cur=getSettings(),x=req.body||{},num=(k,min=0,max=Infinity)=>Math.min(max,Math.max(min,Number(x[k]??cur[k]??0))),str=k=>String(x[k]??cur[k]??'');let cutoff=str('earlyPayoutCutoffTime');if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(cutoff))cutoff='11:00';let dueTime=str('outstandingDueTime');if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(dueTime))dueTime='17:00';
- const next={...cur,negativeThreshold:num('negativeThreshold'),minimumPayoutThreshold:num('minimumPayoutThreshold'),chargeWeeklyFeeWhenInactive:Boolean(x.chargeWeeklyFeeWhenInactive??cur.chargeWeeklyFeeWhenInactive??true),weeklyAppFee:num('weeklyAppFee'),earlyPayoutFee:num('earlyPayoutFee'),customerPaymentFeeType:['fixed','percentage'].includes(str('customerPaymentFeeType'))?str('customerPaymentFeeType'):'fixed',customerPaymentFeeValue:num('customerPaymentFeeValue'),earlyPayoutCutoffTime:cutoff,earlyPayoutCutoffHour:Number(cutoff.split(':')[0]),syncMinutes:num('syncMinutes',2,60),weeklyPayoutReasonTemplate:str('weeklyPayoutReasonTemplate'),earlyPayoutReasonTemplate:str('earlyPayoutReasonTemplate'),manualPayInReasonDefault:str('manualPayInReasonDefault'),manualPayoutReasonDefault:str('manualPayoutReasonDefault'),outstandingDueTime:dueTime,outstandingSmsTemplate:str('outstandingSmsTemplate'),outstandingEmailSubject:str('outstandingEmailSubject'),outstandingEmailBody:str('outstandingEmailBody'),smsEndpoint:str('smsEndpoint'),smsMethod:['POST','PUT','PATCH'].includes(str('smsMethod').toUpperCase())?str('smsMethod').toUpperCase():'POST',smsAuthHeader:str('smsAuthHeader'),smsBodyTemplate:str('smsBodyTemplate'),twilioEnabled:Boolean(x.twilioEnabled??cur.twilioEnabled),orionEnabled:Boolean(x.orionEnabled??cur.orionEnabled),paymentSmsProvider:['twilio','orion'].includes(str('paymentSmsProvider').toLowerCase())?str('paymentSmsProvider').toLowerCase():'twilio',generalSmsProvider:['twilio','orion'].includes(str('generalSmsProvider').toLowerCase())?str('generalSmsProvider').toLowerCase():'orion',smsFallbackEnabled:Boolean(x.smsFallbackEnabled??cur.smsFallbackEnabled),twilioLowBalanceAlertsEnabled:Boolean(x.twilioLowBalanceAlertsEnabled??cur.twilioLowBalanceAlertsEnabled),twilioLowBalanceThreshold:num('twilioLowBalanceThreshold',0),twilioLowBalanceEmail:safeEmail(str('twilioLowBalanceEmail')),smtpHost:str('smtpHost'),smtpPort:num('smtpPort',1,65535),smtpSecure:Boolean(x.smtpSecure??cur.smtpSecure),smtpUser:str('smtpUser'),smtpFromName:str('smtpFromName'),smtpFromEmail:str('smtpFromEmail'),officeNotificationEmail:safeEmail(str('officeNotificationEmail')),customerFeeFleetPayPercent:num('customerFeeFleetPayPercent',0,100),earlyPayoutFeeFleetPayPercent:num('earlyPayoutFeeFleetPayPercent',0,100),weeklyFeeFleetPayPercent:num('weeklyFeeFleetPayPercent',0,100),requireAdminApproval:Boolean(x.requireAdminApproval??cur.requireAdminApproval),companyName:str('companyName')||cur.companyName,productName:'FleetPay'};
+ const next={...cur,negativeThreshold:num('negativeThreshold'),minimumPayoutThreshold:num('minimumPayoutThreshold'),chargeWeeklyFeeWhenInactive:Boolean(x.chargeWeeklyFeeWhenInactive??cur.chargeWeeklyFeeWhenInactive??true),weeklyAppFee:num('weeklyAppFee'),earlyPayoutFee:num('earlyPayoutFee'),customerPaymentFeeType:['fixed','percentage'].includes(str('customerPaymentFeeType'))?str('customerPaymentFeeType'):'fixed',customerPaymentFeeValue:num('customerPaymentFeeValue'),earlyPayoutCutoffTime:cutoff,earlyPayoutCutoffHour:Number(cutoff.split(':')[0]),syncMinutes:num('syncMinutes',2,60),weeklyPayoutReasonTemplate:str('weeklyPayoutReasonTemplate'),earlyPayoutReasonTemplate:str('earlyPayoutReasonTemplate'),manualPayInReasonDefault:str('manualPayInReasonDefault'),manualPayoutReasonDefault:str('manualPayoutReasonDefault'),outstandingDueTime:dueTime,outstandingSmsTemplate:str('outstandingSmsTemplate'),outstandingEmailSubject:str('outstandingEmailSubject'),outstandingEmailBody:str('outstandingEmailBody'),smsEndpoint:str('smsEndpoint'),smsMethod:['POST','PUT','PATCH'].includes(str('smsMethod').toUpperCase())?str('smsMethod').toUpperCase():'POST',smsAuthHeader:str('smsAuthHeader'),smsBodyTemplate:str('smsBodyTemplate'),twilioEnabled:Boolean(x.twilioEnabled??cur.twilioEnabled),orionEnabled:Boolean(x.orionEnabled??cur.orionEnabled),paymentSmsProvider:['twilio','orion'].includes(str('paymentSmsProvider').toLowerCase())?str('paymentSmsProvider').toLowerCase():'twilio',generalSmsProvider:['twilio','orion'].includes(str('generalSmsProvider').toLowerCase())?str('generalSmsProvider').toLowerCase():'orion',smsFallbackEnabled:Boolean(x.smsFallbackEnabled??cur.smsFallbackEnabled),twilioLowBalanceAlertsEnabled:Boolean(x.twilioLowBalanceAlertsEnabled??cur.twilioLowBalanceAlertsEnabled),twilioLowBalanceThreshold:num('twilioLowBalanceThreshold',0),twilioLowBalanceEmail:safeEmail(str('twilioLowBalanceEmail')),smtpHost:str('smtpHost'),smtpPort:num('smtpPort',1,65535),smtpSecure:Boolean(x.smtpSecure??cur.smtpSecure),smtpUser:str('smtpUser'),smtpFromName:str('smtpFromName'),smtpFromEmail:str('smtpFromEmail'),officeNotificationEmail:safeEmail(str('officeNotificationEmail')),customerFeeFleetPayPercent:num('customerFeeFleetPayPercent',0,100),earlyPayoutFeeFleetPayPercent:num('earlyPayoutFeeFleetPayPercent',0,100),weeklyFeeFleetPayPercent:num('weeklyFeeFleetPayPercent',0,100),requireAdminApproval:Boolean(x.requireAdminApproval??cur.requireAdminApproval),companyName:str('companyName')||cur.companyName,productName:'FaivoPay'};
  setSettings(next);if(String(x.smsAuthValue||'').trim())setSecureSetting('smsAuthValue',String(x.smsAuthValue));if(String(x.smtpPassword||'').trim())setSecureSetting('smtpPassword',String(x.smtpPassword));audit(req,'staff',req.auth.email,'operations_settings_updated','settings','operations',{...next,smsAuthValue:undefined,smtpPassword:undefined});res.json(officeSettingsPayload())
 });
-app.post('/api/admin/communications/test-sms',adminAuth,requireStaffRole('administrator'),async(req,res)=>{try{const to=String(req.body.to||'').trim();if(!to)return res.status(400).json({error:'Enter a mobile number'});const message=String(req.body.message||'FleetPay test SMS – communications are configured correctly.');const out=await sendConfiguredSms(to,message,{templateKey:'test_sms',entityType:'settings',entityId:'communications'});audit(req,'staff',req.auth.email,'test_sms_sent','settings','communications',{to});res.json({ok:true,out})}catch(e){res.status(500).json({error:e.message})}});
-app.post('/api/admin/communications/test-email',adminAuth,requireStaffRole('administrator'),async(req,res)=>{try{const to=safeEmail(req.body.to||getSettings().officeNotificationEmail);if(!to)return res.status(400).json({error:'Enter an email address'});const out=await sendEmail(to,'FleetPay test email','<div style="font-family:Arial,sans-serif"><h2>FleetPay communications test</h2><p>Your FleetPay office email settings are working.</p></div>');if(!out.sent)throw new Error('No email provider is configured');logCommunication({channel:'email',recipient:to,templateKey:'test_email',entityType:'settings',entityId:'communications',status:'sent',providerRef:out.id||out.provider||''});audit(req,'staff',req.auth.email,'test_email_sent','settings','communications',{to});res.json({ok:true,provider:out.provider})}catch(e){res.status(500).json({error:e.message})}});
+app.post('/api/admin/communications/test-sms',adminAuth,requireStaffRole('administrator'),async(req,res)=>{try{const to=String(req.body.to||'').trim();if(!to)return res.status(400).json({error:'Enter a mobile number'});const message=String(req.body.message||'FaivoPay test SMS – communications are configured correctly.');const out=await sendConfiguredSms(to,message,{templateKey:'test_sms',entityType:'settings',entityId:'communications'});audit(req,'staff',req.auth.email,'test_sms_sent','settings','communications',{to});res.json({ok:true,out})}catch(e){res.status(500).json({error:e.message})}});
+app.post('/api/admin/communications/test-email',adminAuth,requireStaffRole('administrator'),async(req,res)=>{try{const to=safeEmail(req.body.to||getSettings().officeNotificationEmail);if(!to)return res.status(400).json({error:'Enter an email address'});const out=await sendEmail(to,'FaivoPay test email','<div style="font-family:Arial,sans-serif"><h2>FaivoPay communications test</h2><p>Your FaivoPay office email settings are working.</p></div>');if(!out.sent)throw new Error('No email provider is configured');logCommunication({channel:'email',recipient:to,templateKey:'test_email',entityType:'settings',entityId:'communications',status:'sent',providerRef:out.id||out.provider||''});audit(req,'staff',req.auth.email,'test_email_sent','settings','communications',{to});res.json({ok:true,provider:out.provider})}catch(e){res.status(500).json({error:e.message})}});
 
-app.post('/api/admin/manual-payment',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{const callsign=String(req.body.callsign||'').trim(),type=String(req.body.type||'pay_in'),amount=Number(req.body.amount||0),reason=String(req.body.reason||'').trim();if(!callsign||!(amount>0)||!['pay_in','payout'].includes(type))return res.status(400).json({error:'Callsign, payment type and amount are required'});const d=cacheRows().find(x=>String(x.callsign)===callsign);if(!d)return res.status(404).json({error:'Callsign not found in FleetPay cache'});const settings=getSettings(),finalReason=reason||(type==='pay_in'?settings.manualPayInReasonDefault:settings.manualPayoutReasonDefault),eventKey=`manual:${Date.now()}:${d.driverId}:${crypto.randomBytes(3).toString('hex')}`;const result=await postAutocabAdjustment({driverId:d.driverId,callsign:d.callsign,amount,isCredit:type==='pay_in',description:finalReason,adjustmentReason:type==='pay_in'?'FleetPay Manual Pay In':'FleetPay Manual Payout',eventKey});audit(req,'staff',req.auth.email,'manual_autocab_payment','driver',d.callsign,{driverId:d.driverId,callsign:d.callsign,type,amount,reason:finalReason});setTimeout(()=>syncAutocab().catch(()=>{}),500);res.json({ok:true,driver:{driverId:d.driverId,callsign:d.callsign,fullName:d.fullName},type,amount,reason:finalReason,result})}catch(e){res.status(500).json({error:e.message})}});
+app.post('/api/admin/manual-payment',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{const callsign=String(req.body.callsign||'').trim(),type=String(req.body.type||'pay_in'),amount=Number(req.body.amount||0),reason=String(req.body.reason||'').trim();if(!callsign||!(amount>0)||!['pay_in','payout'].includes(type))return res.status(400).json({error:'Callsign, payment type and amount are required'});const d=cacheRows().find(x=>String(x.callsign)===callsign);if(!d)return res.status(404).json({error:'Callsign not found in FaivoPay cache'});const settings=getSettings(),finalReason=reason||(type==='pay_in'?settings.manualPayInReasonDefault:settings.manualPayoutReasonDefault),eventKey=`manual:${Date.now()}:${d.driverId}:${crypto.randomBytes(3).toString('hex')}`;const result=await postAutocabAdjustment({driverId:d.driverId,callsign:d.callsign,amount,isCredit:type==='pay_in',description:finalReason,adjustmentReason:type==='pay_in'?'FleetPay Manual Pay In':'FleetPay Manual Payout',eventKey});audit(req,'staff',req.auth.email,'manual_autocab_payment','driver',d.callsign,{driverId:d.driverId,callsign:d.callsign,type,amount,reason:finalReason});setTimeout(()=>syncAutocab().catch(()=>{}),500);res.json({ok:true,driver:{driverId:d.driverId,callsign:d.callsign,fullName:d.fullName},type,amount,reason:finalReason,result})}catch(e){res.status(500).json({error:e.message})}});
 
 app.post('/api/admin/monday-runs',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{
  const today=londonWindow().date,existing=db.prepare("SELECT * FROM settlement_runs WHERE run_date=? AND status IN ('draft','approved','batched') ORDER BY created_at DESC LIMIT 1").get(today);if(existing)return res.status(409).json({error:'A Monday draft already exists for today. Open Monday Run to continue it.',runId:existing.id});const settings=getSettings(),sync=await syncAutocab(),drivers=sync.drivers,runId=id('run'),createdAt=new Date().toISOString(),items=[],allocationRows=[];const insP=db.prepare('INSERT INTO payouts(id,run_id,driver_id,callsign,driver_name,gross_balance,weekly_fee,carried_charges,gross_amount,net_amount,amount,type,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)');const insR=db.prepare('INSERT INTO payment_requests(id,run_id,driver_id,callsign,driver_name,balance,weekly_fee,carried_charges,amount,status,created_at,due_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)');const due=nextTuesdayDueLabel(),settledWeekStart=previousMondayWeekStart(today);
- for(const d of drivers){if(d.previousBalance==null)continue;const row=db.prepare('SELECT amount FROM carried_charges WHERE driver_id=?').get(d.driverId),activityRow=db.prepare('SELECT worked FROM driver_weekly_activity WHERE driver_id=? AND week_start=?').get(d.driverId,settledWeekStart),workedThisWeek=Boolean(activityRow?.worked),configuredWeeklyFee=Number(settings.weeklyAppFee||0),chargeInactive=settings.chargeWeeklyFeeWhenInactive!==false,fee=chargeInactive||workedThisWeek?configuredWeeklyFee:0,weeklyFeeWaivedInactive=!chargeInactive&&!workedThisWeek&&configuredWeeklyFee>0,carried=Number(row?.amount||0),base=Number(d.previousBalance||0),adjusted=Number((base-fee-carried).toFixed(2)),planSettlement=adjusted>0.00001?paymentPlanSettlementCandidate(d.driverId,adjusted):null,planAllocation=Number(planSettlement?.allocatedAmount||0),payoutAvailable=Number(Math.max(0,adjusted-planAllocation).toFixed(2));let action='none',amount=0,payoutId=null,requestId=null,approvalStatus=null;if(adjusted>0.00001){const payoutThreshold=Number(settings.minimumPayoutThreshold||0);if(payoutAvailable<=0.00001){action='plan_allocation';amount=0;db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,?) ON CONFLICT(driver_id) DO UPDATE SET amount=excluded.amount').run(d.driverId,Number((carried+fee).toFixed(2)))}else if(payoutAvailable+0.00001<payoutThreshold){action='payout_carry_forward';amount=payoutAvailable;db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,?) ON CONFLICT(driver_id) DO UPDATE SET amount=excluded.amount').run(d.driverId,Number((carried+fee).toFixed(2)))}else{action='payout';amount=payoutAvailable;payoutId=id('payout');const cached=cachedDriver(d.driverId),persistentlyExcluded=Boolean(cached?.payoutExcluded),persistentReason=cached?.payoutExclusionReason||'';approvalStatus=persistentlyExcluded?'excluded':'pending';insP.run(payoutId,runId,d.driverId,d.callsign,d.fullName,base,fee,carried,adjusted,payoutAvailable,payoutAvailable,'weekly',persistentlyExcluded?'declined':'pending_approval',createdAt);if(persistentlyExcluded)db.prepare('UPDATE payouts SET decline_reason=?,decision_at=?,decision_by=? WHERE id=?').run(persistentReason,new Date().toISOString(),'persistent_driver_setting',payoutId);db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,0) ON CONFLICT(driver_id) DO UPDATE SET amount=0').run(d.driverId)}}else if(adjusted<-0.00001){const owing=Math.abs(adjusted);amount=owing;if(owing>=Number(settings.negativeThreshold||0)){action='payment_request';requestId=id('request');insR.run(requestId,runId,d.driverId,d.callsign,d.fullName,base,fee,carried,owing,'open',createdAt,due.dueAt);notify(d.driverId,'Payment due',`Your Monday FleetPay settlement has an amount due of £${owing.toFixed(2)}. Payment is due by ${settings.outstandingDueTime||'17:00'} on ${due.label}.`,'warning',requestId);db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,0) ON CONFLICT(driver_id) DO UPDATE SET amount=0').run(d.driverId);setTimeout(()=>{const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(requestId);sendOutstandingCommunications(item,d).catch(()=>{})},50)}else{action='carry_forward';db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,?) ON CONFLICT(driver_id) DO UPDATE SET amount=excluded.amount').run(d.driverId,owing)}}else{action='carry_forward';amount=0;db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,?) ON CONFLICT(driver_id) DO UPDATE SET amount=excluded.amount').run(d.driverId,Number((carried+fee).toFixed(2)))}if(fee>0){ledger(d.driverId,'weekly_fee','debit',fee,fee,'Weekly FleetPay fee',runId,'charged');recordFee({feeType:'weekly',sourceType:'settlement',sourceId:`${runId}:${d.driverId}`,driverId:d.driverId,callsign:d.callsign,description:'Weekly FleetPay fee',amount:fee,createdAt})}items.push({driverId:d.driverId,callsign:d.callsign,driverName:d.fullName,currentBalance:d.currentBalance,previousBalance:base,weeklyFee:fee,configuredWeeklyFee,workedThisWeek,weeklyFeeWaivedInactive,settledWeekStart,carriedCharges:carried,adjustedBalance:adjusted,planAllocation,payoutAvailable,planId:planSettlement?.plan?.id||null,planInstalmentId:planSettlement?.instalment?.id||null,planInstalmentScheduledAmount:Number(planSettlement?.scheduledAmount||0),planInstalmentPaidAmount:Number(planSettlement?.alreadyPaidAmount||0),planInstalmentRemaining:Number(planSettlement?.instalmentRemaining||0),planRemainingAmount:Number(planSettlement?.planRemaining||0),action,amount,payoutId,requestId,approvalStatus,persistentPayoutExclusion:Boolean(cachedDriver(d.driverId)?.payoutExcluded),exclusionReason:approvalStatus==='excluded'?(cachedDriver(d.driverId)?.payoutExclusionReason||'Persistent payout exclusion'):''});if(planSettlement&&planAllocation>0.00001){allocationRows.push({id:id('planalloc'),runId,payoutId,driverId:d.driverId,callsign:d.callsign,planId:planSettlement.plan.id,instalmentId:planSettlement.instalment.id,paymentRequestId:planSettlement.paymentRequestId||null,scheduledAmount:Number(planSettlement.scheduledAmount||0),allocatedAmount:planAllocation,autocabEventKey:`plan:${planSettlement.plan.id}:monday:${runId}:${planSettlement.instalment.id}`,createdAt})}}
+ for(const d of drivers){if(d.previousBalance==null)continue;const row=db.prepare('SELECT amount FROM carried_charges WHERE driver_id=?').get(d.driverId),activityRow=db.prepare('SELECT worked FROM driver_weekly_activity WHERE driver_id=? AND week_start=?').get(d.driverId,settledWeekStart),workedThisWeek=Boolean(activityRow?.worked),configuredWeeklyFee=Number(settings.weeklyAppFee||0),chargeInactive=settings.chargeWeeklyFeeWhenInactive!==false,fee=chargeInactive||workedThisWeek?configuredWeeklyFee:0,weeklyFeeWaivedInactive=!chargeInactive&&!workedThisWeek&&configuredWeeklyFee>0,carried=Number(row?.amount||0),base=Number(d.previousBalance||0),adjusted=Number((base-fee-carried).toFixed(2)),planSettlement=adjusted>0.00001?paymentPlanSettlementCandidate(d.driverId,adjusted):null,planAllocation=Number(planSettlement?.allocatedAmount||0),payoutAvailable=Number(Math.max(0,adjusted-planAllocation).toFixed(2));let action='none',amount=0,payoutId=null,requestId=null,approvalStatus=null;if(adjusted>0.00001){const payoutThreshold=Number(settings.minimumPayoutThreshold||0);if(payoutAvailable<=0.00001){action='plan_allocation';amount=0;db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,?) ON CONFLICT(driver_id) DO UPDATE SET amount=excluded.amount').run(d.driverId,Number((carried+fee).toFixed(2)))}else if(payoutAvailable+0.00001<payoutThreshold){action='payout_carry_forward';amount=payoutAvailable;db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,?) ON CONFLICT(driver_id) DO UPDATE SET amount=excluded.amount').run(d.driverId,Number((carried+fee).toFixed(2)))}else{action='payout';amount=payoutAvailable;payoutId=id('payout');const cached=cachedDriver(d.driverId),persistentlyExcluded=Boolean(cached?.payoutExcluded),persistentReason=cached?.payoutExclusionReason||'';approvalStatus=persistentlyExcluded?'excluded':'pending';insP.run(payoutId,runId,d.driverId,d.callsign,d.fullName,base,fee,carried,adjusted,payoutAvailable,payoutAvailable,'weekly',persistentlyExcluded?'declined':'pending_approval',createdAt);if(persistentlyExcluded)db.prepare('UPDATE payouts SET decline_reason=?,decision_at=?,decision_by=? WHERE id=?').run(persistentReason,new Date().toISOString(),'persistent_driver_setting',payoutId);db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,0) ON CONFLICT(driver_id) DO UPDATE SET amount=0').run(d.driverId)}}else if(adjusted<-0.00001){const owing=Math.abs(adjusted);amount=owing;if(owing>=Number(settings.negativeThreshold||0)){action='payment_request';requestId=id('request');insR.run(requestId,runId,d.driverId,d.callsign,d.fullName,base,fee,carried,owing,'open',createdAt,due.dueAt);notify(d.driverId,'Payment due',`Your Monday FaivoPay settlement has an amount due of £${owing.toFixed(2)}. Payment is due by ${settings.outstandingDueTime||'17:00'} on ${due.label}.`,'warning',requestId);db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,0) ON CONFLICT(driver_id) DO UPDATE SET amount=0').run(d.driverId);setTimeout(()=>{const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(requestId);sendOutstandingCommunications(item,d).catch(()=>{})},50)}else{action='carry_forward';db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,?) ON CONFLICT(driver_id) DO UPDATE SET amount=excluded.amount').run(d.driverId,owing)}}else{action='carry_forward';amount=0;db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,?) ON CONFLICT(driver_id) DO UPDATE SET amount=excluded.amount').run(d.driverId,Number((carried+fee).toFixed(2)))}if(fee>0){ledger(d.driverId,'weekly_fee','debit',fee,fee,'Weekly FaivoPay fee',runId,'charged');recordFee({feeType:'weekly',sourceType:'settlement',sourceId:`${runId}:${d.driverId}`,driverId:d.driverId,callsign:d.callsign,description:'Weekly FaivoPay fee',amount:fee,createdAt})}items.push({driverId:d.driverId,callsign:d.callsign,driverName:d.fullName,currentBalance:d.currentBalance,previousBalance:base,weeklyFee:fee,configuredWeeklyFee,workedThisWeek,weeklyFeeWaivedInactive,settledWeekStart,carriedCharges:carried,adjustedBalance:adjusted,planAllocation,payoutAvailable,planId:planSettlement?.plan?.id||null,planInstalmentId:planSettlement?.instalment?.id||null,planInstalmentScheduledAmount:Number(planSettlement?.scheduledAmount||0),planInstalmentPaidAmount:Number(planSettlement?.alreadyPaidAmount||0),planInstalmentRemaining:Number(planSettlement?.instalmentRemaining||0),planRemainingAmount:Number(planSettlement?.planRemaining||0),action,amount,payoutId,requestId,approvalStatus,persistentPayoutExclusion:Boolean(cachedDriver(d.driverId)?.payoutExcluded),exclusionReason:approvalStatus==='excluded'?(cachedDriver(d.driverId)?.payoutExclusionReason||'Persistent payout exclusion'):''});if(planSettlement&&planAllocation>0.00001){allocationRows.push({id:id('planalloc'),runId,payoutId,driverId:d.driverId,callsign:d.callsign,planId:planSettlement.plan.id,instalmentId:planSettlement.instalment.id,paymentRequestId:planSettlement.paymentRequestId||null,scheduledAmount:Number(planSettlement.scheduledAmount||0),allocatedAmount:planAllocation,autocabEventKey:`plan:${planSettlement.plan.id}:monday:${runId}:${planSettlement.instalment.id}`,createdAt})}}
  db.prepare('INSERT INTO settlement_runs(id,created_at,status,settings_json,items_json,run_date,created_by) VALUES(?,?,?,?,?,?,?)').run(runId,createdAt,'draft',JSON.stringify(settings),JSON.stringify(items),today,req.auth.email);const insA=db.prepare(`INSERT INTO payment_plan_settlement_allocations(id,run_id,payout_id,driver_id,callsign,plan_id,instalment_id,payment_request_id,scheduled_amount,allocated_amount,status,autocab_event_key,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`);for(const a of allocationRows){insA.run(a.id,a.runId,a.payoutId,a.driverId,a.callsign,a.planId,a.instalmentId,a.paymentRequestId,a.scheduledAmount,a.allocatedAmount,'pending',a.autocabEventKey,a.createdAt)}audit(req,'staff',req.auth.email,'monday_draft_created','settlement_run',runId,{runDate:today,drivers:items.length,payouts:items.filter(x=>x.action==='payout').length,paymentRequests:items.filter(x=>x.action==='payment_request').length,sourceBalance:'previousBalance'});res.json({id:runId,createdAt,status:'draft',runDate:today,items})
  }catch(e){res.status(500).json({error:e.message})}});
 app.get('/api/admin/monday-runs',adminAuth,(req,res)=>{const runs=db.prepare("SELECT * FROM settlement_runs WHERE run_date IS NOT NULL ORDER BY created_at DESC LIMIT 40").all().map(r=>({id:r.id,createdAt:r.created_at,status:r.status,runDate:r.run_date,createdBy:r.created_by,approvedAt:r.approved_at,payoutRunId:r.payout_run_id,settings:JSON.parse(r.settings_json||'{}'),items:JSON.parse(r.items_json||'[]')}));res.json({runs})});
@@ -5869,7 +5869,7 @@ async function applyMondayPlanSettlementAllocation(allocationId){
    callsign:allocation.callsign||plan.callsign||String(allocation.driver_id),
    amount:allocatedAmount,
    isCredit:false,
-   description:'FleetPay Monday payment plan deduction',
+   description:'FaivoPay Monday payment plan deduction',
    adjustmentReason:'FleetPay Payment Plan',
    eventKey:allocation.autocab_event_key
   });
@@ -5897,7 +5897,7 @@ async function applyMondayPlanSettlementAllocation(allocationId){
    !['due','overdue'].includes(latestInstalment.status)
   ){
    throw new Error(
-    'Autocab deduction completed but the payment plan changed before FleetPay progression. Manual review is required.'
+    'Autocab deduction completed but the payment plan changed before FaivoPay progression. Manual review is required.'
    );
   }
 
@@ -6243,7 +6243,7 @@ async function applyPartialMondayPlanAllocation(allocation){
  notify(
   plan.driver_id,
   'Payment plan payment applied',
-  `£${paidAmount.toFixed(2)} from your Monday FleetPay balance has been applied to your payment plan. £${requestAmount.toFixed(2)} remains due on this instalment.`,
+  `£${paidAmount.toFixed(2)} from your Monday FaivoPay balance has been applied to your payment plan. £${requestAmount.toFixed(2)} remains due on this instalment.`,
   'success',
   plan.id
  );
@@ -6555,7 +6555,7 @@ function progressPaymentPlanAfterPayment(paymentRequest,paidAt,options={}){
 
    }else{
    /*
-    * Create the next normal FleetPay payment request.
+    * Create the next normal FaivoPay payment request.
     *
     * Weekly fee and carried charges are deliberately ZERO here.
     * They were attached only to the first instalment during plan
@@ -6704,7 +6704,7 @@ function progressPaymentPlanAfterPayment(paymentRequest,paidAt,options={}){
   notify(
    plan.driver_id,
    'Payment plan completed',
-   `Your FleetPay payment plan has been completed. All £${Number(plan.plan_amount||0).toFixed(2)} has now been paid.`,
+   `Your FaivoPay payment plan has been completed. All £${Number(plan.plan_amount||0).toFixed(2)} has now been paid.`,
    'success',
    plan.id
   );
@@ -6722,7 +6722,7 @@ function progressPaymentPlanAfterPayment(paymentRequest,paidAt,options={}){
   notify(
    plan.driver_id,
    'Payment plan requires review',
-   `Your payment of £${paidAmount.toFixed(2)} has been received. £${newRemaining.toFixed(2)} remains on your payment plan, but there are no further scheduled instalments. FleetPay will review the remaining balance.`,
+   `Your payment of £${paidAmount.toFixed(2)} has been received. £${newRemaining.toFixed(2)} remains on your payment plan, but there are no further scheduled instalments. FaivoPay will review the remaining balance.`,
    'warning',
    plan.id
   );
@@ -6794,7 +6794,7 @@ function applyPaymentPlanExtraPayment(paymentRequest,paidAt,options={}){
   db.prepare(`INSERT INTO driver_payment_plan_events(id,plan_id,driver_id,event_type,description,actor_type,actor_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)`).run(id('planevent'),plan.id,plan.driver_id,'extra_payment_applied',`Extra principal payment of £${paidAmount.toFixed(2)} applied`,actorType,actorId,JSON.stringify({paymentRequestId:paymentRequest.id,amount:paidAmount,paidAmount:newPaidAmount,remainingAmount:newRemaining,currentInstalmentId:current.id,currentInstalmentRemaining:currentRemaining,autocabAdjusted:false}),now);
   db.exec('COMMIT');
  }catch(e){try{db.exec('ROLLBACK')}catch{}throw e}
- notify(plan.driver_id,'Extra payment applied',`Your extra payment of £${paidAmount.toFixed(2)} has reduced your FleetPay payment-plan balance to £${newRemaining.toFixed(2)}. Your current instalment remains £${currentRemaining.toFixed(2)}.`,'success',plan.id);
+ notify(plan.driver_id,'Extra payment applied',`Your extra payment of £${paidAmount.toFixed(2)} has reduced your FaivoPay payment-plan balance to £${newRemaining.toFixed(2)}. Your current instalment remains £${currentRemaining.toFixed(2)}.`,'success',plan.id);
  return {completed:false,extraPayment:true,planId:plan.id,paymentRequestId:paymentRequest.id,amount:paidAmount,paidAmount:newPaidAmount,remainingAmount:newRemaining,currentInstalmentId:current.id,currentInstalmentRemaining:currentRemaining,autocabAdjusted:false};
 }
 
@@ -6926,7 +6926,7 @@ function refreshPaymentPlanStatuses(){
    notify(
     item.driver_id,
     'Payment plan needs attention',
-    `Your payment-plan instalment of £${Number(item.amount||0).toFixed(2)} due ${item.due_at} is overdue. Please make the payment in FleetPay or contact the office.`,
+    `Your payment-plan instalment of £${Number(item.amount||0).toFixed(2)} due ${item.due_at} is overdue. Please make the payment in FaivoPay or contact the office.`,
     'warning',
     item.plan_id
    );
@@ -7154,7 +7154,7 @@ app.get(
   res.setHeader('Content-Type','text/csv');
   res.setHeader(
    'Content-Disposition',
-   'attachment; filename=FleetPay-payment-plans.csv'
+   'attachment; filename=FaivoPay-payment-plans.csv'
   );
   res.send(csv);
  }
@@ -7715,7 +7715,7 @@ app.post(
      if(stripeSession?.status==='complete'){
       return res.status(409).json({
        error:
-        'The existing full-balance Stripe payment has already completed. The payment plan has not been activated. Refresh FleetPay and allow the Stripe payment confirmation to finish.'
+        'The existing full-balance Stripe payment has already completed. The payment plan has not been activated. Refresh FaivoPay and allow the Stripe payment confirmation to finish.'
       });
      }
 
@@ -7726,13 +7726,13 @@ app.post(
      }else if(stripeSession?.status!=='expired'){
       return res.status(409).json({
        error:
-        `FleetPay cannot safely activate this payment plan because the existing Stripe session is ${stripeSession?.status||'unknown'}.`
+        `FaivoPay cannot safely activate this payment plan because the existing Stripe session is ${stripeSession?.status||'unknown'}.`
       });
      }
     }catch(e){
      return res.status(409).json({
       error:
-       'FleetPay could not safely close the existing full-balance Stripe payment link. The payment plan has not been activated.',
+       'FaivoPay could not safely close the existing full-balance Stripe payment link. The payment plan has not been activated.',
       detail:e.message
      });
     }
@@ -7755,7 +7755,7 @@ app.post(
    }
 
    /*
-    * Move the complete plan debt out of Autocab before FleetPay takes
+    * Move the complete plan debt out of Autocab before FaivoPay takes
     * ownership of it. Each adjustment uses an idempotent event key, so
     * retries cannot post the same activation movement twice.
     */
@@ -7767,7 +7767,7 @@ app.post(
    }catch(e){
     return res.status(409).json({
      error:
-      'FleetPay could not move this balance out of Autocab. The payment plan has not been activated.',
+      'FaivoPay could not move this balance out of Autocab. The payment plan has not been activated.',
      detail:e.message
     });
    }
@@ -7801,7 +7801,7 @@ app.post(
      *
      * The original weekly fee and carried charges have already been
      * settled into Autocab during plan activation. From this point on,
-     * the plan balance is owned by FleetPay and instalment payments must
+     * the plan balance is owned by FaivoPay and instalment payments must
      * not create further Autocab fee/carried-charge movements.
      */
     db.prepare(`
@@ -7915,7 +7915,7 @@ app.post(
    notify(
     plan.driver_id,
     'Payment plan active',
-    `Your FleetPay payment plan is now active. Your first payment of £${Number(firstInstalment.amount||0).toFixed(2)} is due ${firstInstalment.due_at}.`,
+    `Your FaivoPay payment plan is now active. Your first payment of £${Number(firstInstalment.amount||0).toFixed(2)} is due ${firstInstalment.due_at}.`,
     'info',
     plan.id
    );
@@ -7969,7 +7969,7 @@ async function safelyExpirePlanPaymentSession(item){
 
  if(!stripe){
   throw new Error(
-   'FleetPay cannot safely change this plan because an existing Stripe payment link is present but Stripe is not configured.'
+   'FaivoPay cannot safely change this plan because an existing Stripe payment link is present but Stripe is not configured.'
   );
  }
 
@@ -7979,7 +7979,7 @@ async function safelyExpirePlanPaymentSession(item){
 
  if(session?.status==='complete'){
   throw new Error(
-   'This payment has already completed at Stripe. Refresh FleetPay and allow the payment confirmation to finish before changing the plan.'
+   'This payment has already completed at Stripe. Refresh FaivoPay and allow the payment confirmation to finish before changing the plan.'
   );
  }
 
@@ -8114,7 +8114,7 @@ app.post(
    notify(
     plan.driver_id,
     'Payment plan paused',
-    'Your FleetPay payment plan has been paused. No plan payment is currently required while the arrangement is paused.',
+    'Your FaivoPay payment plan has been paused. No plan payment is currently required while the arrangement is paused.',
     'info',
     plan.id
    );
@@ -8277,8 +8277,8 @@ app.post(
      ?'Payment plan resumed – payment overdue'
      :'Payment plan resumed',
     overdue
-     ?'Your FleetPay payment plan has been resumed. The current instalment is overdue and is available to pay now.'
-     :'Your FleetPay payment plan has been resumed.',
+     ?'Your FaivoPay payment plan has been resumed. The current instalment is overdue and is available to pay now.'
+     :'Your FaivoPay payment plan has been resumed.',
     overdue?'warning':'info',
     plan.id
    );
@@ -8392,7 +8392,7 @@ app.post(
    }
 
    /*
-    * Once activated, the payment-plan debt is owned by FleetPay rather
+    * Once activated, the payment-plan debt is owned by FaivoPay rather
     * than Autocab. Cancelling the plan returns only the unpaid remainder
     * to the driver's Autocab account.
     *
@@ -8406,14 +8406,14 @@ app.post(
       callsign:plan.callsign||source.callsign||String(plan.driver_id),
       amount:remaining,
       isCredit:false,
-      description:'FleetPay payment plan cancelled',
+      description:'FaivoPay payment plan cancelled',
       adjustmentReason:'FleetPay Payment Plan',
       eventKey:`plan:${plan.id}:cancel:return`
      });
     }catch(e){
      return res.status(409).json({
       error:
-       'FleetPay could not return the remaining payment-plan balance to Autocab. The plan has not been cancelled.',
+       'FaivoPay could not return the remaining payment-plan balance to Autocab. The plan has not been cancelled.',
       detail:e.message
      });
     }
@@ -8534,7 +8534,7 @@ app.post(
    notify(
     plan.driver_id,
     'Payment plan cancelled',
-    `Your FleetPay payment plan has been cancelled. The remaining balance of £${remaining.toFixed(2)} is now shown as an outstanding payment.`,
+    `Your FaivoPay payment plan has been cancelled. The remaining balance of £${remaining.toFixed(2)} is now shown as an outstanding payment.`,
     'warning',
     source.id
    );
@@ -8863,7 +8863,7 @@ app.post(
    notify(
     plan.driver_id,
     'Payment plan – settle remaining balance',
-    `Your remaining FleetPay payment-plan balance of £${remaining.toFixed(2)} is now available to pay in full.`,
+    `Your remaining FaivoPay payment-plan balance of £${remaining.toFixed(2)} is now available to pay in full.`,
     'info',
     requestId
    );
@@ -9308,7 +9308,7 @@ app.post(
     notify(
      plan.driver_id,
      'Payment plan amended',
-     `Your payment plan has been amended. Remaining balance £${remaining.toFixed(2)}. New instalment £${Number(instalmentAmount).toFixed(2)} ${frequency}. Next payment date ${startDate}. The plan remains paused until FleetPay resumes it.`,
+     `Your payment plan has been amended. Remaining balance £${remaining.toFixed(2)}. New instalment £${Number(instalmentAmount).toFixed(2)} ${frequency}. Next payment date ${startDate}. The plan remains paused until FaivoPay resumes it.`,
      'info',
      plan.id
     );
@@ -9519,7 +9519,7 @@ app.get('/api/admin/fees/csv',adminAuth,(req,res)=>{
  const esc=v=>`"${String(v??'').replaceAll('"','""')}"`;
 
  const csv=[
-  'Date,Fee Type,Callsign,Description,Gross Fee,FleetPay Share,Taxi Company Share,Status,Invoice Ref',
+  'Date,Fee Type,Callsign,Description,Gross Fee,FaivoPay Share,Taxi Company Share,Status,Invoice Ref',
   ...rows.map(x=>[
    esc(x.created_at),
    esc(x.fee_type),
@@ -9536,20 +9536,20 @@ app.get('/api/admin/fees/csv',adminAuth,(req,res)=>{
  res.setHeader('Content-Type','text/csv');
  res.setHeader(
   'Content-Disposition',
-  'attachment; filename=FleetPay-fees.csv'
+  'attachment; filename=FaivoPay-fees.csv'
  );
  res.send(csv);
 });
 
 async function sendEarlyPayoutOfficeSummary({force=false}={}){
- const settings=getSettings(),now=londonWindow(),cut=cutoffParts(settings);if(!force){if(!['Tue','Wed','Thu','Fri'].includes(now.weekday))return {skipped:true,reason:'not_request_day'};if(now.hour<cut.hour||(now.hour===cut.hour&&now.minute<cut.minute))return {skipped:true,reason:'before_cutoff'};const prior=db.prepare("SELECT * FROM early_summary_notifications WHERE run_date=?").get(now.date);if(prior?.status==='sent')return {skipped:true,reason:'already_sent'};if(prior?.status==='failed'&&prior.sent_at&&Date.now()-new Date(prior.sent_at).getTime()<15*60000)return {skipped:true,reason:'retry_cooldown'}}const to=safeEmail(settings.officeNotificationEmail);if(!to)throw new Error('Office notification email is not configured');const rows=db.prepare("SELECT * FROM payouts WHERE type='early' AND eligible_run_date=? AND status!='declined' ORDER BY CAST(callsign AS INTEGER),callsign").all(now.date),count=rows.length,total=rows.reduce((a,x)=>a+Number(x.net_amount||x.amount||0),0),has=count>0,color=has?'#d97706':'#16a34a',title=has?'Early payouts require action':'No early payouts today',summary=has?`${count} early payout request${count===1?'':'s'} due today · £${total.toFixed(2)} total`:`No early payout requests were received before today's ${cut.label} cutoff.`,list=has?`<table style="width:100%;border-collapse:collapse;margin-top:18px">${rows.map(x=>`<tr><td style="padding:9px;border-bottom:1px solid #e5e7eb">${x.callsign}</td><td style="padding:9px;border-bottom:1px solid #e5e7eb">${x.driver_name||''}</td><td style="padding:9px;border-bottom:1px solid #e5e7eb;text-align:right"><b>£${Number(x.net_amount||x.amount||0).toFixed(2)}</b></td></tr>`).join('')}</table>`:'';const html=`<div style="font-family:Arial,sans-serif;background:#f4f6f8;padding:24px"><div style="max-width:680px;margin:auto;background:#fff;border-radius:14px;overflow:hidden"><div style="background:${color};color:#fff;padding:24px"><div style="font-size:13px;font-weight:700;letter-spacing:.08em">FLEETPAY OFFICE</div><h2 style="margin:8px 0 0">${title}</h2></div><div style="padding:24px"><p style="font-size:17px">${summary}</p>${list}</div></div></div>`;try{const out=await sendEmail(to,`FleetPay early payout summary – ${now.date}`,html);if(!out.sent)throw new Error('No email provider is configured');db.prepare("INSERT INTO early_summary_notifications(run_date,request_count,total_amount,sent_at,status,error) VALUES(?,?,?,?,?,NULL) ON CONFLICT(run_date) DO UPDATE SET request_count=excluded.request_count,total_amount=excluded.total_amount,sent_at=excluded.sent_at,status=excluded.status,error=NULL").run(now.date,count,total,new Date().toISOString(),'sent');logCommunication({channel:'email',recipient:to,templateKey:'early_payout_summary',entityType:'payout_run',entityId:now.date,status:'sent',providerRef:out.id||out.provider||''});return {sent:true,count,total,to}}catch(e){db.prepare("INSERT INTO early_summary_notifications(run_date,request_count,total_amount,sent_at,status,error) VALUES(?,?,?,?,?,?) ON CONFLICT(run_date) DO UPDATE SET request_count=excluded.request_count,total_amount=excluded.total_amount,sent_at=excluded.sent_at,status=excluded.status,error=excluded.error").run(now.date,count,total,new Date().toISOString(),'failed',e.message);logCommunication({channel:'email',recipient:to,templateKey:'early_payout_summary',entityType:'payout_run',entityId:now.date,status:'failed',error:e.message});throw e}
+ const settings=getSettings(),now=londonWindow(),cut=cutoffParts(settings);if(!force){if(!['Tue','Wed','Thu','Fri'].includes(now.weekday))return {skipped:true,reason:'not_request_day'};if(now.hour<cut.hour||(now.hour===cut.hour&&now.minute<cut.minute))return {skipped:true,reason:'before_cutoff'};const prior=db.prepare("SELECT * FROM early_summary_notifications WHERE run_date=?").get(now.date);if(prior?.status==='sent')return {skipped:true,reason:'already_sent'};if(prior?.status==='failed'&&prior.sent_at&&Date.now()-new Date(prior.sent_at).getTime()<15*60000)return {skipped:true,reason:'retry_cooldown'}}const to=safeEmail(settings.officeNotificationEmail);if(!to)throw new Error('Office notification email is not configured');const rows=db.prepare("SELECT * FROM payouts WHERE type='early' AND eligible_run_date=? AND status!='declined' ORDER BY CAST(callsign AS INTEGER),callsign").all(now.date),count=rows.length,total=rows.reduce((a,x)=>a+Number(x.net_amount||x.amount||0),0),has=count>0,color=has?'#d97706':'#16a34a',title=has?'Early payouts require action':'No early payouts today',summary=has?`${count} early payout request${count===1?'':'s'} due today · £${total.toFixed(2)} total`:`No early payout requests were received before today's ${cut.label} cutoff.`,list=has?`<table style="width:100%;border-collapse:collapse;margin-top:18px">${rows.map(x=>`<tr><td style="padding:9px;border-bottom:1px solid #e5e7eb">${x.callsign}</td><td style="padding:9px;border-bottom:1px solid #e5e7eb">${x.driver_name||''}</td><td style="padding:9px;border-bottom:1px solid #e5e7eb;text-align:right"><b>£${Number(x.net_amount||x.amount||0).toFixed(2)}</b></td></tr>`).join('')}</table>`:'';const html=`<div style="font-family:Arial,sans-serif;background:#f4f6f8;padding:24px"><div style="max-width:680px;margin:auto;background:#fff;border-radius:14px;overflow:hidden"><div style="background:${color};color:#fff;padding:24px"><div style="font-size:13px;font-weight:700;letter-spacing:.08em">FAIVOPAY OFFICE</div><h2 style="margin:8px 0 0">${title}</h2></div><div style="padding:24px"><p style="font-size:17px">${summary}</p>${list}</div></div></div>`;try{const out=await sendEmail(to,`FaivoPay early payout summary – ${now.date}`,html);if(!out.sent)throw new Error('No email provider is configured');db.prepare("INSERT INTO early_summary_notifications(run_date,request_count,total_amount,sent_at,status,error) VALUES(?,?,?,?,?,NULL) ON CONFLICT(run_date) DO UPDATE SET request_count=excluded.request_count,total_amount=excluded.total_amount,sent_at=excluded.sent_at,status=excluded.status,error=NULL").run(now.date,count,total,new Date().toISOString(),'sent');logCommunication({channel:'email',recipient:to,templateKey:'early_payout_summary',entityType:'payout_run',entityId:now.date,status:'sent',providerRef:out.id||out.provider||''});return {sent:true,count,total,to}}catch(e){db.prepare("INSERT INTO early_summary_notifications(run_date,request_count,total_amount,sent_at,status,error) VALUES(?,?,?,?,?,?) ON CONFLICT(run_date) DO UPDATE SET request_count=excluded.request_count,total_amount=excluded.total_amount,sent_at=excluded.sent_at,status=excluded.status,error=excluded.error").run(now.date,count,total,new Date().toISOString(),'failed',e.message);logCommunication({channel:'email',recipient:to,templateKey:'early_payout_summary',entityType:'payout_run',entityId:now.date,status:'failed',error:e.message});throw e}
 }
 app.get('/api/admin/early-summary',adminAuth,(req,res)=>{const now=londonWindow(),row=db.prepare('SELECT * FROM early_summary_notifications WHERE run_date=?').get(now.date),requests=db.prepare("SELECT *,driver_id driverId,driver_name driverName,gross_amount grossAmount,net_amount netAmount,eligible_run_date eligibleRunDate,submitted_after_cutoff submittedAfterCutoff FROM payouts WHERE type='early' AND eligible_run_date=? ORDER BY created_at DESC").all(now.date);res.json({today:now.date,cutoff:cutoffParts(getSettings()).label,summary:row||null,requests})});
 app.post('/api/admin/early-summary/send',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{const out=await sendEarlyPayoutOfficeSummary({force:true});audit(req,'staff',req.auth.email,'early_summary_sent','communications','early_summary',out);res.json({ok:true,...out})}catch(e){res.status(500).json({error:e.message})}});
 app.get('/api/admin/communications-log',adminAuth,(req,res)=>res.json({messages:db.prepare('SELECT * FROM communications_log ORDER BY created_at DESC LIMIT 500').all()}));
 
 /* =========================
-   FleetPay Office V2.1 Demo Lab + launch reset
+   FaivoPay Office V2.1 Demo Lab + launch reset
    Demo state is isolated from all live payout/Autocab tables.
    ========================= */
 function demoStamp(){return new Date().toISOString()}
@@ -9559,7 +9559,7 @@ function freshDemoState(){
  return {
   updatedAt:now,
   monday:{
-   stage:'rentsheets',status:'awaiting_rentsheets',syncAt:null,locked:false,runId:null,reference:null,wiseAccount:{name:'FleetPay Demo GBP',sortCode:'12-34-56',accountNumber:'12345678'},startingWiseBalance:50,wiseBalance:50,fundingRequired:0,topUpRequired:0,fundingTransferSentAt:null,fundingTransferAmount:0,fundsReceivedAt:null,releasedAt:null,reconciledAt:null,
+   stage:'rentsheets',status:'awaiting_rentsheets',syncAt:null,locked:false,runId:null,reference:null,wiseAccount:{name:'FaivoPay Demo GBP',sortCode:'12-34-56',accountNumber:'12345678'},startingWiseBalance:50,wiseBalance:50,fundingRequired:0,topUpRequired:0,fundingTransferSentAt:null,fundingTransferAmount:0,fundsReceivedAt:null,releasedAt:null,reconciledAt:null,
    items:[
     {id:'dm101',callsign:'101',driverName:'James Carter',previousBalance:126.42,weeklyFee:2.50,amount:123.92,status:'pending',wiseStatus:'not_sent',autocabStatus:'not_posted'},
     {id:'dm114',callsign:'114',driverName:'Sarah Wilson',previousBalance:84.10,weeklyFee:2.50,amount:81.60,status:'pending',wiseStatus:'not_sent',autocabStatus:'not_posted'},
@@ -9569,7 +9569,7 @@ function freshDemoState(){
    ]
   },
   early:{
-   stage:'balance',status:'awaiting_balance_sync',locked:false,runId:null,reference:null,wiseAccount:{name:'FleetPay Demo GBP',sortCode:'12-34-56',accountNumber:'12345678'},startingWiseBalance:100,wiseBalance:100,fundingRequired:0,topUpRequired:0,fundingTransferSentAt:null,fundingTransferAmount:0,fundsReceivedAt:null,releasedAt:null,reconciledAt:null,
+   stage:'balance',status:'awaiting_balance_sync',locked:false,runId:null,reference:null,wiseAccount:{name:'FaivoPay Demo GBP',sortCode:'12-34-56',accountNumber:'12345678'},startingWiseBalance:100,wiseBalance:100,fundingRequired:0,topUpRequired:0,fundingTransferSentAt:null,fundingTransferAmount:0,fundsReceivedAt:null,releasedAt:null,reconciledAt:null,
    items:[
     {id:'de401',callsign:'401',driverName:'Olivia Taylor',grossAmount:150,fee:2.50,netAmount:147.50,status:'requested',wiseStatus:'not_sent',autocabStatus:'not_posted'},
     {id:'de417',callsign:'417',driverName:'Noah Evans',grossAmount:95,fee:2.50,netAmount:92.50,status:'requested',wiseStatus:'not_sent',autocabStatus:'not_posted'},
@@ -9774,7 +9774,7 @@ app.post('/api/admin/demo/payment-plan/activate',adminAuth,requireStaffRole('adm
  p.communications.push({
   type:'notification',
   title:'Payment plan active',
-  message:`Your FleetPay payment plan is now active. Your first payment of £${Number(first.amount||0).toFixed(2)} is due ${first.dueAt}.`,
+  message:`Your FaivoPay payment plan is now active. Your first payment of £${Number(first.amount||0).toFixed(2)} is due ${first.dueAt}.`,
   at:now
  });
 
@@ -9860,7 +9860,7 @@ app.post('/api/admin/demo/payment-plan/pay-instalment',adminAuth,requireStaffRol
   p.communications.push({
    type:'notification',
    title:'Payment plan completed',
-   message:`Your FleetPay payment plan has been completed. All £${Number(p.planAmount||0).toFixed(2)} has now been paid.`,
+   message:`Your FaivoPay payment plan has been completed. All £${Number(p.planAmount||0).toFixed(2)} has now been paid.`,
    at:now
   });
 
@@ -10038,7 +10038,7 @@ app.post('/api/admin/demo/payment-plan/monday-partial',adminAuth,requireStaffRol
  p.communications.push({
   type:'notification',
   title:'Payment plan payment applied',
-  message:`£${amount.toFixed(2)} from your Monday FleetPay balance has been applied to your payment plan. £${remainingOnInstalment.toFixed(2)} remains due on this instalment.`,
+  message:`£${amount.toFixed(2)} from your Monday FaivoPay balance has been applied to your payment plan. £${remainingOnInstalment.toFixed(2)} remains due on this instalment.`,
   at:now
  });
 
@@ -10147,7 +10147,7 @@ app.post('/api/admin/demo/payment-plan/monday-full',adminAuth,requireStaffRole('
   p.communications.push({
    type:'notification',
    title:'Payment plan completed',
-   message:`Your FleetPay payment plan has been completed. All £${Number(p.planAmount||0).toFixed(2)} has now been paid.`,
+   message:`Your FaivoPay payment plan has been completed. All £${Number(p.planAmount||0).toFixed(2)} has now been paid.`,
    at:now
   });
 
@@ -10205,7 +10205,7 @@ app.post('/api/admin/demo/payment-plan/monday-full',adminAuth,requireStaffRole('
    p.communications.push({
     type:'notification',
     title:'Payment plan payment applied',
-    message:`£${amount.toFixed(2)} from your Monday FleetPay balance has been applied to your payment plan. £${p.remainingAmount.toFixed(2)} remains. Your next payment of £${Number(next.amount||0).toFixed(2)} is due ${next.dueAt}.`,
+    message:`£${amount.toFixed(2)} from your Monday FaivoPay balance has been applied to your payment plan. £${p.remainingAmount.toFixed(2)} remains. Your next payment of £${Number(next.amount||0).toFixed(2)} is due ${next.dueAt}.`,
     at:now
    });
   }
@@ -10265,7 +10265,7 @@ app.post('/api/admin/demo/payment-plan/pause',adminAuth,requireStaffRole('admini
  p.communications.push({
   type:'notification',
   title:'Payment plan paused',
-  message:'Your FleetPay payment plan has been paused. No plan payment is currently required while the arrangement is paused.',
+  message:'Your FaivoPay payment plan has been paused. No plan payment is currently required while the arrangement is paused.',
   at:now
  });
 
@@ -10332,8 +10332,8 @@ app.post('/api/admin/demo/payment-plan/resume',adminAuth,requireStaffRole('admin
   type:'notification',
   title:'Payment plan resumed',
   message:overdue
-   ?'Your FleetPay payment plan has been resumed. The current instalment is overdue and is available to pay now.'
-   :'Your FleetPay payment plan has been resumed.',
+   ?'Your FaivoPay payment plan has been resumed. The current instalment is overdue and is available to pay now.'
+   :'Your FaivoPay payment plan has been resumed.',
   at:now
  });
 
@@ -10417,7 +10417,7 @@ app.post('/api/admin/demo/payment-plan/cancel',adminAuth,requireStaffRole('admin
  p.communications.push({
   type:'notification',
   title:'Payment plan cancelled',
-  message:`Your FleetPay payment plan has been cancelled. The remaining balance of £${remaining.toFixed(2)} is now shown as an outstanding payment.`,
+  message:`Your FaivoPay payment plan has been cancelled. The remaining balance of £${remaining.toFixed(2)} is now shown as an outstanding payment.`,
   at:now
  });
 
@@ -10578,7 +10578,7 @@ app.post('/api/admin/demo/payment-plan/settle-early',adminAuth,requireStaffRole(
  /*
   * Production settle-early does not complete the plan here.
   * It converts the current instalment into one final request for
-  * the full remaining FleetPay-owned balance.
+  * the full remaining FaivoPay-owned balance.
   */
 
  for(const instalment of p.instalments){
@@ -10619,11 +10619,11 @@ app.post('/api/admin/demo/payment-plan/settle-early',adminAuth,requireStaffRole(
  p.settleEarlyRequestAmount=remaining;
 
  /*
-  * The debt stays owned by FleetPay.
+  * The debt stays owned by FaivoPay.
   * No Autocab credit or live helper is called.
   */
  p.autocab.balanceAfter=0;
- p.autocab.note='Demo early settlement requested inside FleetPay — no Autocab credit posted.';
+ p.autocab.note='Demo early settlement requested inside FaivoPay — no Autocab credit posted.';
 
  p.events.push({
   type:'early_settlement_requested',
@@ -10635,7 +10635,7 @@ app.post('/api/admin/demo/payment-plan/settle-early',adminAuth,requireStaffRole(
  p.communications.push({
   type:'notification',
   title:'Payment plan – settle remaining balance',
-  message:`Your remaining FleetPay payment-plan balance of £${remaining.toFixed(2)} is now available to pay in full.`,
+  message:`Your remaining FaivoPay payment-plan balance of £${remaining.toFixed(2)} is now available to pay in full.`,
   at:now
  });
 
@@ -10777,7 +10777,7 @@ app.post('/api/admin/demo/payment-plan/amend',adminAuth,requireStaffRole('admini
   p.communications.push({
    type:'notification',
    title:'Payment plan amended',
-   message:`Your payment plan has been amended. Remaining balance £${remaining.toFixed(2)}. New instalment £${instalmentAmount.toFixed(2)} ${frequency}. Next payment date ${startDate}. The plan remains paused until FleetPay resumes it.`,
+   message:`Your payment plan has been amended. Remaining balance £${remaining.toFixed(2)}. New instalment £${instalmentAmount.toFixed(2)} ${frequency}. Next payment date ${startDate}. The plan remains paused until FaivoPay resumes it.`,
    at:now
   });
  }
@@ -10844,11 +10844,11 @@ app.post('/api/admin/demo/early/refresh-status',adminAuth,requireStaffRole('admi
 app.post('/api/admin/demo/early/retry-failed',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const state=readDemoState(),r=state.early;if(r.stage!=='monitor')return res.status(400).json({error:'There is no released early payout run to retry.'});const failed=demoApproved(r,true).filter(x=>x.wiseStatus==='failed');if(!failed.length)return res.status(400).json({error:'There are no failed demo early payouts to retry.'});failed.forEach(x=>{delete x.failureReason;demoPaidItem(x)});writeDemoState(state);res.json(state)});
 app.post('/api/admin/demo/early/reconcile',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const state=readDemoState(),r=state.early;if(r.stage!=='monitor')return res.status(400).json({error:'Complete early payout monitoring before reconciliation.'});if(!demoCanReconcile(r,true))return res.status(400).json({error:'Reconciliation cannot complete yet. Every approved early payout must show Wise Paid and Autocab Updated.'});r.stage='complete';r.status='reconciled';r.reconciledAt=demoStamp();r.locked=true;for(const x of demoApproved(r,true))x.status='paid';writeDemoState(state);res.json(state)});
 app.post('/api/admin/demo/early/:id',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const state=readDemoState(),r=state.early,status=String(req.body.status||'');if(r.stage!=='review')return res.status(400).json({error:'Early payout decisions can only be changed during Review & Approve.'});if(!['approved','declined','requested'].includes(status))return res.status(400).json({error:'Invalid demo status'});const item=r.items.find(x=>x.id===req.params.id);if(!item)return res.status(404).json({error:'Demo request not found'});item.status=status;writeDemoState(state);res.json(state)});
-app.post('/api/admin/demo/test-email',adminAuth,requireStaffRole('administrator'),async(req,res)=>{try{const to=safeEmail(req.body.to||getSettings().officeNotificationEmail);if(!to)return res.status(400).json({error:'Enter a test email address'});const state=readDemoState(),approved=state.early.items.filter(x=>['approved','paid'].includes(x.status)),total=approved.reduce((a,x)=>a+Number(x.netAmount||0),0);const html=`<div style="font-family:Arial,sans-serif;background:#f5f7fb;padding:24px"><div style="max-width:680px;margin:auto;background:#fff;border-radius:14px;overflow:hidden"><div style="background:#7c3aed;color:white;padding:24px"><b>FLEETPAY DEMO · TEST MESSAGE</b><h2 style="margin:8px 0 0">Early payout demonstration</h2></div><div style="padding:24px"><p>This is a demonstration only. No real payment is due.</p><p><b>${approved.length} demo requests · £${total.toFixed(2)}</b></p></div></div></div>`;const out=await sendEmail(to,'FleetPay DEMO – early payout summary',html);if(!out.sent)throw new Error('No email provider is configured');logCommunication({channel:'email',recipient:to,templateKey:'demo_email',entityType:'demo',entityId:'office_demo',status:'sent',providerRef:out.id||out.provider||''});res.json({ok:true})}catch(e){res.status(500).json({error:e.message})}});
-app.post('/api/admin/demo/test-sms',adminAuth,requireStaffRole('administrator'),async(req,res)=>{try{const to=String(req.body.to||'').trim();if(!to)return res.status(400).json({error:'Enter a test mobile number'});const out=await sendConfiguredSms(to,'FLEETPAY DEMO – Test message only. No payment or action is required.',{templateKey:'demo_sms',entityType:'demo',entityId:'office_demo'});res.json({ok:true,out})}catch(e){res.status(500).json({error:e.message})}});
+app.post('/api/admin/demo/test-email',adminAuth,requireStaffRole('administrator'),async(req,res)=>{try{const to=safeEmail(req.body.to||getSettings().officeNotificationEmail);if(!to)return res.status(400).json({error:'Enter a test email address'});const state=readDemoState(),approved=state.early.items.filter(x=>['approved','paid'].includes(x.status)),total=approved.reduce((a,x)=>a+Number(x.netAmount||0),0);const html=`<div style="font-family:Arial,sans-serif;background:#f5f7fb;padding:24px"><div style="max-width:680px;margin:auto;background:#fff;border-radius:14px;overflow:hidden"><div style="background:#7c3aed;color:white;padding:24px"><b>FAIVOPAY DEMO · TEST MESSAGE</b><h2 style="margin:8px 0 0">Early payout demonstration</h2></div><div style="padding:24px"><p>This is a demonstration only. No real payment is due.</p><p><b>${approved.length} demo requests · £${total.toFixed(2)}</b></p></div></div></div>`;const out=await sendEmail(to,'FaivoPay DEMO – early payout summary',html);if(!out.sent)throw new Error('No email provider is configured');logCommunication({channel:'email',recipient:to,templateKey:'demo_email',entityType:'demo',entityId:'office_demo',status:'sent',providerRef:out.id||out.provider||''});res.json({ok:true})}catch(e){res.status(500).json({error:e.message})}});
+app.post('/api/admin/demo/test-sms',adminAuth,requireStaffRole('administrator'),async(req,res)=>{try{const to=String(req.body.to||'').trim();if(!to)return res.status(400).json({error:'Enter a test mobile number'});const out=await sendConfiguredSms(to,'FAIVOPAY DEMO – Test message only. No payment or action is required.',{templateKey:'demo_sms',entityType:'demo',entityId:'office_demo'});res.json({ok:true,out})}catch(e){res.status(500).json({error:e.message})}});
 
 app.post('/api/admin/launch-reset',adminAuth,requireStaffRole('administrator'),(req,res)=>{
- const phrase=String(req.body.phrase||'');if(phrase!=='RESET FLEETPAY FOR LIVE LAUNCH')return res.status(400).json({error:'Confirmation phrase does not match'});
+ const phrase=String(req.body.phrase||'');if(phrase!=='RESET FAIVOPAY FOR LIVE LAUNCH')return res.status(400).json({error:'Confirmation phrase does not match'});
  const includeDrivers=Boolean(req.body.includeDriverAccounts),stamp=new Date().toISOString().replace(/[:.]/g,'-'),backupPath=path.join(DATA_DIR,`fleetpay-prelaunch-${stamp}.sqlite`);
  try{
   db.exec(`VACUUM INTO '${backupPath.replaceAll("'","''")}'`);
@@ -10883,16 +10883,16 @@ app.post('/api/admin/launch-reset',adminAuth,requireStaffRole('administrator'),(
  }catch(e){try{db.exec('ROLLBACK')}catch{}res.status(500).json({error:e.message})}
 });
 
-app.post('/api/driver/register/start',async(req,res)=>{try{const callsign=String(req.body.callsign||'').trim(),email=safeEmail(req.body.email),mobileLast4=String(req.body.mobileLast4||'').replace(/\D/g,'');if(!callsign||!email||mobileLast4.length!==4)return res.status(400).json({error:'Callsign, Autocab email and last 4 mobile digits are required'});let drivers=cacheRows();if(!drivers.length){try{await syncAutocab();drivers=cacheRows()}catch{}}const d=drivers.find(x=>String(x.callsign).trim().toLowerCase()===callsign.toLowerCase());if(!d||safeEmail(d.email)!==email||last4(d.mobile)!==mobileLast4)return res.status(400).json({error:'Details do not match the active Autocab driver record'});if(db.prepare('SELECT id FROM driver_users WHERE driver_id=?').get(d.driverId))return res.status(409).json({error:'This driver account has already been registered'});const code=String(Math.floor(100000+Math.random()*900000)),challenge=id('verify'),expires=Date.now()+10*60000;db.prepare('DELETE FROM auth_challenges WHERE driver_id=? OR expires_at<?').run(d.driverId,Date.now());db.prepare('INSERT INTO auth_challenges(id,type,driver_id,callsign,email,code_hash,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?)').run(challenge,'register',d.driverId,d.callsign,email,crypto.createHash('sha256').update(code).digest('hex'),expires,new Date().toISOString());await sendEmail(email,'Your FleetPay verification code',`<p>Your FleetPay verification code is <strong>${code}</strong>.</p><p>It expires in 10 minutes.</p>`);audit(req,'driver',d.driverId,'registration_started','driver',d.driverId,{callsign:d.callsign});res.json({challengeId:challenge,message:'Verification code sent to the email stored in Autocab',...(DEV_AUTH_CODES?{devCode:code}:{})})}catch(e){res.status(500).json({error:e.message})}});
+app.post('/api/driver/register/start',async(req,res)=>{try{const callsign=String(req.body.callsign||'').trim(),email=safeEmail(req.body.email),mobileLast4=String(req.body.mobileLast4||'').replace(/\D/g,'');if(!callsign||!email||mobileLast4.length!==4)return res.status(400).json({error:'Callsign, Autocab email and last 4 mobile digits are required'});let drivers=cacheRows();if(!drivers.length){try{await syncAutocab();drivers=cacheRows()}catch{}}const d=drivers.find(x=>String(x.callsign).trim().toLowerCase()===callsign.toLowerCase());if(!d||safeEmail(d.email)!==email||last4(d.mobile)!==mobileLast4)return res.status(400).json({error:'Details do not match the active Autocab driver record'});if(db.prepare('SELECT id FROM driver_users WHERE driver_id=?').get(d.driverId))return res.status(409).json({error:'This driver account has already been registered'});const code=String(Math.floor(100000+Math.random()*900000)),challenge=id('verify'),expires=Date.now()+10*60000;db.prepare('DELETE FROM auth_challenges WHERE driver_id=? OR expires_at<?').run(d.driverId,Date.now());db.prepare('INSERT INTO auth_challenges(id,type,driver_id,callsign,email,code_hash,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?)').run(challenge,'register',d.driverId,d.callsign,email,crypto.createHash('sha256').update(code).digest('hex'),expires,new Date().toISOString());await sendEmail(email,'Your FaivoPay verification code',`<p>Your FaivoPay verification code is <strong>${code}</strong>.</p><p>It expires in 10 minutes.</p>`);audit(req,'driver',d.driverId,'registration_started','driver',d.driverId,{callsign:d.callsign});res.json({challengeId:challenge,message:'Verification code sent to the email stored in Autocab',...(DEV_AUTH_CODES?{devCode:code}:{})})}catch(e){res.status(500).json({error:e.message})}});
 app.post('/api/driver/register/complete',(req,res)=>{const c=db.prepare('SELECT * FROM auth_challenges WHERE id=? AND type=?').get(req.body.challengeId,'register');if(!c||c.expires_at<Date.now())return res.status(400).json({error:'Verification code expired or invalid'});const h=crypto.createHash('sha256').update(String(req.body.code||'')).digest('hex');if(h!==c.code_hash)return res.status(400).json({error:'Incorrect verification code'});const password=String(req.body.password||'');if(password.length<8)return res.status(400).json({error:'Password must be at least 8 characters'});const p=hashPassword(password),now=new Date().toISOString(),approved=getSettings().requireAdminApproval?0:1,userId=id('user');db.prepare('INSERT INTO driver_users(id,driver_id,callsign,email,password_hash,password_salt,approved,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)').run(userId,c.driver_id,c.callsign,c.email,p.hash,p.salt,approved,now,now);db.prepare('DELETE FROM auth_challenges WHERE id=?').run(c.id);audit(req,'driver',c.driver_id,'registration_completed','driver_user',userId,{approved:Boolean(approved)});if(!approved)return res.json({pendingApproval:true});res.json({token:signToken({driverId:c.driver_id,userId}),callsign:c.callsign})});
 app.post('/api/driver/login',(req,res)=>{const email=safeEmail(req.body.email),u=db.prepare('SELECT * FROM driver_users WHERE email=?').get(email);if(!u||!verifyPassword(String(req.body.password||''),u.password_salt,u.password_hash)){audit(req,'driver',email,'login_failed');return res.status(401).json({error:'Incorrect email or password'})}if(!u.approved)return res.status(403).json({error:'Your account is waiting for administrator approval'});db.prepare('UPDATE driver_users SET last_login_at=?,updated_at=? WHERE id=?').run(new Date().toISOString(),new Date().toISOString(),u.id);audit(req,'driver',u.driver_id,'login_success','driver_user',u.id);res.json({token:signToken({driverId:u.driver_id,userId:u.id}),callsign:u.callsign})});
-app.post('/api/driver/forgot-password/start',async(req,res)=>{const email=safeEmail(req.body.email),u=db.prepare('SELECT * FROM driver_users WHERE email=?').get(email);if(!u)return res.json({message:'If that email is registered, a reset code has been sent.'});const code=String(Math.floor(100000+Math.random()*900000)),challenge=id('reset');db.prepare("DELETE FROM auth_challenges WHERE type='reset' AND email=?").run(email);db.prepare('INSERT INTO auth_challenges(id,type,driver_id,callsign,email,code_hash,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?)').run(challenge,'reset',u.driver_id,u.callsign,email,crypto.createHash('sha256').update(code).digest('hex'),Date.now()+10*60000,new Date().toISOString());await sendEmail(email,'FleetPay password reset code',`<p>Your FleetPay password reset code is <strong>${code}</strong>.</p><p>It expires in 10 minutes.</p>`);audit(req,'driver',u.driver_id,'password_reset_started','driver_user',u.id);res.json({challengeId:challenge,message:'If that email is registered, a reset code has been sent.',...(DEV_AUTH_CODES?{devCode:code}:{})})});
+app.post('/api/driver/forgot-password/start',async(req,res)=>{const email=safeEmail(req.body.email),u=db.prepare('SELECT * FROM driver_users WHERE email=?').get(email);if(!u)return res.json({message:'If that email is registered, a reset code has been sent.'});const code=String(Math.floor(100000+Math.random()*900000)),challenge=id('reset');db.prepare("DELETE FROM auth_challenges WHERE type='reset' AND email=?").run(email);db.prepare('INSERT INTO auth_challenges(id,type,driver_id,callsign,email,code_hash,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?)').run(challenge,'reset',u.driver_id,u.callsign,email,crypto.createHash('sha256').update(code).digest('hex'),Date.now()+10*60000,new Date().toISOString());await sendEmail(email,'FaivoPay password reset code',`<p>Your FaivoPay password reset code is <strong>${code}</strong>.</p><p>It expires in 10 minutes.</p>`);audit(req,'driver',u.driver_id,'password_reset_started','driver_user',u.id);res.json({challengeId:challenge,message:'If that email is registered, a reset code has been sent.',...(DEV_AUTH_CODES?{devCode:code}:{})})});
 app.post('/api/driver/forgot-password/complete',(req,res)=>{const c=db.prepare("SELECT * FROM auth_challenges WHERE id=? AND type='reset'").get(req.body.challengeId);if(!c||c.expires_at<Date.now())return res.status(400).json({error:'Reset code expired or invalid'});if(crypto.createHash('sha256').update(String(req.body.code||'')).digest('hex')!==c.code_hash)return res.status(400).json({error:'Incorrect reset code'});const password=String(req.body.password||'');if(password.length<8)return res.status(400).json({error:'Password must be at least 8 characters'});const p=hashPassword(password);db.prepare('UPDATE driver_users SET password_hash=?,password_salt=?,updated_at=? WHERE driver_id=?').run(p.hash,p.salt,new Date().toISOString(),c.driver_id);db.prepare('DELETE FROM auth_challenges WHERE id=?').run(c.id);audit(req,'driver',c.driver_id,'password_reset_completed','driver_user',c.driver_id);res.json({ok:true})});
 
 
 app.get('/api/driver/push-config',driverAuth,(req,res)=>res.json({enabled:Boolean(VAPID_PUBLIC_KEY&&VAPID_PRIVATE_KEY),publicKey:VAPID_PUBLIC_KEY||null}));
 app.post('/api/driver/push-subscription',driverAuth,(req,res)=>{try{const sub=req.body.subscription;if(!sub?.endpoint)return res.status(400).json({error:'Invalid push subscription'});const now=new Date().toISOString();db.prepare('INSERT INTO push_subscriptions(id,driver_id,endpoint,subscription_json,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET driver_id=excluded.driver_id,subscription_json=excluded.subscription_json,updated_at=excluded.updated_at').run(id('push'),req.auth.driverId,sub.endpoint,JSON.stringify(sub),now,now);audit(req,'driver',req.auth.driverId,'push_notifications_enabled','driver',req.auth.driverId);res.json({ok:true})}catch(e){res.status(500).json({error:e.message})}});
-app.post('/api/driver/push-test',driverAuth,async(req,res)=>{const d=cachedDriver(req.auth.driverId);await sendPush(req.auth.driverId,'FleetPay test notification',`Push notifications are working for callsign ${d?.callsign||''}.`);res.json({ok:true})});
+app.post('/api/driver/push-test',driverAuth,async(req,res)=>{const d=cachedDriver(req.auth.driverId);await sendPush(req.auth.driverId,'FaivoPay test notification',`Push notifications are working for callsign ${d?.callsign||''}.`);res.json({ok:true})});
 app.post('/api/driver/payment-plans/:id/extra-payment',driverAuth,async(req,res)=>{
  try{
   const plan=db.prepare(`SELECT * FROM driver_payment_plans WHERE id=? AND driver_id=?`).get(req.params.id,req.auth.driverId);
@@ -10921,7 +10921,7 @@ app.post('/api/driver/payment-requests/:id/checkout',driverAuth,async(req,res)=>
   error:item.status==='paid'
    ?'This payment has already been received'
    :item.status==='on_plan'
-    ?'This balance is now being managed through a FleetPay payment plan'
+    ?'This balance is now being managed through a FaivoPay payment plan'
     :'This payment request is not currently available for payment'
  });
 }
@@ -10946,7 +10946,7 @@ app.post('/api/driver/customer-payment',driverAuth,async(req,res)=>{
 
     if(!d){
       return res.status(404).json({
-        error:'Driver not found in FleetPay cache'
+        error:'Driver not found in FaivoPay cache'
       });
     }
 
@@ -11085,7 +11085,7 @@ app.put('/api/driver/bank-account',driverAuth,async(req,res)=>{
   if(sortCode.length!==6)return res.status(400).json({error:'Enter a valid 6-digit UK sort code.'});
   if(accountNumber.length!==8)return res.status(400).json({error:'Enter a valid 8-digit UK account number.'});
   const user=db.prepare('SELECT id,email,password_hash,password_salt FROM driver_users WHERE driver_id=?').get(req.auth.driverId);
-  if(!user||!verifyPassword(password,user.password_salt,user.password_hash))return res.status(401).json({error:'Your FleetPay password is required to change payout bank details.'});
+  if(!user||!verifyPassword(password,user.password_salt,user.password_hash))return res.status(401).json({error:'Your FaivoPay password is required to change payout bank details.'});
   const existing=db.prepare('SELECT driver_id FROM driver_bank_accounts WHERE driver_id=?').get(req.auth.driverId);
   const now=new Date().toISOString();
   db.prepare(`INSERT INTO driver_bank_accounts(driver_id,account_holder_enc,sort_code_enc,account_number_enc,sort_code_last2,account_number_last4,status,provider_recipient_id,created_at,updated_at)
@@ -11093,10 +11093,10 @@ app.put('/api/driver/bank-account',driverAuth,async(req,res)=>{
    ON CONFLICT(driver_id) DO UPDATE SET account_holder_enc=excluded.account_holder_enc,sort_code_enc=excluded.sort_code_enc,account_number_enc=excluded.account_number_enc,sort_code_last2=excluded.sort_code_last2,account_number_last4=excluded.account_number_last4,status='saved',provider_recipient_id=NULL,updated_at=excluded.updated_at`)
    .run(req.auth.driverId,encryptSecret(accountHolder),encryptSecret(sortCode),encryptSecret(accountNumber),sortCode.slice(-2),accountNumber.slice(-4),'saved',now,now);
   audit(req,'driver',req.auth.driverId,existing?'bank_account_changed':'bank_account_added','driver_bank_account',String(req.auth.driverId),{maskedAccount:`••••${accountNumber.slice(-4)}`,maskedSortCode:`••-••-${sortCode.slice(-2)}`});
-  notify(req.auth.driverId,existing?'Payout bank account changed':'Payout bank account added',existing?'Your payout bank details were changed. Future FleetPay payouts will use the new account.':'Your payout bank details were saved securely.','info',String(req.auth.driverId));
+  notify(req.auth.driverId,existing?'Payout bank account changed':'Payout bank account added',existing?'Your payout bank details were changed. Future FaivoPay payouts will use the new account.':'Your payout bank details were saved securely.','info',String(req.auth.driverId));
   const d=cachedDriver(req.auth.driverId);
   const email=safeEmail(d?.email||user.email);
-  if(email){sendEmail(email,existing?'FleetPay payout bank details changed':'FleetPay payout bank details added',`<p>Your FleetPay payout bank details ${existing?'were changed':'have been added'}.</p><p>Account ending <strong>${accountNumber.slice(-4)}</strong> · Sort code ending <strong>${sortCode.slice(-2)}</strong>.</p><p>If you did not make this change, contact the FleetPay office immediately.</p>`).catch(()=>{});}
+  if(email){sendEmail(email,existing?'FaivoPay payout bank details changed':'FaivoPay payout bank details added',`<p>Your FaivoPay payout bank details ${existing?'were changed':'have been added'}.</p><p>Account ending <strong>${accountNumber.slice(-4)}</strong> · Sort code ending <strong>${sortCode.slice(-2)}</strong>.</p><p>If you did not make this change, contact the FaivoPay office immediately.</p>`).catch(()=>{});}
   res.json({ok:true,bankAccount:maskedBankAccount(req.auth.driverId)});
  }catch(e){res.status(500).json({error:e.message})}
 });
@@ -11109,7 +11109,7 @@ app.get('/api/driver/me',driverAuth,(req,res)=>{
 
     if(!d){
       return res.status(404).json({
-        error:'Driver record is not yet available. Please try again after the next FleetPay sync.'
+        error:'Driver record is not yet available. Please try again after the next FaivoPay sync.'
       });
     }
 
@@ -11252,7 +11252,7 @@ app.get('/api/driver/me',driverAuth,(req,res)=>{
       error:e.message
     });
   }
-});app.post('/api/driver/early-payout',driverAuth,(req,res)=>{try{const settings=getSettings(),timing=earlyPayoutTiming(settings);if(!timing.requestDayAllowed)return res.status(400).json({error:earlyPayoutWindowMessage(settings)});const d=cachedDriver(req.auth.driverId);if(!d)return res.status(404).json({error:'Driver not found in FleetPay cache'});const livePlan=db.prepare("SELECT id,status FROM driver_payment_plans WHERE driver_id=? AND status IN ('active','paused','defaulted') ORDER BY created_at DESC LIMIT 1").get(d.driverId);if(livePlan)return res.status(409).json({error:'Early payouts are unavailable while you have an active payment plan.'});const early=db.prepare("SELECT gross_amount,status FROM payouts WHERE driver_id=? AND type='early'").all(d.driverId);const reserved=early.filter(x=>['requested','approved','batched'].includes(x.status)).reduce((s,x)=>s+Number(x.gross_amount||0),0),available=Math.max(0,Number(d.currentBalance||0)-reserved),gross=Number(req.body.amount||0),fee=Number(settings.earlyPayoutFee||0);if(gross<=fee)return res.status(400).json({error:`Requested amount must be greater than the £${fee.toFixed(2)} fee`});if(gross>available+0.00001)return res.status(400).json({error:'Requested amount exceeds your available current balance'});const itemId=id('early'),now=new Date().toISOString();db.prepare('INSERT INTO payouts(id,driver_id,callsign,driver_name,gross_amount,fee,net_amount,amount,type,status,created_at,eligible_run_date,submitted_after_cutoff) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)').run(itemId,d.driverId,d.callsign,d.fullName,gross,fee,gross-fee,gross-fee,'early','requested',now,timing.runDate,timing.afterCutoff?1:0);const timingText=timing.beforeCutoff?'It is eligible for today\'s payment run if approved.':`Today's ${timing.cutoff} cutoff has passed, so it is queued for the ${timing.runLabel} payment run if approved.`;notify(d.driverId,'Payout request received',`Your request for £${(gross-fee).toFixed(2)} after the £${fee.toFixed(2)} fee is awaiting approval. ${timingText}`,'info',itemId);audit(req,'driver',d.driverId,'early_payout_requested','payout',itemId,{gross,fee,net:gross-fee,eligibleRunDate:timing.runDate,submittedAfterCutoff:timing.afterCutoff});res.json({id:itemId,grossAmount:gross,fee,netAmount:gross-fee,status:'requested',createdAt:now,eligibleRunDate:timing.runDate,submittedAfterCutoff:timing.afterCutoff,message:timingText})}catch(e){res.status(500).json({error:e.message})}});
+});app.post('/api/driver/early-payout',driverAuth,(req,res)=>{try{const settings=getSettings(),timing=earlyPayoutTiming(settings);if(!timing.requestDayAllowed)return res.status(400).json({error:earlyPayoutWindowMessage(settings)});const d=cachedDriver(req.auth.driverId);if(!d)return res.status(404).json({error:'Driver not found in FaivoPay cache'});const livePlan=db.prepare("SELECT id,status FROM driver_payment_plans WHERE driver_id=? AND status IN ('active','paused','defaulted') ORDER BY created_at DESC LIMIT 1").get(d.driverId);if(livePlan)return res.status(409).json({error:'Early payouts are unavailable while you have an active payment plan.'});const early=db.prepare("SELECT gross_amount,status FROM payouts WHERE driver_id=? AND type='early'").all(d.driverId);const reserved=early.filter(x=>['requested','approved','batched'].includes(x.status)).reduce((s,x)=>s+Number(x.gross_amount||0),0),available=Math.max(0,Number(d.currentBalance||0)-reserved),gross=Number(req.body.amount||0),fee=Number(settings.earlyPayoutFee||0);if(gross<=fee)return res.status(400).json({error:`Requested amount must be greater than the £${fee.toFixed(2)} fee`});if(gross>available+0.00001)return res.status(400).json({error:'Requested amount exceeds your available current balance'});const itemId=id('early'),now=new Date().toISOString();db.prepare('INSERT INTO payouts(id,driver_id,callsign,driver_name,gross_amount,fee,net_amount,amount,type,status,created_at,eligible_run_date,submitted_after_cutoff) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)').run(itemId,d.driverId,d.callsign,d.fullName,gross,fee,gross-fee,gross-fee,'early','requested',now,timing.runDate,timing.afterCutoff?1:0);const timingText=timing.beforeCutoff?'It is eligible for today\'s payment run if approved.':`Today's ${timing.cutoff} cutoff has passed, so it is queued for the ${timing.runLabel} payment run if approved.`;notify(d.driverId,'Payout request received',`Your request for £${(gross-fee).toFixed(2)} after the £${fee.toFixed(2)} fee is awaiting approval. ${timingText}`,'info',itemId);audit(req,'driver',d.driverId,'early_payout_requested','payout',itemId,{gross,fee,net:gross-fee,eligibleRunDate:timing.runDate,submittedAfterCutoff:timing.afterCutoff});res.json({id:itemId,grossAmount:gross,fee,netAmount:gross-fee,status:'requested',createdAt:now,eligibleRunDate:timing.runDate,submittedAfterCutoff:timing.afterCutoff,message:timingText})}catch(e){res.status(500).json({error:e.message})}});
 app.post('/api/driver/notifications/read',driverAuth,(req,res)=>{db.prepare('UPDATE driver_notifications SET read_at=? WHERE driver_id=? AND read_at IS NULL').run(new Date().toISOString(),req.auth.driverId);res.json({ok:true})});
 
 app.get('/payment-success',(_req,res)=>{
@@ -11296,15 +11296,15 @@ app.get('/payment-cancelled',(_req,res)=>{
 });
 
 const __filename=fileURLToPath(import.meta.url),__dirname=path.dirname(__filename),dist=path.resolve(__dirname,'../dist');app.use(express.static(dist));app.get('*',(req,res,next)=>{if(req.path.startsWith('/api'))return next();res.sendFile(path.join(dist,'index.html'),e=>e&&next())});
-function scheduleSync(){if(!API_KEY)return;const minutes=Math.max(2,Number(getSettings().syncMinutes||10));setTimeout(async()=>{try{const r=await syncAutocab();console.log(`FleetPay scheduled sync: ${r.drivers.length} drivers`)}catch(e){console.error('Scheduled Autocab sync failed:',e.message)}finally{scheduleSync()}},minutes*60000)}
+function scheduleSync(){if(!API_KEY)return;const minutes=Math.max(2,Number(getSettings().syncMinutes||10));setTimeout(async()=>{try{const r=await syncAutocab();console.log(`FaivoPay scheduled sync: ${r.drivers.length} drivers`)}catch(e){console.error('Scheduled Autocab sync failed:',e.message)}finally{scheduleSync()}},minutes*60000)}
 function scheduleEarlySummary(){setTimeout(async()=>{try{await sendEarlyPayoutOfficeSummary()}catch(e){console.error('Early payout office summary failed:',e.message)}finally{scheduleEarlySummary()}},60000)}
-function schedulePaymentPlanStatusRefresh(){setTimeout(()=>{try{const r=refreshPaymentPlanStatuses();if(r.overdueInstalments||r.defaultedPlans)console.log(`FleetPay payment plan refresh: ${r.overdueInstalments} overdue instalment(s), ${r.defaultedPlans} newly defaulted plan(s)`)}catch(e){console.error('Payment plan status refresh failed:',e.message)}finally{schedulePaymentPlanStatusRefresh()}},15*60000)}
+function schedulePaymentPlanStatusRefresh(){setTimeout(()=>{try{const r=refreshPaymentPlanStatuses();if(r.overdueInstalments||r.defaultedPlans)console.log(`FaivoPay payment plan refresh: ${r.overdueInstalments} overdue instalment(s), ${r.defaultedPlans} newly defaulted plan(s)`)}catch(e){console.error('Payment plan status refresh failed:',e.message)}finally{schedulePaymentPlanStatusRefresh()}},15*60000)}
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`FleetPay server running on port ${PORT} · DB ${DB_PATH}`);
+  console.log(`FaivoPay server running on port ${PORT} · DB ${DB_PATH}`);
 
   if (API_KEY) {
     syncAutocab()
-      .then(r => console.log(`FleetPay initial Autocab sync: ${r.drivers.length} drivers`))
+      .then(r => console.log(`FaivoPay initial Autocab sync: ${r.drivers.length} drivers`))
       .catch(e => console.error('Initial Autocab sync failed:', e.message))
       .finally(scheduleSync);
   }
