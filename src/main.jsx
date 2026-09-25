@@ -189,6 +189,7 @@ function AdminApp(){
  const[me,setMe]=useState(null),[overview,setOverview]=useState(null),[transactions,setTransactions]=useState([]);
  const[drivers,setDrivers]=useState([]),[meta,setMeta]=useState({}),[settings,setSettings]=useState(null),[integrations,setIntegrations]=useState(null),[twilioBalance,setTwilioBalance]=useState(null);
  const[mondayRuns,setMondayRuns]=useState([]),[sett,setSett]=useState({runs:[],payoutRuns:[],payouts:[],paymentRequests:[],earlyPayoutRequests:[]});
+ const[planAllocations,setPlanAllocations]=useState([]);
  const[outstanding,setOutstanding]=useState([]),[fees,setFees]=useState({fees:[],summary:{}}),[earlySummary,setEarlySummary]=useState(null);
  const[paymentPlans,setPaymentPlans]=useState({plans:[],summary:{}}),[selectedPaymentPlan,setSelectedPaymentPlan]=useState(null);
  const[paymentPlanQ,setPaymentPlanQ]=useState(''),[paymentPlanStatus,setPaymentPlanStatus]=useState('all');
@@ -206,6 +207,7 @@ function AdminApp(){
  const[driverTransactions,setDriverTransactions]=useState([]);
  const[driverTransactionsLoading,setDriverTransactionsLoading]=useState(false);
  const[selectedWeeklyPayouts,setSelectedWeeklyPayouts]=useState([]);
+ const[planAllocationBusy,setPlanAllocationBusy]=useState(null);
  const[mobileNav,setMobileNav]=useState(false),[loading,setLoading]=useState(false),[err,setErr]=useState('');
  const[sessionBooting,setSessionBooting]=useState(Boolean(token));
  const[newStaff,setNewStaff]=useState({name:'',email:'',role:'office',password:''}),[showNewStaff,setShowNewStaff]=useState(false);
@@ -251,7 +253,28 @@ function AdminApp(){
  const loadIntegrations=()=>safeLoad(async()=>setIntegrations(await api('/api/admin/integrations')));
  const loadTwilioBalance=()=>safeLoad(async()=>setTwilioBalance(await api('/api/admin/twilio/balance')));
  const loadSett=()=>safeLoad(async()=>setSett(await api('/api/admin/settlements')));
- const loadMonday=()=>safeLoad(async()=>setMondayRuns((await api('/api/admin/monday-runs')).runs||[]));
+ const loadMonday=()=>safeLoad(async()=>{
+  const j=await api('/api/admin/monday-runs');
+  const runs=j.runs||[];
+
+  setMondayRuns(runs);
+
+  const active=runs.find(
+   r=>['draft','approved','batched'].includes(r.status)
+  );
+
+  if(!active){
+   setPlanAllocations([]);
+   return;
+  }
+
+  const allocations=await api(
+   `/api/admin/monday-runs/${active.id}/plan-allocations`
+  );
+
+  setPlanAllocations(allocations.allocations||[]);
+ });
+
  const loadOutstanding=()=>safeLoad(async()=>setOutstanding((await api('/api/admin/outstanding-payments')).payments||[]));
 
  const loadPaymentPlans=()=>safeLoad(async()=>setPaymentPlans(await api('/api/admin/payment-plans')));
@@ -434,6 +457,30 @@ function AdminApp(){
  if(!token)return <AdminLogin onLogin={setToken}/>;
  if(sessionBooting)return <div className="officeBootPage"><div className="officeBootCard"><Logo/><div className="bootSpinner"><RefreshCw/></div><h2>Opening FleetPay Office</h2><p>Securely loading your dashboard and payment controls…</p></div></div>;
  const activeMonday=mondayRuns.find(r=>['draft','approved','batched'].includes(r.status))||null;
+ const mondayPlanAllocations=activeMonday
+  ?planAllocations.filter(x=>String(x.runId)===String(activeMonday.id))
+  :[];
+ const pendingPlanAllocations=mondayPlanAllocations.filter(
+  x=>x.status==='pending'
+ );
+ const applyingPlanAllocations=mondayPlanAllocations.filter(
+  x=>x.status==='applying'
+ );
+ const appliedPlanAllocations=mondayPlanAllocations.filter(
+  x=>x.status==='applied'
+ );
+ const failedPlanAllocations=mondayPlanAllocations.filter(
+  x=>x.error&&x.status!=='applied'
+ );
+ const mondayPlanAllocationTotal=mondayPlanAllocations.reduce(
+  (total,x)=>total+Number(x.allocatedAmount||0),
+  0
+ );
+ const mondayPlanAllocationAppliedTotal=appliedPlanAllocations.reduce(
+  (total,x)=>total+Number(x.allocatedAmount||0),
+  0
+ );
+
  const weeklyItems=activeMonday?.items?.filter(x=>x.action==='payout')||[];
  const weeklyCollections=activeMonday?.items?.filter(x=>x.action==='payment_request')||[];
  const weeklyCarryForward=activeMonday?.items?.filter(x=>x.action==='carry_forward')||[];
@@ -444,7 +491,8 @@ function AdminApp(){
  const weeklyApprovedTotal=weeklyApproved.reduce((a,x)=>a+Number(x.amount||0),0);
  const weeklyOutstandingTotal=weeklyCollections.reduce((a,x)=>a+Number(x.amount||0),0);
  const weeklyPayoutBeforeFees=weeklyApproved.reduce((a,x)=>a+Math.max(0,Number(x.previousBalance||0)),0);
- const weeklyPayoutFeesCharges=Math.max(0,weeklyPayoutBeforeFees-weeklyApprovedTotal);
+ const weeklyPayoutPlanDeductions=weeklyApproved.reduce((a,x)=>a+Number(x.planAllocation||0),0);
+ const weeklyPayoutFeesCharges=Math.max(0,weeklyPayoutBeforeFees-weeklyPayoutPlanDeductions-weeklyApprovedTotal);
  const weeklyIncomingBeforeFees=weeklyCollections.reduce((a,x)=>a+Math.abs(Number(x.previousBalance||0)),0);
  const weeklyIncomingFeesCharges=Math.max(0,weeklyOutstandingTotal-weeklyIncomingBeforeFees);
  const weeklyExcludedBeforeFees=weeklyExcluded.reduce((a,x)=>a+Math.max(0,Number(x.previousBalance||0)),0);
@@ -689,6 +737,60 @@ function AdminApp(){
    alert(e.message);
   }
  }
+
+ async function applyMondayPlanAllocation(allocation){
+  if(!activeMonday||!allocation?.id)return;
+
+  const driver=drivers.find(
+   d=>String(d.driverId)===String(allocation.driverId)
+  );
+
+  const name=driver?.fullName||`Driver ${allocation.driverId}`;
+
+  if(
+   !confirm(
+    `Apply ${money(allocation.allocatedAmount)} from callsign ${allocation.callsign} (${name}) to their payment plan?\n\n`+
+    `This will post a REAL debit to Autocab and reduce the FleetPay payment-plan balance.\n\n`+
+    `Only continue if the Monday settlement figures have been checked.`
+   )
+  )return;
+
+  setPlanAllocationBusy(allocation.id);
+
+  try{
+   await api(
+    `/api/admin/monday-runs/${activeMonday.id}/plan-allocations/${allocation.id}/apply`,
+    {method:'POST'}
+   );
+
+   await Promise.all([
+    loadMonday(),
+    loadSett(),
+    loadOutstanding(),
+    loadPaymentPlans(),
+    loadOverview()
+   ]);
+
+   alert(
+    `${money(allocation.allocatedAmount)} has been applied to callsign ${allocation.callsign}'s payment plan.`
+   );
+
+  }catch(e){
+   await Promise.all([
+    loadMonday(),
+    loadSett(),
+    loadOutstanding(),
+    loadPaymentPlans(),
+    loadOverview()
+   ]);
+
+   alert(e.message);
+
+  }finally{
+   setPlanAllocationBusy(null);
+  }
+ }
+
  async function approveAllWeekly(){if(!activeMonday||!weeklyPending.length)return;if(!confirm(`Approve all ${weeklyPending.length} pending weekly payouts?`))return;try{await api(`/api/admin/monday-runs/${activeMonday.id}/approve-all`,{method:'POST'});await Promise.all([loadMonday(),loadSett()])}catch(e){alert(e.message)}}
  async function createWeeklyBatch(){if(!activeMonday||!weeklyApproved.length)return;if(!confirm(`Create the Wise payment batch for ${weeklyApproved.length} approved drivers totalling ${money(weeklyApprovedTotal)}? Excluded and pending drivers will not be included.`))return;try{const j=await api(`/api/admin/monday-runs/${activeMonday.id}/create-payout-run`,{method:'POST',body:JSON.stringify({provider:'wise'})});await Promise.all([loadMonday(),loadSett(),loadOverview()]);alert(`Payment batch created: ${j.run.itemCount} drivers · ${money(j.run.totalAmount)}.`)}catch(e){alert(e.message)}}
  async function sendWiseSandbox(r){if(!confirm(`Submit ${r.itemCount} payouts (${money(r.totalAmount)}) to Wise Sandbox? No real money will move.`))return;try{const j=await api(`/api/admin/payout-runs/${r.id}/wise-sandbox`,{method:'POST'});alert(j.message);await loadSett()}catch(e){alert(e.message)}}
@@ -3256,6 +3358,7 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
 <div className="mondayFinanceLabel"><span>OUTGOING</span><b>Driver payouts</b></div>
 <div><span>Before fees</span><b>{money(weeklyPayoutBeforeFees)}</b></div>
 <div><span>Fees & charges</span><b>{money(weeklyPayoutFeesCharges)}</b></div>
+<div><span>Plan deductions</span><b>{money(weeklyPayoutPlanDeductions)}</b></div>
 <div><span>Actual payout</span><b>{money(weeklyApprovedTotal)}</b></div>
 <div><span>Drivers</span><b>{weeklyApproved.length}</b></div>
 </div>
@@ -3273,7 +3376,7 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
 <div><span>Carried forward</span><b>{weeklyCarryForward.length+weeklyPayoutCarryForward.length}</b></div>
 <div><span>Excluded payouts</span><b>{weeklyExcluded.length}</b><small>{money(weeklyExcludedBeforeFees)} before fees</small></div>
 </div>
-</div></section>{activeMondayCancelledBatch&&<div className="operatorWarning blue"><AlertTriangle/><div><b>Previous payment batch cancelled safely</b><span>The payment batch was cancelled before release. The same Monday settlement remains open so the approved drivers can be reviewed, changed and placed into a corrected payment run. No Autocab payout adjustment was posted by the cancellation.</span></div></div>}<section className="panel"><div className="panelHead"><div><h3>Drivers to pay</h3><p>Positive Previous Balances. Only approved drivers are included in the payment run.</p></div><div className="rowActions">{weeklyPending.length>0&&canMoney&&<button className="secondary" onClick={approveAllWeekly}><CheckCircle2/>Approve all pending</button>}{selectedWeeklyPayouts.length>0&&!activeMonday.payoutRunId&&canMoney&&<button className="dangerAction" onClick={excludeSelectedWeekly}>Exclude selected ({selectedWeeklyPayouts.length})</button>}{weeklyApproved.length>0&&!activeMonday.payoutRunId&&canMoney&&<button className="primary" onClick={createWeeklyBatch}><Send/>Create payment run</button>}</div></div>{weeklyItems.length?<div className="tableWrap proTable"><table><thead><tr><th className="selectCol"><input type="checkbox" aria-label="Select all payouts" disabled={Boolean(activeMonday.payoutRunId)} checked={weeklyItems.length>0&&weeklyItems.every(x=>selectedWeeklyPayouts.includes(x.payoutId))} onChange={toggleAllWeeklyPayouts}/></th><th>Driver</th><th>Previous balance</th><th>Weekly fee</th><th>Payout</th><th>Payout account</th><th>Decision</th><th>Actions</th></tr></thead><tbody>{weeklyItems.map(x=><tr key={x.payoutId} className={selectedWeeklyPayouts.includes(x.payoutId)?'selectedPayoutRow':''}><td className="selectCol"><input type="checkbox" aria-label={`Select callsign ${x.callsign}`} disabled={Boolean(activeMonday.payoutRunId)} checked={selectedWeeklyPayouts.includes(x.payoutId)} onChange={()=>toggleWeeklyPayout(x.payoutId)}/></td><td><div className="driverCell"><span className="callsign">{x.callsign}</span><div><b>{x.driverName}</b><small>Driver {x.driverId}</small></div></div></td><td>{money(x.previousBalance)}</td><td>{x.weeklyFeeWaivedInactive?<div><b>{money(0)}</b><small className="reasonText">Fee waived · no work recorded</small></div>:money(x.weeklyFee)}</td><td><b>{money(x.amount)}</b></td><td><Pill tone={bankTone(bankFor(x.driverId))}>{bankFor(x.driverId).label}</Pill></td><td><Pill tone={x.approvalStatus==='approved'?'good':x.approvalStatus==='excluded'?'bad':'warn'}>{x.approvalStatus||'pending'}</Pill>{x.exclusionReason&&<small className="reasonText">{x.exclusionReason}</small>}</td><td><div className="compactActions">{canMoney&&!activeMonday.payoutRunId&&<><button className="mini success" onClick={()=>weeklyDecision(x,'approved')}>Approve</button><button className="mini danger" onClick={()=>weeklyDecision(x,'excluded')}>Exclude</button></>}</div></td></tr>)}</tbody></table></div>:<div className="emptyInline">No payouts are above the minimum payout threshold for this Monday settlement.</div>}{weeklyPayoutCarryForward.length>0&&<div className="carryNote"><Info/> {weeklyPayoutCarryForward.length} positive balance{weeklyPayoutCarryForward.length===1?' is':'s are'} below the minimum payout threshold and will remain on the driver account for a future settlement.</div>}</section><section className="panel"><div className="panelHead"><div><h3>Drivers owing</h3><p>Negative Previous Balances above the configured threshold. These are collection requests, not payout items.</p></div><button className="secondary" onClick={()=>go('outstanding')}>Open full Outstanding view</button></div>{weeklyCollections.length?<div className="tableWrap proTable"><table><thead><tr><th>Driver</th><th>Previous balance</th><th>Weekly fee</th><th>Amount due</th><th>Due</th><th>Communication</th><th>Status</th></tr></thead><tbody>{weeklyCollections.map(x=>{const req=outstanding.find(o=>o.id===x.requestId);return <tr key={x.requestId||x.driverId}><td><div className="driverCell"><span className="callsign">{x.callsign}</span><b>{x.driverName}</b></div></td><td className="negative">{money(x.previousBalance)}</td><td>{x.weeklyFeeWaivedInactive?<div><b>{money(0)}</b><small className="reasonText">Fee waived · no work recorded</small></div>:money(x.weeklyFee)}</td><td><b className="negative">{money(x.amount)}</b></td><td>{req?.dueAt?dt(req.dueAt):'—'}</td><td><div className="compactStatus"><Pill tone={req?.emailSentAt?'good':'warn'}>Email {req?.emailSentAt?'sent':'pending'}</Pill><Pill tone={req?.smsSentAt?'good':'warn'}>SMS {req?.smsSentAt?'sent':'pending'}</Pill></div></td><td><Pill tone={req?.overdue?'bad':statusTone(req?.status||'open')}>{req?.overdue?'overdue':req?.status||'open'}</Pill></td></tr>})}</tbody></table></div>:<div className="emptyInline good"><CheckCircle2/>No drivers are above the outstanding-payment threshold for this run.</div>}{weeklyCarryForward.length>0&&<div className="carryNote"><Info/> {weeklyCarryForward.length} small negative balance{weeklyCarryForward.length===1?' is':'s are'} below the threshold and will be carried forward.</div>}</section></>:<section className="emptyState"><CalendarDays/><h3>No active Monday settlement</h3><p>Once Rent Sheets are complete, create the Monday draft. FleetPay will separate drivers to pay from drivers who owe automatically.</p></section>}<section className="panel"><div className="panelHead"><div><h3>Weekly payment-run history</h3><p>Cancelled runs stay here for audit. They do not represent money sent.</p></div></div><div className="runCards liveRunStack">{sett.payoutRuns.filter(r=>r.runType==='weekly').slice(0,12).map(r=><LiveRunCard key={r.id} r={r}/>)}</div></section></>}
+</div></section>{activeMondayCancelledBatch&&<div className="operatorWarning blue"><AlertTriangle/><div><b>Previous payment batch cancelled safely</b><span>The payment batch was cancelled before release. The same Monday settlement remains open so the approved drivers can be reviewed, changed and placed into a corrected payment run. No Autocab payout adjustment was posted by the cancellation.</span></div></div>}<section className="panel"><div className="panelHead"><div><h3>Payment-plan deductions</h3><p>Amounts reserved from positive Monday balances before driver payouts. These deductions must be applied to Autocab and the FleetPay plan before the payout batch can be created.</p></div><div className="compactStatus"><Pill tone={pendingPlanAllocations.length?'warn':'good'}>{pendingPlanAllocations.length} pending</Pill>{applyingPlanAllocations.length>0&&<Pill tone="warn">{applyingPlanAllocations.length} applying</Pill>}{failedPlanAllocations.length>0&&<Pill tone="bad">{failedPlanAllocations.length} review</Pill>}<Pill tone="good">{appliedPlanAllocations.length} applied</Pill></div></div>{mondayPlanAllocations.length?<><div className="mondayFinanceOther"><div><span>Total deductions</span><b>{money(mondayPlanAllocationTotal)}</b></div><div><span>Applied</span><b>{money(mondayPlanAllocationAppliedTotal)}</b></div><div><span>Remaining</span><b>{money(Math.max(0,mondayPlanAllocationTotal-mondayPlanAllocationAppliedTotal))}</b></div></div><div className="tableWrap proTable"><table><thead><tr><th>Driver</th><th>Instalment</th><th>Monday deduction</th><th>Status</th><th>Details</th><th>Action</th></tr></thead><tbody>{mondayPlanAllocations.map(x=>{const driver=drivers.find(d=>String(d.driverId)===String(x.driverId));return <tr key={x.id}><td><div className="driverCell"><span className="callsign">{x.callsign}</span><div><b>{driver?.fullName||`Driver ${x.driverId}`}</b><small>Payment plan</small></div></div></td><td>{money(x.scheduledAmount)}</td><td><b>{money(x.allocatedAmount)}</b></td><td><Pill tone={x.status==='applied'?'good':x.error?'bad':'warn'}>{x.status}</Pill></td><td>{x.error?<small className="reasonText">{x.error}</small>:x.status==='applied'?<small className="reasonText">Applied to payment plan</small>:x.status==='applying'?<small className="reasonText">Processing or manual review required</small>:<small className="reasonText">Awaiting application</small>}</td><td><div className="compactActions">{canMoney&&!activeMonday.payoutRunId&&x.status==='pending'&&<button className="mini success" disabled={Boolean(planAllocationBusy)} onClick={()=>applyMondayPlanAllocation(x)}>{planAllocationBusy===x.id?'Applying…':'Apply deduction'}</button>}{x.status==='applied'&&<span className="tinyNote">Complete</span>}{x.status==='applying'&&<span className="tinyNote">Review</span>}</div></td></tr>})}</tbody></table></div></>:<div className="emptyInline good"><CheckCircle2/>No payment-plan deductions are required for this Monday settlement.</div>}</section><section className="panel"><div className="panelHead"><div><h3>Drivers to pay</h3><p>Positive Previous Balances. Only approved drivers are included in the payment run.</p></div><div className="rowActions">{weeklyPending.length>0&&canMoney&&<button className="secondary" onClick={approveAllWeekly}><CheckCircle2/>Approve all pending</button>}{selectedWeeklyPayouts.length>0&&!activeMonday.payoutRunId&&canMoney&&<button className="dangerAction" onClick={excludeSelectedWeekly}>Exclude selected ({selectedWeeklyPayouts.length})</button>}{weeklyApproved.length>0&&!activeMonday.payoutRunId&&canMoney&&<button className="primary" onClick={createWeeklyBatch}><Send/>Create payment run</button>}</div></div>{weeklyItems.length?<div className="tableWrap proTable"><table><thead><tr><th className="selectCol"><input type="checkbox" aria-label="Select all payouts" disabled={Boolean(activeMonday.payoutRunId)} checked={weeklyItems.length>0&&weeklyItems.every(x=>selectedWeeklyPayouts.includes(x.payoutId))} onChange={toggleAllWeeklyPayouts}/></th><th>Driver</th><th>Previous balance</th><th>Weekly fee</th><th>Payout</th><th>Payout account</th><th>Decision</th><th>Actions</th></tr></thead><tbody>{weeklyItems.map(x=><tr key={x.payoutId} className={selectedWeeklyPayouts.includes(x.payoutId)?'selectedPayoutRow':''}><td className="selectCol"><input type="checkbox" aria-label={`Select callsign ${x.callsign}`} disabled={Boolean(activeMonday.payoutRunId)} checked={selectedWeeklyPayouts.includes(x.payoutId)} onChange={()=>toggleWeeklyPayout(x.payoutId)}/></td><td><div className="driverCell"><span className="callsign">{x.callsign}</span><div><b>{x.driverName}</b><small>Driver {x.driverId}</small></div></div></td><td>{money(x.previousBalance)}</td><td>{x.weeklyFeeWaivedInactive?<div><b>{money(0)}</b><small className="reasonText">Fee waived · no work recorded</small></div>:money(x.weeklyFee)}</td><td><b>{money(x.amount)}</b></td><td><Pill tone={bankTone(bankFor(x.driverId))}>{bankFor(x.driverId).label}</Pill></td><td><Pill tone={x.approvalStatus==='approved'?'good':x.approvalStatus==='excluded'?'bad':'warn'}>{x.approvalStatus||'pending'}</Pill>{x.exclusionReason&&<small className="reasonText">{x.exclusionReason}</small>}</td><td><div className="compactActions">{canMoney&&!activeMonday.payoutRunId&&<><button className="mini success" onClick={()=>weeklyDecision(x,'approved')}>Approve</button><button className="mini danger" onClick={()=>weeklyDecision(x,'excluded')}>Exclude</button></>}</div></td></tr>)}</tbody></table></div>:<div className="emptyInline">No payouts are above the minimum payout threshold for this Monday settlement.</div>}{weeklyPayoutCarryForward.length>0&&<div className="carryNote"><Info/> {weeklyPayoutCarryForward.length} positive balance{weeklyPayoutCarryForward.length===1?' is':'s are'} below the minimum payout threshold and will remain on the driver account for a future settlement.</div>}</section><section className="panel"><div className="panelHead"><div><h3>Drivers owing</h3><p>Negative Previous Balances above the configured threshold. These are collection requests, not payout items.</p></div><button className="secondary" onClick={()=>go('outstanding')}>Open full Outstanding view</button></div>{weeklyCollections.length?<div className="tableWrap proTable"><table><thead><tr><th>Driver</th><th>Previous balance</th><th>Weekly fee</th><th>Amount due</th><th>Due</th><th>Communication</th><th>Status</th></tr></thead><tbody>{weeklyCollections.map(x=>{const req=outstanding.find(o=>o.id===x.requestId);return <tr key={x.requestId||x.driverId}><td><div className="driverCell"><span className="callsign">{x.callsign}</span><b>{x.driverName}</b></div></td><td className="negative">{money(x.previousBalance)}</td><td>{x.weeklyFeeWaivedInactive?<div><b>{money(0)}</b><small className="reasonText">Fee waived · no work recorded</small></div>:money(x.weeklyFee)}</td><td><b className="negative">{money(x.amount)}</b></td><td>{req?.dueAt?dt(req.dueAt):'—'}</td><td><div className="compactStatus"><Pill tone={req?.emailSentAt?'good':'warn'}>Email {req?.emailSentAt?'sent':'pending'}</Pill><Pill tone={req?.smsSentAt?'good':'warn'}>SMS {req?.smsSentAt?'sent':'pending'}</Pill></div></td><td><Pill tone={req?.overdue?'bad':statusTone(req?.status||'open')}>{req?.overdue?'overdue':req?.status||'open'}</Pill></td></tr>})}</tbody></table></div>:<div className="emptyInline good"><CheckCircle2/>No drivers are above the outstanding-payment threshold for this run.</div>}{weeklyCarryForward.length>0&&<div className="carryNote"><Info/> {weeklyCarryForward.length} small negative balance{weeklyCarryForward.length===1?' is':'s are'} below the threshold and will be carried forward.</div>}</section></>:<section className="emptyState"><CalendarDays/><h3>No active Monday settlement</h3><p>Once Rent Sheets are complete, create the Monday draft. FleetPay will separate drivers to pay from drivers who owe automatically.</p></section>}<section className="panel"><div className="panelHead"><div><h3>Weekly payment-run history</h3><p>Cancelled runs stay here for audit. They do not represent money sent.</p></div></div><div className="runCards liveRunStack">{sett.payoutRuns.filter(r=>r.runType==='weekly').slice(0,12).map(r=><LiveRunCard key={r.id} r={r}/>)}</div></section></>}
     {view==='early'&&<><section className="officePageIntro"><div><span>DAILY PAYOUT CONTROL</span><h2>Early payouts</h2><p>Approve requests individually, batch only approved payments, then reconcile the paid batch back to Autocab.</p></div><div className="rowActions"><button className="secondary" onClick={sendEarlySummary}><Mail/>Send office summary now</button>{canMoney&&sett.earlyPayoutRequests.some(x=>x.status==='approved')&&<button className="primary" onClick={createEarlyBatch}><Send/>Create approved batch</button>}</div></section><section className="summaryBanner"><div><Clock3/><div><b>Today's cutoff: {earlySummary?.cutoff||settings?.earlyPayoutCutoffTime||'11:00'}</b><span>{earlySummary?.summary?.status==='sent'?`Office email sent ${dt(earlySummary.summary.sent_at)}`:'Automatic office summary will send after cutoff.'}</span></div></div><div className="summaryNumbers"><span>{dueEarly.length} requests</span><b>{money(dueEarly.reduce((a,x)=>a+Number(x.netAmount||x.amount||0),0))}</b></div></section><section className="panel"><div className="tableWrap proTable"><table><thead><tr><th>Driver</th><th>Requested</th><th>Fee</th><th>Driver receives</th><th>Payout account</th><th>Due</th><th>Status</th><th>Actions</th></tr></thead><tbody>{sett.earlyPayoutRequests.map(x=><tr key={x.id}><td><div className="driverCell"><span className="callsign">{x.callsign}</span><b>{x.driverName}</b></div></td><td>{money(x.grossAmount)}</td><td>{money(x.fee)}</td><td><b>{money(x.netAmount??x.amount)}</b></td><td><Pill tone={bankTone(bankFor(x.driverId))}>{bankFor(x.driverId).label}</Pill></td><td>{x.eligibleRunDate||'—'}</td><td><Pill tone={statusTone(x.status)}>{x.status}</Pill></td><td><div className="compactActions">{x.status==='requested'&&canMoney&&<><button className="mini success" onClick={()=>reviewEarly(x,'approved')}>Approve</button><button className="mini danger" onClick={()=>reviewEarly(x,'declined')}>Decline</button></>}{x.status==='approved'&&<span className="tinyNote">Ready to batch</span>}</div></td></tr>)}</tbody></table></div></section><section className="panel"><div className="panelHead"><div><h3>Early payout payment runs</h3><p>Review, cancel or complete daily payout runs. A run can only be cancelled before it is submitted to the payment provider.</p></div></div><div className="runCards liveRunStack">{sett.payoutRuns.filter(r=>r.runType==='early').slice(0,12).map(r=><LiveRunCard key={r.id} r={r}/>)}</div></section></>}
     {view==='outstanding'&&<>
 

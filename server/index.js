@@ -131,6 +131,7 @@ CREATE TABLE IF NOT EXISTS driver_payment_plan_instalments (
 
  instalment_number INTEGER NOT NULL,
  amount REAL NOT NULL,
+ paid_amount REAL NOT NULL DEFAULT 0,
  due_at TEXT NOT NULL,
 
  status TEXT NOT NULL DEFAULT 'scheduled',
@@ -373,6 +374,46 @@ CREATE TABLE IF NOT EXISTS fee_ledger (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_fee_source ON fee_ledger(fee_type,source_type,source_id);
 CREATE INDEX IF NOT EXISTS idx_fee_created ON fee_ledger(created_at DESC);
 
+CREATE TABLE IF NOT EXISTS payment_plan_settlement_allocations (
+ id TEXT PRIMARY KEY,
+
+ run_id TEXT NOT NULL,
+ payout_id TEXT,
+ driver_id INTEGER NOT NULL,
+ callsign TEXT,
+
+ plan_id TEXT NOT NULL,
+ instalment_id TEXT NOT NULL,
+ payment_request_id TEXT,
+
+ scheduled_amount REAL NOT NULL,
+ allocated_amount REAL NOT NULL,
+
+ status TEXT NOT NULL DEFAULT 'pending',
+
+ autocab_event_key TEXT NOT NULL,
+ error TEXT,
+
+ created_at TEXT NOT NULL,
+ updated_at TEXT,
+ applied_at TEXT,
+
+ FOREIGN KEY(run_id) REFERENCES settlement_runs(id),
+ FOREIGN KEY(payout_id) REFERENCES payouts(id),
+ FOREIGN KEY(plan_id) REFERENCES driver_payment_plans(id),
+ FOREIGN KEY(instalment_id) REFERENCES driver_payment_plan_instalments(id),
+ FOREIGN KEY(payment_request_id) REFERENCES payment_requests(id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_settlement_allocation_run_instalment
+ ON payment_plan_settlement_allocations(run_id,instalment_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_settlement_allocation_autocab_event
+ ON payment_plan_settlement_allocations(autocab_event_key);
+
+CREATE INDEX IF NOT EXISTS idx_plan_settlement_allocation_status
+ ON payment_plan_settlement_allocations(status);
+
 CREATE TABLE IF NOT EXISTS communications_log (
  id TEXT PRIMARY KEY, channel TEXT NOT NULL, recipient TEXT, template_key TEXT, entity_type TEXT, entity_id TEXT,
  status TEXT NOT NULL, provider_ref TEXT, error TEXT, created_at TEXT NOT NULL
@@ -404,6 +445,8 @@ for (const sql of [
   'ALTER TABLE payment_requests ADD COLUMN payment_plan_instalment_id TEXT',
   'ALTER TABLE payment_requests ADD COLUMN request_type TEXT NOT NULL DEFAULT \'standard\''
 ,
+  'ALTER TABLE driver_payment_plan_instalments ADD COLUMN paid_amount REAL NOT NULL DEFAULT 0',
+  'ALTER TABLE payment_plan_settlement_allocations ADD COLUMN payout_id TEXT',
   'ALTER TABLE driver_cache ADD COLUMN payout_excluded INTEGER NOT NULL DEFAULT 0',
   'ALTER TABLE driver_cache ADD COLUMN payout_exclusion_reason TEXT',
   "ALTER TABLE customer_payments ADD COLUMN autocab_release_status TEXT NOT NULL DEFAULT 'not_required'",
@@ -986,34 +1029,42 @@ app.post('/api/stripe/webhook', express.raw({type:'application/json'}), async (r
             item.id
           );
 
-          try{
-            await settlePaymentRequestInAutocab(item);
+          const isPaymentPlanInstalment=
+            Boolean(
+              item.payment_plan_id &&
+              item.payment_plan_instalment_id
+            );
 
-            audit(
-              null,
-              'system',
-              'stripe',
-              'autocab_payment_adjusted',
-              'payment_request',
-              item.id,
-              {
-                callsign:item.callsign,
-                amount:item.amount
-              }
-            );
-          }catch(e){
-            audit(
-              null,
-              'system',
-              'stripe',
-              'autocab_adjustment_failed',
-              'payment_request',
-              item.id,
-              {
-                callsign:item.callsign,
-                error:e.message
-              }
-            );
+          if(!isPaymentPlanInstalment){
+            try{
+              await settlePaymentRequestInAutocab(item);
+
+              audit(
+                null,
+                'system',
+                'stripe',
+                'autocab_payment_adjusted',
+                'payment_request',
+                item.id,
+                {
+                  callsign:item.callsign,
+                  amount:item.amount
+                }
+              );
+            }catch(e){
+              audit(
+                null,
+                'system',
+                'stripe',
+                'autocab_adjustment_failed',
+                'payment_request',
+                item.id,
+                {
+                  callsign:item.callsign,
+                  error:e.message
+                }
+              );
+            }
           }
 
           audit(
@@ -2424,6 +2475,93 @@ async function postAutocabAdjustment({driverId,callsign,amount,isCredit,descript
   return {ok:true,id:adjustmentId,response,completedAt};
  }catch(e){db.prepare('UPDATE autocab_adjustments SET status=?,error=? WHERE id=?').run('failed',e.message,adjustmentId);throw e}
 }
+
+async function postAutocabAdjustmentSafelyOnce(args){
+ const eventKey=String(args?.eventKey||'').trim();
+
+ if(!eventKey){
+  throw new Error(
+   'A unique Autocab event key is required for a safe one-time adjustment'
+  );
+ }
+
+ const existing=db.prepare(`
+  SELECT *
+  FROM autocab_adjustments
+  WHERE event_key=?
+ `).get(eventKey);
+
+ if(existing?.status==='completed'){
+  return {
+   duplicate:true,
+   existing
+  };
+ }
+
+ if(existing){
+  throw new Error(
+   `Autocab adjustment ${eventKey} is ${existing.status}. `+
+   'FleetPay will not resend it automatically because the previous Autocab outcome may be uncertain. Review the adjustment before retrying.'
+  );
+ }
+
+ return postAutocabAdjustment(args);
+}
+
+async function settlePaymentPlanActivationInAutocab(plan,source){
+ const d=cachedDriver(plan.driver_id);
+ const callsign=plan.callsign||source.callsign||d?.callsign||String(plan.driver_id);
+ const adjustments=[];
+
+ const fee=Number(source.weekly_fee||0);
+ const carried=Number(source.carried_charges||0);
+ const principal=Number(plan.plan_amount||0);
+
+ if(fee>0){
+  adjustments.push(
+   await postAutocabAdjustmentSafelyOnce({
+    driverId:plan.driver_id,
+    callsign,
+    amount:fee,
+    isCredit:false,
+    description:'FleetPay weekly app fee',
+    adjustmentReason:'FleetPay Fee',
+    eventKey:`plan:${plan.id}:activation:fee`
+   })
+  );
+ }
+
+ if(carried>0){
+  adjustments.push(
+   await postAutocabAdjustmentSafelyOnce({
+    driverId:plan.driver_id,
+    callsign,
+    amount:carried,
+    isCredit:false,
+    description:'FleetPay carried charge',
+    adjustmentReason:'FleetPay Carried Charge',
+    eventKey:`plan:${plan.id}:activation:carried`
+   })
+  );
+ }
+
+ if(principal>0){
+  adjustments.push(
+   await postAutocabAdjustmentSafelyOnce({
+    driverId:plan.driver_id,
+    callsign,
+    amount:principal,
+    isCredit:true,
+    description:'FleetPay payment plan activated',
+    adjustmentReason:'FleetPay Payment Plan',
+    eventKey:`plan:${plan.id}:activation:principal`
+   })
+  );
+ }
+
+ return adjustments;
+}
+
 async function settlePayoutInAutocab(item){
  const d=cachedDriver(item.driver_id); const callsign=item.callsign||d?.callsign||String(item.driver_id),settings=getSettings();
  const adjustments=[];
@@ -4988,7 +5126,7 @@ app.post('/api/admin/payout-runs/:id/wise-sandbox',adminAuth,requireStaffRole('a
 app.get('/api/admin/payout-runs/:id/csv',adminAuth,(req,res)=>{const run=db.prepare('SELECT * FROM payout_runs WHERE id=?').get(req.params.id);if(!run)return res.status(404).json({error:'Payout run not found'});const items=db.prepare('SELECT callsign,driver_name,net_amount,amount,type,status FROM payouts WHERE payout_run_id=? ORDER BY CAST(callsign AS INTEGER),callsign').all(run.id);const esc=v=>`"${String(v??'').replaceAll('"','""')}"`;const csv=['Callsign,Driver,Amount,Type,Status',...items.map(x=>[esc(x.callsign),esc(x.driver_name),Number(x.net_amount||x.amount||0).toFixed(2),x.type,x.status].join(','))].join('\n');res.setHeader('Content-Type','text/csv');res.setHeader('Content-Disposition',`attachment; filename=FleetPay-${run.run_type}-${run.id}.csv`);res.send(csv)});
 
 app.post('/api/admin/payment-requests/:id/stripe',adminAuth,requireStaffRole('administrator','finance','office'),async(req,res)=>{try{if(!stripe)return res.status(400).json({error:'Stripe is not configured. Add STRIPE_SECRET_KEY to .env'});const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(req.params.id);if(!item)return res.status(404).json({error:'Payment request not found'});if(item.status==='paid')return res.status(400).json({error:'This payment request is already paid'});const session=await createStripePaymentRequest(item);audit(req,'admin',req.auth.email,'stripe_payment_request_created','payment_request',item.id,{callsign:item.callsign,amount:item.amount,sessionId:session.id});res.json({ok:true,paymentUrl:session.url})}catch(e){res.status(500).json({error:e.message})}});
-app.patch('/api/admin/payment-requests/:id',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(req.params.id);if(!item)return res.status(404).json({error:'Payment request not found'});const status='status'in req.body?String(req.body.status):item.status,url='paymentUrl'in req.body?(req.body.paymentUrl?String(req.body.paymentUrl):null):item.payment_url;const now=new Date().toISOString();db.prepare('UPDATE payment_requests SET status=?,payment_url=?,paid_at=CASE WHEN ?=\'paid\' THEN ? ELSE paid_at END,updated_at=? WHERE id=?').run(status,url,status,now,now,item.id);if(status==='paid'&&item.status!=='paid'){ledger(item.driver_id,'payment_received','debit',Number(item.amount||0),0,'Payment received',item.id,'paid');notify(item.driver_id,'Payment received',`We have received your payment of £${Number(item.amount||0).toFixed(2)}.`,'success',item.id);try{await settlePaymentRequestInAutocab(item);audit(req,'system','autocab','autocab_payment_adjusted','payment_request',item.id,{callsign:item.callsign,amount:item.amount})}catch(e){audit(req,'system','autocab','autocab_adjustment_failed','payment_request',item.id,{callsign:item.callsign,error:e.message})}}audit(req,'admin',req.auth.email,'payment_request_updated','payment_request',item.id,{status,paymentUrl:Boolean(url)});res.json({ok:true,status,paymentUrl:url})});
+app.patch('/api/admin/payment-requests/:id',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(req.params.id);if(!item)return res.status(404).json({error:'Payment request not found'});const status='status'in req.body?String(req.body.status):item.status,url='paymentUrl'in req.body?(req.body.paymentUrl?String(req.body.paymentUrl):null):item.payment_url;const now=new Date().toISOString();db.prepare('UPDATE payment_requests SET status=?,payment_url=?,paid_at=CASE WHEN ?=\'paid\' THEN ? ELSE paid_at END,updated_at=? WHERE id=?').run(status,url,status,now,now,item.id);if(status==='paid'&&item.status!=='paid'){ledger(item.driver_id,'payment_received','debit',Number(item.amount||0),0,'Payment received',item.id,'paid');notify(item.driver_id,'Payment received',`We have received your payment of £${Number(item.amount||0).toFixed(2)}.`,'success',item.id);const isPaymentPlanInstalment=Boolean(item.payment_plan_id&&item.payment_plan_instalment_id);if(isPaymentPlanInstalment){db.prepare("UPDATE payment_requests SET provider=COALESCE(provider,'manual') WHERE id=?").run(item.id);const paidPlanRequest=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(item.id);const progression=progressPaymentPlanAfterPayment(paidPlanRequest,now);audit(req,'staff',req.auth.email,progression?.completed?'payment_plan_completed':'payment_plan_instalment_paid','driver_payment_plan',item.payment_plan_id,progression||{paymentRequestId:item.id,source:'manual'})}else{try{await settlePaymentRequestInAutocab(item);audit(req,'system','autocab','autocab_payment_adjusted','payment_request',item.id,{callsign:item.callsign,amount:item.amount})}catch(e){audit(req,'system','autocab','autocab_adjustment_failed','payment_request',item.id,{callsign:item.callsign,error:e.message})}}}audit(req,'admin',req.auth.email,'payment_request_updated','payment_request',item.id,{status,paymentUrl:Boolean(url)});res.json({ok:true,status,paymentUrl:url})});
 
 app.get('/api/admin/logs',adminAuth,(req,res)=>{const limit=Math.min(500,Math.max(1,Number(req.query.limit||200)));const rows=db.prepare('SELECT id,created_at as createdAt,actor_type as actorType,actor_id as actorId,action,entity_type as entityType,entity_id as entityId,details_json as detailsJson,ip FROM audit_logs ORDER BY id DESC LIMIT ?').all(limit).map(r=>{const details=JSON.parse(r.detailsJson||'{}');let actorId=r.actorId;if(r.actorType==='driver'&&/^\d+$/.test(String(actorId||''))){actorId=cachedDriver(Number(actorId))?.callsign||actorId}return {...r,actorId,details}});res.json({logs:rows})});
 
@@ -5023,14 +5161,200 @@ app.post('/api/admin/communications/test-email',adminAuth,requireStaffRole('admi
 app.post('/api/admin/manual-payment',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{const callsign=String(req.body.callsign||'').trim(),type=String(req.body.type||'pay_in'),amount=Number(req.body.amount||0),reason=String(req.body.reason||'').trim();if(!callsign||!(amount>0)||!['pay_in','payout'].includes(type))return res.status(400).json({error:'Callsign, payment type and amount are required'});const d=cacheRows().find(x=>String(x.callsign)===callsign);if(!d)return res.status(404).json({error:'Callsign not found in FleetPay cache'});const settings=getSettings(),finalReason=reason||(type==='pay_in'?settings.manualPayInReasonDefault:settings.manualPayoutReasonDefault),eventKey=`manual:${Date.now()}:${d.driverId}:${crypto.randomBytes(3).toString('hex')}`;const result=await postAutocabAdjustment({driverId:d.driverId,callsign:d.callsign,amount,isCredit:type==='pay_in',description:finalReason,adjustmentReason:type==='pay_in'?'FleetPay Manual Pay In':'FleetPay Manual Payout',eventKey});audit(req,'staff',req.auth.email,'manual_autocab_payment','driver',d.callsign,{driverId:d.driverId,callsign:d.callsign,type,amount,reason:finalReason});setTimeout(()=>syncAutocab().catch(()=>{}),500);res.json({ok:true,driver:{driverId:d.driverId,callsign:d.callsign,fullName:d.fullName},type,amount,reason:finalReason,result})}catch(e){res.status(500).json({error:e.message})}});
 
 app.post('/api/admin/monday-runs',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{
- const today=londonWindow().date,existing=db.prepare("SELECT * FROM settlement_runs WHERE run_date=? AND status IN ('draft','approved','batched') ORDER BY created_at DESC LIMIT 1").get(today);if(existing)return res.status(409).json({error:'A Monday draft already exists for today. Open Monday Run to continue it.',runId:existing.id});const settings=getSettings(),sync=await syncAutocab(),drivers=sync.drivers,runId=id('run'),createdAt=new Date().toISOString(),items=[];const insP=db.prepare('INSERT INTO payouts(id,run_id,driver_id,callsign,driver_name,gross_balance,weekly_fee,carried_charges,gross_amount,net_amount,amount,type,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)');const insR=db.prepare('INSERT INTO payment_requests(id,run_id,driver_id,callsign,driver_name,balance,weekly_fee,carried_charges,amount,status,created_at,due_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)');const due=nextTuesdayDueLabel(),settledWeekStart=previousMondayWeekStart(today);
- for(const d of drivers){if(d.previousBalance==null)continue;const row=db.prepare('SELECT amount FROM carried_charges WHERE driver_id=?').get(d.driverId),activityRow=db.prepare('SELECT worked FROM driver_weekly_activity WHERE driver_id=? AND week_start=?').get(d.driverId,settledWeekStart),workedThisWeek=Boolean(activityRow?.worked),configuredWeeklyFee=Number(settings.weeklyAppFee||0),chargeInactive=settings.chargeWeeklyFeeWhenInactive!==false,fee=chargeInactive||workedThisWeek?configuredWeeklyFee:0,weeklyFeeWaivedInactive=!chargeInactive&&!workedThisWeek&&configuredWeeklyFee>0,carried=Number(row?.amount||0),base=Number(d.previousBalance||0),adjusted=Number((base-fee-carried).toFixed(2));let action='none',amount=0,payoutId=null,requestId=null,approvalStatus=null;if(adjusted>0.00001){const payoutThreshold=Number(settings.minimumPayoutThreshold||0);if(adjusted+0.00001<payoutThreshold){action='payout_carry_forward';amount=adjusted;db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,?) ON CONFLICT(driver_id) DO UPDATE SET amount=excluded.amount').run(d.driverId,Number((carried+fee).toFixed(2)))}else{action='payout';amount=adjusted;payoutId=id('payout');const cached=cachedDriver(d.driverId),persistentlyExcluded=Boolean(cached?.payoutExcluded),persistentReason=cached?.payoutExclusionReason||'';approvalStatus=persistentlyExcluded?'excluded':'pending';insP.run(payoutId,runId,d.driverId,d.callsign,d.fullName,base,fee,carried,adjusted,adjusted,adjusted,'weekly',persistentlyExcluded?'declined':'pending_approval',createdAt);if(persistentlyExcluded)db.prepare('UPDATE payouts SET decline_reason=?,decision_at=?,decision_by=? WHERE id=?').run(persistentReason,new Date().toISOString(),'persistent_driver_setting',payoutId);db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,0) ON CONFLICT(driver_id) DO UPDATE SET amount=0').run(d.driverId)}}else if(adjusted<-0.00001){const owing=Math.abs(adjusted);amount=owing;if(owing>=Number(settings.negativeThreshold||0)){action='payment_request';requestId=id('request');insR.run(requestId,runId,d.driverId,d.callsign,d.fullName,base,fee,carried,owing,'open',createdAt,due.dueAt);notify(d.driverId,'Payment due',`Your Monday FleetPay settlement has an amount due of £${owing.toFixed(2)}. Payment is due by ${settings.outstandingDueTime||'17:00'} on ${due.label}.`,'warning',requestId);db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,0) ON CONFLICT(driver_id) DO UPDATE SET amount=0').run(d.driverId);setTimeout(()=>{const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(requestId);sendOutstandingCommunications(item,d).catch(()=>{})},50)}else{action='carry_forward';db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,?) ON CONFLICT(driver_id) DO UPDATE SET amount=excluded.amount').run(d.driverId,owing)}}else{action='carry_forward';amount=0;db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,?) ON CONFLICT(driver_id) DO UPDATE SET amount=excluded.amount').run(d.driverId,Number((carried+fee).toFixed(2)))}if(fee>0){ledger(d.driverId,'weekly_fee','debit',fee,fee,'Weekly FleetPay fee',runId,'charged');recordFee({feeType:'weekly',sourceType:'settlement',sourceId:`${runId}:${d.driverId}`,driverId:d.driverId,callsign:d.callsign,description:'Weekly FleetPay fee',amount:fee,createdAt})}items.push({driverId:d.driverId,callsign:d.callsign,driverName:d.fullName,currentBalance:d.currentBalance,previousBalance:base,weeklyFee:fee,configuredWeeklyFee,workedThisWeek,weeklyFeeWaivedInactive,settledWeekStart,carriedCharges:carried,adjustedBalance:adjusted,action,amount,payoutId,requestId,approvalStatus,persistentPayoutExclusion:Boolean(cachedDriver(d.driverId)?.payoutExcluded),exclusionReason:approvalStatus==='excluded'?(cachedDriver(d.driverId)?.payoutExclusionReason||'Persistent payout exclusion'):''})}
- db.prepare('INSERT INTO settlement_runs(id,created_at,status,settings_json,items_json,run_date,created_by) VALUES(?,?,?,?,?,?,?)').run(runId,createdAt,'draft',JSON.stringify(settings),JSON.stringify(items),today,req.auth.email);audit(req,'staff',req.auth.email,'monday_draft_created','settlement_run',runId,{runDate:today,drivers:items.length,payouts:items.filter(x=>x.action==='payout').length,paymentRequests:items.filter(x=>x.action==='payment_request').length,sourceBalance:'previousBalance'});res.json({id:runId,createdAt,status:'draft',runDate:today,items})
+ const today=londonWindow().date,existing=db.prepare("SELECT * FROM settlement_runs WHERE run_date=? AND status IN ('draft','approved','batched') ORDER BY created_at DESC LIMIT 1").get(today);if(existing)return res.status(409).json({error:'A Monday draft already exists for today. Open Monday Run to continue it.',runId:existing.id});const settings=getSettings(),sync=await syncAutocab(),drivers=sync.drivers,runId=id('run'),createdAt=new Date().toISOString(),items=[],allocationRows=[];const insP=db.prepare('INSERT INTO payouts(id,run_id,driver_id,callsign,driver_name,gross_balance,weekly_fee,carried_charges,gross_amount,net_amount,amount,type,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)');const insR=db.prepare('INSERT INTO payment_requests(id,run_id,driver_id,callsign,driver_name,balance,weekly_fee,carried_charges,amount,status,created_at,due_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)');const due=nextTuesdayDueLabel(),settledWeekStart=previousMondayWeekStart(today);
+ for(const d of drivers){if(d.previousBalance==null)continue;const row=db.prepare('SELECT amount FROM carried_charges WHERE driver_id=?').get(d.driverId),activityRow=db.prepare('SELECT worked FROM driver_weekly_activity WHERE driver_id=? AND week_start=?').get(d.driverId,settledWeekStart),workedThisWeek=Boolean(activityRow?.worked),configuredWeeklyFee=Number(settings.weeklyAppFee||0),chargeInactive=settings.chargeWeeklyFeeWhenInactive!==false,fee=chargeInactive||workedThisWeek?configuredWeeklyFee:0,weeklyFeeWaivedInactive=!chargeInactive&&!workedThisWeek&&configuredWeeklyFee>0,carried=Number(row?.amount||0),base=Number(d.previousBalance||0),adjusted=Number((base-fee-carried).toFixed(2)),planSettlement=adjusted>0.00001?paymentPlanSettlementCandidate(d.driverId,adjusted):null,planAllocation=Number(planSettlement?.allocatedAmount||0),payoutAvailable=Number(Math.max(0,adjusted-planAllocation).toFixed(2));let action='none',amount=0,payoutId=null,requestId=null,approvalStatus=null;if(adjusted>0.00001){const payoutThreshold=Number(settings.minimumPayoutThreshold||0);if(payoutAvailable<=0.00001){action='plan_allocation';amount=0;db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,?) ON CONFLICT(driver_id) DO UPDATE SET amount=excluded.amount').run(d.driverId,Number((carried+fee).toFixed(2)))}else if(payoutAvailable+0.00001<payoutThreshold){action='payout_carry_forward';amount=payoutAvailable;db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,?) ON CONFLICT(driver_id) DO UPDATE SET amount=excluded.amount').run(d.driverId,Number((carried+fee).toFixed(2)))}else{action='payout';amount=payoutAvailable;payoutId=id('payout');const cached=cachedDriver(d.driverId),persistentlyExcluded=Boolean(cached?.payoutExcluded),persistentReason=cached?.payoutExclusionReason||'';approvalStatus=persistentlyExcluded?'excluded':'pending';insP.run(payoutId,runId,d.driverId,d.callsign,d.fullName,base,fee,carried,adjusted,payoutAvailable,payoutAvailable,'weekly',persistentlyExcluded?'declined':'pending_approval',createdAt);if(persistentlyExcluded)db.prepare('UPDATE payouts SET decline_reason=?,decision_at=?,decision_by=? WHERE id=?').run(persistentReason,new Date().toISOString(),'persistent_driver_setting',payoutId);db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,0) ON CONFLICT(driver_id) DO UPDATE SET amount=0').run(d.driverId)}}else if(adjusted<-0.00001){const owing=Math.abs(adjusted);amount=owing;if(owing>=Number(settings.negativeThreshold||0)){action='payment_request';requestId=id('request');insR.run(requestId,runId,d.driverId,d.callsign,d.fullName,base,fee,carried,owing,'open',createdAt,due.dueAt);notify(d.driverId,'Payment due',`Your Monday FleetPay settlement has an amount due of £${owing.toFixed(2)}. Payment is due by ${settings.outstandingDueTime||'17:00'} on ${due.label}.`,'warning',requestId);db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,0) ON CONFLICT(driver_id) DO UPDATE SET amount=0').run(d.driverId);setTimeout(()=>{const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(requestId);sendOutstandingCommunications(item,d).catch(()=>{})},50)}else{action='carry_forward';db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,?) ON CONFLICT(driver_id) DO UPDATE SET amount=excluded.amount').run(d.driverId,owing)}}else{action='carry_forward';amount=0;db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,?) ON CONFLICT(driver_id) DO UPDATE SET amount=excluded.amount').run(d.driverId,Number((carried+fee).toFixed(2)))}if(fee>0){ledger(d.driverId,'weekly_fee','debit',fee,fee,'Weekly FleetPay fee',runId,'charged');recordFee({feeType:'weekly',sourceType:'settlement',sourceId:`${runId}:${d.driverId}`,driverId:d.driverId,callsign:d.callsign,description:'Weekly FleetPay fee',amount:fee,createdAt})}items.push({driverId:d.driverId,callsign:d.callsign,driverName:d.fullName,currentBalance:d.currentBalance,previousBalance:base,weeklyFee:fee,configuredWeeklyFee,workedThisWeek,weeklyFeeWaivedInactive,settledWeekStart,carriedCharges:carried,adjustedBalance:adjusted,planAllocation,payoutAvailable,planId:planSettlement?.plan?.id||null,planInstalmentId:planSettlement?.instalment?.id||null,planInstalmentScheduledAmount:Number(planSettlement?.scheduledAmount||0),planInstalmentPaidAmount:Number(planSettlement?.alreadyPaidAmount||0),planInstalmentRemaining:Number(planSettlement?.instalmentRemaining||0),planRemainingAmount:Number(planSettlement?.planRemaining||0),action,amount,payoutId,requestId,approvalStatus,persistentPayoutExclusion:Boolean(cachedDriver(d.driverId)?.payoutExcluded),exclusionReason:approvalStatus==='excluded'?(cachedDriver(d.driverId)?.payoutExclusionReason||'Persistent payout exclusion'):''});if(planSettlement&&planAllocation>0.00001){allocationRows.push({id:id('planalloc'),runId,payoutId,driverId:d.driverId,callsign:d.callsign,planId:planSettlement.plan.id,instalmentId:planSettlement.instalment.id,paymentRequestId:planSettlement.paymentRequestId||null,scheduledAmount:Number(planSettlement.scheduledAmount||0),allocatedAmount:planAllocation,autocabEventKey:`plan:${planSettlement.plan.id}:monday:${runId}:${planSettlement.instalment.id}`,createdAt})}}
+ db.prepare('INSERT INTO settlement_runs(id,created_at,status,settings_json,items_json,run_date,created_by) VALUES(?,?,?,?,?,?,?)').run(runId,createdAt,'draft',JSON.stringify(settings),JSON.stringify(items),today,req.auth.email);const insA=db.prepare(`INSERT INTO payment_plan_settlement_allocations(id,run_id,payout_id,driver_id,callsign,plan_id,instalment_id,payment_request_id,scheduled_amount,allocated_amount,status,autocab_event_key,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`);for(const a of allocationRows){insA.run(a.id,a.runId,a.payoutId,a.driverId,a.callsign,a.planId,a.instalmentId,a.paymentRequestId,a.scheduledAmount,a.allocatedAmount,'pending',a.autocabEventKey,a.createdAt)}audit(req,'staff',req.auth.email,'monday_draft_created','settlement_run',runId,{runDate:today,drivers:items.length,payouts:items.filter(x=>x.action==='payout').length,paymentRequests:items.filter(x=>x.action==='payment_request').length,sourceBalance:'previousBalance'});res.json({id:runId,createdAt,status:'draft',runDate:today,items})
  }catch(e){res.status(500).json({error:e.message})}});
 app.get('/api/admin/monday-runs',adminAuth,(req,res)=>{const runs=db.prepare("SELECT * FROM settlement_runs WHERE run_date IS NOT NULL ORDER BY created_at DESC LIMIT 40").all().map(r=>({id:r.id,createdAt:r.created_at,status:r.status,runDate:r.run_date,createdBy:r.created_by,approvedAt:r.approved_at,payoutRunId:r.payout_run_id,settings:JSON.parse(r.settings_json||'{}'),items:JSON.parse(r.items_json||'[]')}));res.json({runs})});
+
+app.get(
+ '/api/admin/monday-runs/:runId/plan-allocations',
+ adminAuth,
+ requireStaffRole('administrator','finance','office'),
+ (req,res)=>{
+  const run=db.prepare(`
+   SELECT *
+   FROM settlement_runs
+   WHERE id=?
+  `).get(req.params.runId);
+
+  if(!run){
+   return res.status(404).json({
+    error:'Monday run not found'
+   });
+  }
+
+  const allocations=db.prepare(`
+   SELECT *
+   FROM payment_plan_settlement_allocations
+   WHERE run_id=?
+   ORDER BY CAST(callsign AS INTEGER), callsign, created_at
+  `).all(req.params.runId).map(x=>({
+   id:x.id,
+   runId:x.run_id,
+   payoutId:x.payout_id||null,
+   driverId:x.driver_id,
+   callsign:x.callsign,
+   planId:x.plan_id,
+   instalmentId:x.instalment_id,
+   paymentRequestId:x.payment_request_id||null,
+   scheduledAmount:Number(x.scheduled_amount||0),
+   allocatedAmount:Number(x.allocated_amount||0),
+   status:x.status,
+   autocabEventKey:x.autocab_event_key,
+   error:x.error||null,
+   createdAt:x.created_at,
+   updatedAt:x.updated_at||null,
+   appliedAt:x.applied_at||null
+  }));
+
+  res.json({
+   runId:run.id,
+   runDate:run.run_date,
+   runStatus:run.status,
+   allocations
+  });
+ }
+);
+
+
+app.post(
+ '/api/admin/monday-runs/:runId/plan-allocations/:allocationId/apply',
+ adminAuth,
+ requireStaffRole('administrator','finance'),
+ async(req,res)=>{
+  try{
+   const run=db.prepare(`
+    SELECT *
+    FROM settlement_runs
+    WHERE id=?
+   `).get(req.params.runId);
+
+   if(!run){
+    return res.status(404).json({
+     error:'Monday run not found'
+    });
+   }
+
+   if(run.status==='batched' || run.payout_run_id){
+    return res.status(409).json({
+     error:'Payment-plan deductions cannot be changed after the Monday run has been batched.'
+    });
+   }
+
+   const allocation=db.prepare(`
+    SELECT *
+    FROM payment_plan_settlement_allocations
+    WHERE id=?
+      AND run_id=?
+   `).get(
+    req.params.allocationId,
+    req.params.runId
+   );
+
+   if(!allocation){
+    return res.status(404).json({
+     error:'Payment-plan allocation not found for this Monday run'
+    });
+   }
+
+   const result=await applyMondayPlanSettlementAllocation(
+    allocation.id
+   );
+
+   const updated=db.prepare(`
+    SELECT *
+    FROM payment_plan_settlement_allocations
+    WHERE id=?
+   `).get(allocation.id);
+
+   const unresolvedAllocations=db.prepare(`
+    SELECT COUNT(*) count
+    FROM payment_plan_settlement_allocations
+    WHERE run_id=?
+      AND status!='applied'
+   `).get(run.id)?.count||0;
+
+   const weeklyPayoutCount=db.prepare(`
+    SELECT COUNT(*) count
+    FROM payouts
+    WHERE run_id=?
+      AND type='weekly'
+   `).get(run.id)?.count||0;
+
+   if(
+    unresolvedAllocations===0 &&
+    weeklyPayoutCount===0
+   ){
+    db.prepare(`
+     UPDATE settlement_runs
+     SET status='completed'
+     WHERE id=?
+       AND status IN ('draft','approved')
+    `).run(run.id);
+   }
+
+   audit(
+    req,
+    'staff',
+    req.auth.email,
+    'monday_payment_plan_allocation_applied',
+    'driver_payment_plan',
+    allocation.plan_id,
+    {
+     runId:allocation.run_id,
+     allocationId:allocation.id,
+     instalmentId:allocation.instalment_id,
+     callsign:allocation.callsign,
+     amount:Number(allocation.allocated_amount||0),
+     duplicate:Boolean(result?.duplicate)
+    }
+   );
+
+   res.json({
+    ok:true,
+    result,
+    allocation:{
+     id:updated.id,
+     runId:updated.run_id,
+     payoutId:updated.payout_id||null,
+     driverId:updated.driver_id,
+     callsign:updated.callsign,
+     planId:updated.plan_id,
+     instalmentId:updated.instalment_id,
+     paymentRequestId:updated.payment_request_id||null,
+     allocatedAmount:Number(updated.allocated_amount||0),
+     status:updated.status,
+     error:updated.error||null,
+     updatedAt:updated.updated_at||null,
+     appliedAt:updated.applied_at||null
+    }
+   });
+
+  }catch(e){
+   audit(
+    req,
+    'staff',
+    req.auth.email,
+    'monday_payment_plan_allocation_failed',
+    'payment_plan_settlement_allocation',
+    req.params.allocationId,
+    {
+     runId:req.params.runId,
+     error:e.message
+    }
+   );
+
+   res.status(409).json({
+    error:e.message
+   });
+  }
+ }
+);
+
 app.patch('/api/admin/monday-runs/:runId/payouts/:payoutId',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const status=String(req.body.status||''),reason=String(req.body.reason||'').trim();if(!['approved','excluded','pending'].includes(status))return res.status(400).json({error:'Invalid approval status'});if(status==='excluded'&&!reason)return res.status(400).json({error:'Enter a reason for excluding this driver'});const pmt=db.prepare('SELECT * FROM payouts WHERE id=? AND run_id=? AND type=\'weekly\'').get(req.params.payoutId,req.params.runId);if(!pmt)return res.status(404).json({error:'Weekly payout not found'});if(pmt.payout_run_id)return res.status(400).json({error:'This payout is already locked into a payment run'});const driver=cachedDriver(pmt.driver_id);if(status==='approved'&&driver?.payoutExcluded)return res.status(400).json({error:`Callsign ${pmt.callsign} is permanently excluded from payouts. Enable payouts on the Drivers page first.`});const dbStatus=status==='approved'?'approved':status==='excluded'?'declined':'pending_approval';db.prepare('UPDATE payouts SET status=?,decline_reason=?,decision_at=?,decision_by=?,updated_at=? WHERE id=?').run(dbStatus,status==='excluded'?reason:null,status==='pending'?null:new Date().toISOString(),status==='pending'?null:req.auth.email,new Date().toISOString(),pmt.id);const items=updateRunItem(req.params.runId,pmt.id,status,reason);audit(req,'staff',req.auth.email,'weekly_payout_approval_changed','payout',pmt.id,{runId:req.params.runId,callsign:pmt.callsign,status,reason});res.json({ok:true,items})});
 app.post('/api/admin/monday-runs/:runId/approve-all',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const rows=db.prepare("SELECT * FROM payouts WHERE run_id=? AND type='weekly' AND status='pending_approval' AND payout_run_id IS NULL").all(req.params.runId),now=new Date().toISOString();const up=db.prepare("UPDATE payouts SET status='approved',decision_at=?,decision_by=?,updated_at=? WHERE id=?");for(const r of rows){up.run(now,req.auth.email,now,r.id);updateRunItem(req.params.runId,r.id,'approved','')}db.prepare("UPDATE settlement_runs SET status='approved',approved_at=? WHERE id=?").run(now,req.params.runId);audit(req,'staff',req.auth.email,'weekly_payouts_approved_all','settlement_run',req.params.runId,{count:rows.length});res.json({ok:true,count:rows.length})});
-app.post('/api/admin/monday-runs/:runId/create-payout-run',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const settlement=db.prepare('SELECT * FROM settlement_runs WHERE id=?').get(req.params.runId);if(!settlement)return res.status(404).json({error:'Monday run not found'});if(settlement.payout_run_id)return res.status(409).json({error:'A payout batch has already been created for this Monday run',payoutRunId:settlement.payout_run_id});const eligible=db.prepare("SELECT * FROM payouts WHERE run_id=? AND type='weekly' AND status='approved' AND payout_run_id IS NULL ORDER BY CAST(callsign AS INTEGER),callsign").all(req.params.runId);if(!eligible.length)return res.status(400).json({error:'No approved weekly payouts are ready'});const runId=id('payrun'),now=new Date().toISOString(),total=eligible.reduce((a,x)=>a+Number(x.net_amount||x.amount||0),0);db.prepare('INSERT INTO payout_runs(id,run_type,status,created_at,created_by,scheduled_for,total_amount,item_count,provider,notes,funding_status,funding_required) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(runId,'weekly','ready',now,req.auth.email,now,total,eligible.length,String(req.body.provider||'wise'),`Monday run ${settlement.id}`,'not_started',total);const up=db.prepare("UPDATE payouts SET payout_run_id=?,status='batched',updated_at=? WHERE id=?");for(const x of eligible)up.run(runId,now,x.id);db.prepare("UPDATE settlement_runs SET status='batched',payout_run_id=? WHERE id=?").run(runId,settlement.id);audit(req,'staff',req.auth.email,'weekly_payout_run_created','payout_run',runId,{settlementRunId:settlement.id,itemCount:eligible.length,totalAmount:total,callsigns:eligible.map(x=>x.callsign)});res.json({run:serializePayoutRun(db.prepare('SELECT * FROM payout_runs WHERE id=?').get(runId)),items:eligible.map(x=>({id:x.id,callsign:x.callsign,driverName:x.driver_name,amount:Number(x.net_amount||x.amount||0)}))})});
+app.post('/api/admin/monday-runs/:runId/create-payout-run',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const settlement=db.prepare('SELECT * FROM settlement_runs WHERE id=?').get(req.params.runId);if(!settlement)return res.status(404).json({error:'Monday run not found'});if(settlement.payout_run_id)return res.status(409).json({error:'A payout batch has already been created for this Monday run',payoutRunId:settlement.payout_run_id});const unresolvedPlanAllocations=db.prepare("SELECT COUNT(*) count FROM payment_plan_settlement_allocations WHERE run_id=? AND status!='applied'").get(req.params.runId)?.count||0;if(unresolvedPlanAllocations>0)return res.status(409).json({error:`Apply the ${unresolvedPlanAllocations} pending payment-plan deduction${unresolvedPlanAllocations===1?'':'s'} before creating the payout batch.`,pendingPlanAllocations:unresolvedPlanAllocations});const eligible=db.prepare("SELECT * FROM payouts WHERE run_id=? AND type='weekly' AND status='approved' AND payout_run_id IS NULL ORDER BY CAST(callsign AS INTEGER),callsign").all(req.params.runId);if(!eligible.length)return res.status(400).json({error:'No approved weekly payouts are ready'});const runId=id('payrun'),now=new Date().toISOString(),total=eligible.reduce((a,x)=>a+Number(x.net_amount||x.amount||0),0);db.prepare('INSERT INTO payout_runs(id,run_type,status,created_at,created_by,scheduled_for,total_amount,item_count,provider,notes,funding_status,funding_required) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(runId,'weekly','ready',now,req.auth.email,now,total,eligible.length,String(req.body.provider||'wise'),`Monday run ${settlement.id}`,'not_started',total);const up=db.prepare("UPDATE payouts SET payout_run_id=?,status='batched',updated_at=? WHERE id=?");for(const x of eligible)up.run(runId,now,x.id);db.prepare("UPDATE settlement_runs SET status='batched',payout_run_id=? WHERE id=?").run(runId,settlement.id);audit(req,'staff',req.auth.email,'weekly_payout_run_created','payout_run',runId,{settlementRunId:settlement.id,itemCount:eligible.length,totalAmount:total,callsigns:eligible.map(x=>x.callsign)});res.json({run:serializePayoutRun(db.prepare('SELECT * FROM payout_runs WHERE id=?').get(runId)),items:eligible.map(x=>({id:x.id,callsign:x.callsign,driverName:x.driver_name,amount:Number(x.net_amount||x.amount||0)}))})});
 
 
 /* ============================================================
@@ -5085,7 +5409,666 @@ function paymentPlanAddDate(startDate,step,frequency){
 }
 
 
-function progressPaymentPlanAfterPayment(paymentRequest,paidAt){
+function paymentPlanSettlementCandidate(driverId,availableAmount){
+ const available=
+  Number(
+   Math.max(
+    0,
+    Number(availableAmount||0)
+   ).toFixed(2)
+  );
+
+ if(available<=0.00001){
+  return null;
+ }
+
+ const plan=db.prepare(`
+  SELECT *
+  FROM driver_payment_plans
+  WHERE driver_id=?
+    AND status IN ('active','defaulted')
+  ORDER BY created_at DESC
+  LIMIT 1
+ `).get(driverId);
+
+ if(!plan){
+  return null;
+ }
+
+ const instalment=db.prepare(`
+  SELECT *
+  FROM driver_payment_plan_instalments
+  WHERE plan_id=?
+    AND status IN ('due','overdue')
+  ORDER BY instalment_number
+  LIMIT 1
+ `).get(plan.id);
+
+ if(!instalment){
+  return null;
+ }
+
+ const scheduledAmount=Number(instalment.amount||0);
+ const alreadyPaidAmount=Number(instalment.paid_amount||0);
+
+ const instalmentRemaining=
+  Number(
+   Math.max(
+    0,
+    scheduledAmount-alreadyPaidAmount
+   ).toFixed(2)
+  );
+
+ const planRemaining=
+  Number(
+   Math.max(
+    0,
+    Number(plan.remaining_amount||0)
+   ).toFixed(2)
+  );
+
+ const allocatedAmount=
+  Number(
+   Math.min(
+    available,
+    instalmentRemaining,
+    planRemaining
+   ).toFixed(2)
+  );
+
+ if(allocatedAmount<=0.00001){
+  return null;
+ }
+
+ return {
+  plan,
+  instalment,
+  paymentRequestId:instalment.payment_request_id||null,
+  scheduledAmount,
+  alreadyPaidAmount,
+  instalmentRemaining,
+  planRemaining,
+  allocatedAmount
+ };
+}
+
+
+
+
+async function applyMondayPlanSettlementAllocation(allocationId){
+ let allocation=db.prepare(`
+  SELECT *
+  FROM payment_plan_settlement_allocations
+  WHERE id=?
+ `).get(allocationId);
+
+ if(!allocation){
+  throw new Error(
+   `Payment-plan settlement allocation ${allocationId} was not found`
+  );
+ }
+
+ if(allocation.status==='applied'){
+  return {
+   duplicate:true,
+   allocationId:allocation.id,
+   planId:allocation.plan_id,
+   instalmentId:allocation.instalment_id,
+   allocatedAmount:Number(allocation.allocated_amount||0)
+  };
+ }
+
+ if(!['pending','applying'].includes(allocation.status)){
+  throw new Error(
+   `Payment-plan settlement allocation cannot be applied from status ${allocation.status}`
+  );
+ }
+
+ const plan=db.prepare(`
+  SELECT *
+  FROM driver_payment_plans
+  WHERE id=?
+ `).get(allocation.plan_id);
+
+ if(!plan){
+  throw new Error(
+   `Payment plan ${allocation.plan_id} was not found`
+  );
+ }
+
+ if(!['active','defaulted'].includes(plan.status)){
+  throw new Error(
+   `Payment plan is no longer available for Monday allocation: ${plan.status}`
+  );
+ }
+
+ const instalment=db.prepare(`
+  SELECT *
+  FROM driver_payment_plan_instalments
+  WHERE id=?
+    AND plan_id=?
+ `).get(
+  allocation.instalment_id,
+  plan.id
+ );
+
+ if(!instalment){
+  throw new Error(
+   'Payment-plan instalment could not be found'
+  );
+ }
+
+ if(!['due','overdue'].includes(instalment.status)){
+  throw new Error(
+   `Payment-plan instalment is no longer due: ${instalment.status}`
+  );
+ }
+
+ const currentDue=db.prepare(`
+  SELECT *
+  FROM driver_payment_plan_instalments
+  WHERE plan_id=?
+    AND status IN ('due','overdue')
+  ORDER BY instalment_number
+  LIMIT 1
+ `).get(plan.id);
+
+ if(!currentDue || currentDue.id!==instalment.id){
+  throw new Error(
+   'The Monday allocation is stale because this is no longer the current payment-plan instalment'
+  );
+ }
+
+ const scheduledAmount=Number(instalment.amount||0);
+ const alreadyPaidAmount=Number(instalment.paid_amount||0);
+
+ const instalmentRemaining=Number(
+  Math.max(
+   0,
+   scheduledAmount-alreadyPaidAmount
+  ).toFixed(2)
+ );
+
+ const planRemaining=Number(
+  Math.max(
+   0,
+   Number(plan.remaining_amount||0)
+  ).toFixed(2)
+ );
+
+ const allocatedAmount=Number(
+  Number(allocation.allocated_amount||0).toFixed(2)
+ );
+
+ if(allocatedAmount<=0.00001){
+  throw new Error(
+   'Payment-plan settlement allocation amount must be greater than zero'
+  );
+ }
+
+ if(
+  allocatedAmount-instalmentRemaining>0.00001 ||
+  allocatedAmount-planRemaining>0.00001
+ ){
+  throw new Error(
+   'The Monday allocation is stale because the payment-plan balance has changed'
+  );
+ }
+
+ let currentRequest=null;
+
+ if(instalment.payment_request_id){
+  currentRequest=db.prepare(`
+   SELECT *
+   FROM payment_requests
+   WHERE id=?
+  `).get(instalment.payment_request_id);
+ }
+
+ if(!currentRequest){
+  throw new Error(
+   'The current payment-plan instalment has no payment request. Review the plan before applying the Monday deduction.'
+  );
+ }
+
+ if(currentRequest.status==='paid'){
+  throw new Error(
+   'The current payment request is already paid. Refresh the Monday run before applying this deduction.'
+  );
+ }
+
+ if(currentRequest){
+  await safelyExpirePlanPaymentSession(currentRequest);
+ }
+
+ const now=new Date().toISOString();
+
+ if(allocation.status==='pending'){
+  const claimed=db.prepare(`
+   UPDATE payment_plan_settlement_allocations
+   SET status='applying',
+       error=NULL,
+       updated_at=?
+   WHERE id=?
+     AND status='pending'
+  `).run(
+   now,
+   allocation.id
+  );
+
+  if(Number(claimed.changes||0)!==1){
+   throw new Error(
+    `Payment-plan settlement allocation ${allocation.id} could not be claimed for processing`
+   );
+  }
+
+  allocation=db.prepare(`
+   SELECT *
+   FROM payment_plan_settlement_allocations
+   WHERE id=?
+  `).get(allocation.id);
+ }
+
+ try{
+  await postAutocabAdjustmentSafelyOnce({
+   driverId:allocation.driver_id,
+   callsign:allocation.callsign||plan.callsign||String(allocation.driver_id),
+   amount:allocatedAmount,
+   isCredit:false,
+   description:'FleetPay Monday payment plan deduction',
+   adjustmentReason:'FleetPay Payment Plan',
+   eventKey:allocation.autocab_event_key
+  });
+
+  const latestPlan=db.prepare(`
+   SELECT *
+   FROM driver_payment_plans
+   WHERE id=?
+  `).get(plan.id);
+
+  const latestInstalment=db.prepare(`
+   SELECT *
+   FROM driver_payment_plan_instalments
+   WHERE id=?
+     AND plan_id=?
+  `).get(
+   instalment.id,
+   plan.id
+  );
+
+  if(
+   !latestPlan ||
+   !latestInstalment ||
+   !['active','defaulted'].includes(latestPlan.status) ||
+   !['due','overdue'].includes(latestInstalment.status)
+  ){
+   throw new Error(
+    'Autocab deduction completed but the payment plan changed before FleetPay progression. Manual review is required.'
+   );
+  }
+
+  const latestRemaining=Number(
+   Math.max(
+    0,
+    Number(latestInstalment.amount||0)-
+    Number(latestInstalment.paid_amount||0)
+   ).toFixed(2)
+  );
+
+  let progression;
+
+  if(allocatedAmount+0.00001<latestRemaining){
+   progression=await applyPartialMondayPlanAllocation(
+    allocation
+   );
+  }else{
+   const request=db.prepare(`
+    SELECT *
+    FROM payment_requests
+    WHERE id=?
+   `).get(latestInstalment.payment_request_id);
+
+   if(!request){
+    throw new Error(
+     'Autocab deduction completed but the payment request is missing. Manual review is required.'
+    );
+   }
+
+   progression=progressPaymentPlanAfterPayment(
+    {
+     ...request,
+     amount:latestRemaining,
+     provider:'monday_settlement',
+     provider_session_id:null,
+     provider_payment_intent_id:null,
+     payment_url:null
+    },
+    now,
+    {
+     allocationId:allocation.id,
+     actorId:'monday_settlement'
+    }
+   );
+  }
+
+  return {
+   ok:true,
+   allocationId:allocation.id,
+   allocatedAmount,
+   progression
+  };
+
+ }catch(e){
+  const latest=db.prepare(`
+   SELECT *
+   FROM payment_plan_settlement_allocations
+   WHERE id=?
+  `).get(allocation.id);
+
+  if(latest?.status!=='applied'){
+   db.prepare(`
+    UPDATE payment_plan_settlement_allocations
+    SET error=?,
+        updated_at=?
+    WHERE id=?
+   `).run(
+    e.message,
+    new Date().toISOString(),
+    allocation.id
+   );
+  }
+
+  throw e;
+ }
+}
+
+async function applyPartialMondayPlanAllocation(allocation){
+ const plan=db.prepare(`
+  SELECT *
+  FROM driver_payment_plans
+  WHERE id=?
+ `).get(allocation.plan_id);
+
+ if(!plan){
+  throw new Error(`Payment plan ${allocation.plan_id} was not found`);
+ }
+
+ if(!['active','defaulted'].includes(plan.status)){
+  throw new Error(
+   `Payment plan is not available for Monday allocation: ${plan.status}`
+  );
+ }
+
+ const instalment=db.prepare(`
+  SELECT *
+  FROM driver_payment_plan_instalments
+  WHERE id=?
+    AND plan_id=?
+ `).get(
+  allocation.instalment_id,
+  plan.id
+ );
+
+ if(!instalment){
+  throw new Error('Payment plan instalment could not be found');
+ }
+
+ if(!['due','overdue'].includes(instalment.status)){
+  throw new Error(
+   `Payment plan instalment is no longer due: ${instalment.status}`
+  );
+ }
+
+ const scheduledAmount=Number(instalment.amount||0);
+ const alreadyPaidAmount=Number(instalment.paid_amount||0);
+ const instalmentRemaining=Number(
+  Math.max(0,scheduledAmount-alreadyPaidAmount).toFixed(2)
+ );
+
+ const requestedAmount=Number(allocation.allocated_amount||0);
+ const paidAmount=Number(
+  Math.min(
+   requestedAmount,
+   instalmentRemaining,
+   Number(plan.remaining_amount||0)
+  ).toFixed(2)
+ );
+
+ if(paidAmount<=0.00001){
+  throw new Error('No payment-plan balance remains to allocate');
+ }
+
+ if(paidAmount+0.00001>=instalmentRemaining){
+  throw new Error(
+   'Partial Monday allocation helper received a full instalment payment'
+  );
+ }
+
+ let currentRequest=null;
+
+ if(instalment.payment_request_id){
+  currentRequest=db.prepare(`
+   SELECT *
+   FROM payment_requests
+   WHERE id=?
+  `).get(instalment.payment_request_id);
+ }
+
+ if(currentRequest){
+  await safelyExpirePlanPaymentSession(currentRequest);
+ }
+
+ const newInstalmentPaidAmount=Number(
+  (alreadyPaidAmount+paidAmount).toFixed(2)
+ );
+
+ const newPlanPaidAmount=Number(
+  Math.min(
+   Number(plan.plan_amount||0),
+   Number(plan.paid_amount||0)+paidAmount
+  ).toFixed(2)
+ );
+
+ const newPlanRemaining=Number(
+  Math.max(
+   0,
+   Number(plan.plan_amount||0)-newPlanPaidAmount
+  ).toFixed(2)
+ );
+
+ const requestAmount=Number(
+  Math.max(
+   0,
+   scheduledAmount-newInstalmentPaidAmount
+  ).toFixed(2)
+ );
+
+ const now=new Date().toISOString();
+ const requestId=currentRequest?.id||id('request');
+
+ db.exec('BEGIN IMMEDIATE');
+
+ try{
+  db.prepare(`
+   UPDATE driver_payment_plan_instalments
+   SET paid_amount=?,
+       payment_request_id=?,
+       payment_url=NULL,
+       provider=NULL,
+       provider_session_id=NULL,
+       provider_payment_intent_id=NULL,
+       updated_at=?
+   WHERE id=?
+     AND status IN ('due','overdue')
+  `).run(
+   newInstalmentPaidAmount,
+   requestId,
+   now,
+   instalment.id
+  );
+
+  if(currentRequest){
+   db.prepare(`
+    UPDATE payment_requests
+    SET balance=?,
+        amount=?,
+        weekly_fee=0,
+        carried_charges=0,
+        status='open',
+        payment_url=NULL,
+        provider=NULL,
+        provider_session_id=NULL,
+        provider_payment_intent_id=NULL,
+        updated_at=?
+    WHERE id=?
+   `).run(
+    -newPlanRemaining,
+    requestAmount,
+    now,
+    requestId
+   );
+  }else{
+   db.prepare(`
+    INSERT INTO payment_requests(
+     id,
+     run_id,
+     driver_id,
+     callsign,
+     driver_name,
+     balance,
+     weekly_fee,
+     carried_charges,
+     amount,
+     status,
+     payment_url,
+     created_at,
+     updated_at,
+     due_at,
+     payment_plan_id,
+     payment_plan_instalment_id,
+     request_type
+    )
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+   `).run(
+    requestId,
+    null,
+    plan.driver_id,
+    plan.callsign,
+    plan.driver_name,
+    -newPlanRemaining,
+    0,
+    0,
+    requestAmount,
+    'open',
+    null,
+    now,
+    now,
+    instalment.due_at,
+    plan.id,
+    instalment.id,
+    'payment_plan_instalment'
+   );
+  }
+
+  db.prepare(`
+   UPDATE driver_payment_plans
+   SET paid_amount=?,
+       remaining_amount=?,
+       updated_at=?
+   WHERE id=?
+  `).run(
+   newPlanPaidAmount,
+   newPlanRemaining,
+   now,
+   plan.id
+  );
+
+  db.prepare(`
+   INSERT INTO driver_payment_plan_events(
+    id,
+    plan_id,
+    driver_id,
+    event_type,
+    description,
+    actor_type,
+    actor_id,
+    metadata_json,
+    created_at
+   )
+   VALUES(?,?,?,?,?,?,?,?,?)
+  `).run(
+   id('planevent'),
+   plan.id,
+   plan.driver_id,
+   'monday_partial_allocation',
+   `£${paidAmount.toFixed(2)} applied from Monday settlement`,
+   'system',
+   'monday_settlement',
+   JSON.stringify({
+    allocationId:allocation.id,
+    instalmentId:instalment.id,
+    paymentRequestId:requestId,
+    amount:paidAmount,
+    instalmentPaidAmount:newInstalmentPaidAmount,
+    instalmentRemaining:requestAmount,
+    planPaidAmount:newPlanPaidAmount,
+    planRemainingAmount:newPlanRemaining
+   }),
+   now
+  );
+
+  const allocationUpdate=db.prepare(`
+   UPDATE payment_plan_settlement_allocations
+   SET status='applied',
+       payment_request_id=?,
+       error=NULL,
+       updated_at=?,
+       applied_at=?
+   WHERE id=?
+     AND status='applying'
+  `).run(
+   requestId,
+   now,
+   now,
+   allocation.id
+  );
+
+  if(Number(allocationUpdate.changes||0)!==1){
+   throw new Error(
+    `Payment-plan allocation ${allocation.id} is not in applying state`
+   );
+  }
+
+  db.exec('COMMIT');
+
+ }catch(e){
+  try{db.exec('ROLLBACK')}catch{}
+  throw e;
+ }
+
+ notify(
+  plan.driver_id,
+  'Payment plan payment applied',
+  `£${paidAmount.toFixed(2)} from your Monday FleetPay balance has been applied to your payment plan. £${requestAmount.toFixed(2)} remains due on this instalment.`,
+  'success',
+  plan.id
+ );
+
+ return {
+  completed:false,
+  partial:true,
+  planId:plan.id,
+  instalmentId:instalment.id,
+  paymentRequestId:requestId,
+  allocatedAmount:paidAmount,
+  instalmentPaidAmount:newInstalmentPaidAmount,
+  instalmentRemaining:requestAmount,
+  planPaidAmount:newPlanPaidAmount,
+  planRemainingAmount:newPlanRemaining
+ };
+}
+
+function progressPaymentPlanAfterPayment(paymentRequest,paidAt,options={}){
  if(
   !paymentRequest?.payment_plan_id ||
   !paymentRequest?.payment_plan_instalment_id
@@ -5140,7 +6123,37 @@ function progressPaymentPlanAfterPayment(paymentRequest,paidAt){
   );
  }
 
- const paidAmount=Number(instalment.amount||0);
+ const scheduledAmount=Number(instalment.amount||0);
+ const alreadyPaidAmount=Number(instalment.paid_amount||0);
+ const instalmentRemaining=
+  Number(
+   Math.max(
+    0,
+    scheduledAmount-alreadyPaidAmount
+   ).toFixed(2)
+  );
+
+ const paidAmount=
+  Number(
+   Math.min(
+    instalmentRemaining,
+    Number(paymentRequest.amount||0)
+   ).toFixed(2)
+  );
+
+ const newInstalmentPaidAmount=
+  Number(
+   Math.min(
+    scheduledAmount,
+    alreadyPaidAmount+paidAmount
+   ).toFixed(2)
+  );
+
+ if(newInstalmentPaidAmount+0.00001<scheduledAmount){
+  throw new Error(
+   `Payment of £${paidAmount.toFixed(2)} does not fully satisfy the remaining £${instalmentRemaining.toFixed(2)} instalment balance`
+  );
+ }
 
  const newPaidAmount=
   Number(
@@ -5159,6 +6172,7 @@ function progressPaymentPlanAfterPayment(paymentRequest,paidAt){
   );
 
  const now=paidAt||new Date().toISOString();
+ const progressionActorId=String(options?.actorId||'stripe');
 
  const next=db.prepare(`
   SELECT *
@@ -5178,9 +6192,33 @@ function progressPaymentPlanAfterPayment(paymentRequest,paidAt){
  db.exec('BEGIN IMMEDIATE');
 
  try{
+  if(options?.allocationId){
+   db.prepare(`
+    UPDATE payment_requests
+    SET status='paid',
+        provider=?,
+        provider_session_id=NULL,
+        provider_payment_intent_id=NULL,
+        payment_url=NULL,
+        paid_at=?,
+        updated_at=?
+    WHERE id=?
+      AND payment_plan_id=?
+      AND payment_plan_instalment_id=?
+   `).run(
+    progressionActorId,
+    now,
+    now,
+    paymentRequest.id,
+    plan.id,
+    instalment.id
+   );
+  }
+
   db.prepare(`
    UPDATE driver_payment_plan_instalments
    SET status='paid',
+       paid_amount=?,
        provider=?,
        provider_session_id=?,
        provider_payment_intent_id=?,
@@ -5190,7 +6228,10 @@ function progressPaymentPlanAfterPayment(paymentRequest,paidAt){
    WHERE id=?
      AND status!='paid'
   `).run(
-   paymentRequest.provider||'stripe',
+   newInstalmentPaidAmount,
+   options?.allocationId
+    ?progressionActorId
+    :(paymentRequest.provider||'stripe'),
    paymentRequest.provider_session_id||null,
    paymentRequest.provider_payment_intent_id||null,
    paymentRequest.payment_url||null,
@@ -5252,7 +6293,7 @@ function progressPaymentPlanAfterPayment(paymentRequest,paidAt){
     'plan_completed',
     'Payment plan completed',
     'system',
-    'stripe',
+    progressionActorId,
     JSON.stringify({
      finalInstalmentId:instalment.id,
      finalPaymentRequestId:paymentRequest.id,
@@ -5307,7 +6348,7 @@ function progressPaymentPlanAfterPayment(paymentRequest,paidAt){
      'schedule_exhausted',
      'Payment received but payment-plan schedule ended with a remaining balance',
      'system',
-     'stripe',
+     progressionActorId,
      JSON.stringify({
       instalmentId:instalment.id,
       paymentRequestId:paymentRequest.id,
@@ -5418,7 +6459,7 @@ function progressPaymentPlanAfterPayment(paymentRequest,paidAt){
     'instalment_paid',
     `Instalment ${instalment.instalment_number} paid`,
     'system',
-    'stripe',
+    progressionActorId,
     JSON.stringify({
      instalmentId:instalment.id,
      paymentRequestId:paymentRequest.id,
@@ -5434,6 +6475,30 @@ function progressPaymentPlanAfterPayment(paymentRequest,paidAt){
    );
   }
 
+  if(options?.allocationId){
+   const allocationUpdate=db.prepare(`
+    UPDATE payment_plan_settlement_allocations
+    SET status='applied',
+        payment_request_id=?,
+        error=NULL,
+        updated_at=?,
+        applied_at=?
+    WHERE id=?
+      AND status='applying'
+   `).run(
+    paymentRequest.id,
+    now,
+    now,
+    options.allocationId
+   );
+
+   if(Number(allocationUpdate.changes||0)!==1){
+    throw new Error(
+     `Payment-plan allocation ${options.allocationId} is not in applying state`
+    );
+   }
+  }
+
   db.exec('COMMIT');
 
  }catch(e){
@@ -5441,7 +6506,7 @@ function progressPaymentPlanAfterPayment(paymentRequest,paidAt){
   throw e;
  }
 
- if(newRemaining<=0.00001 || !next){
+ if(newRemaining<=0.00001){
   notify(
    plan.driver_id,
    'Payment plan completed',
@@ -5456,6 +6521,27 @@ function progressPaymentPlanAfterPayment(paymentRequest,paidAt){
    instalmentId:instalment.id,
    paidAmount:Number(plan.plan_amount||0),
    remainingAmount:0
+  };
+ }
+
+ if(!next){
+  notify(
+   plan.driver_id,
+   'Payment plan requires review',
+   `Your payment of £${paidAmount.toFixed(2)} has been received. £${newRemaining.toFixed(2)} remains on your payment plan, but there are no further scheduled instalments. FleetPay will review the remaining balance.`,
+   'warning',
+   plan.id
+  );
+
+  return {
+   completed:false,
+   defaulted:true,
+   planId:plan.id,
+   instalmentId:instalment.id,
+   paidAmount:newPaidAmount,
+   remainingAmount:newRemaining,
+   nextInstalmentId:null,
+   nextPaymentRequestId:null
   };
  }
 
@@ -6325,6 +7411,24 @@ app.post(
     });
    }
 
+   /*
+    * Move the complete plan debt out of Autocab before FleetPay takes
+    * ownership of it. Each adjustment uses an idempotent event key, so
+    * retries cannot post the same activation movement twice.
+    */
+   try{
+    await settlePaymentPlanActivationInAutocab(
+     plan,
+     freshSource
+    );
+   }catch(e){
+    return res.status(409).json({
+     error:
+      'FleetPay could not move this balance out of Autocab. The payment plan has not been activated.',
+     detail:e.message
+    });
+   }
+
    const now=new Date().toISOString();
    const instalmentRequestId=id('request');
 
@@ -6352,15 +7456,10 @@ app.post(
     /*
      * Create the first real instalment as a normal payment_request.
      *
-     * The original weekly fee and carried charges are attached to the
-     * FIRST instalment only. This preserves the existing Autocab
-     * accounting behaviour:
-     *
-     *   debit fee/carried charges once
-     *   credit each actual instalment received
-     *
-     * Across the complete plan, the net Autocab movement therefore
-     * matches the original Monday debt exactly.
+     * The original weekly fee and carried charges have already been
+     * settled into Autocab during plan activation. From this point on,
+     * the plan balance is owned by FleetPay and instalment payments must
+     * not create further Autocab fee/carried-charge movements.
      */
     db.prepare(`
      INSERT INTO payment_requests(
@@ -6390,8 +7489,8 @@ app.post(
      freshSource.callsign,
      freshSource.driver_name,
      freshSource.balance,
-     Number(freshSource.weekly_fee||0),
-     Number(freshSource.carried_charges||0),
+     0,
+     0,
      Number(firstInstalment.amount||0),
      'open',
      null,
@@ -6949,6 +8048,34 @@ app.post(
     await safelyExpirePlanPaymentSession(request);
    }
 
+   /*
+    * Once activated, the payment-plan debt is owned by FleetPay rather
+    * than Autocab. Cancelling the plan returns only the unpaid remainder
+    * to the driver's Autocab account.
+    *
+    * Draft plans were never transferred out of Autocab, so cancelling a
+    * draft must not create an Autocab adjustment.
+    */
+   if(plan.status!=='draft'){
+    try{
+     await postAutocabAdjustmentSafelyOnce({
+      driverId:plan.driver_id,
+      callsign:plan.callsign||source.callsign||String(plan.driver_id),
+      amount:remaining,
+      isCredit:false,
+      description:'FleetPay payment plan cancelled',
+      adjustmentReason:'FleetPay Payment Plan',
+      eventKey:`plan:${plan.id}:cancel:return`
+     });
+    }catch(e){
+     return res.status(409).json({
+      error:
+       'FleetPay could not return the remaining payment-plan balance to Autocab. The plan has not been cancelled.',
+      detail:e.message
+     });
+    }
+   }
+
    const now=new Date().toISOString();
 
    db.exec('BEGIN IMMEDIATE');
@@ -6982,24 +8109,20 @@ app.post(
     );
 
     /*
-     * Reopen only the UNPAID balance.
+     * Reopen only the unpaid balance.
      *
-     * If at least one instalment has already been paid, the original
-     * weekly fee / carried charge accounting has already been posted
-     * through that first instalment and must not be posted again.
+     * Draft plans were never transferred out of Autocab, so their
+     * original fee/carried-charge fields remain intact.
+     *
+     * Activated plans already settled those charges into Autocab during
+     * activation, so they must not be charged again after cancellation.
      */
     db.prepare(`
      UPDATE payment_requests
      SET status='open',
          amount=?,
-         weekly_fee=CASE
-          WHEN ?>0 THEN 0
-          ELSE weekly_fee
-         END,
-         carried_charges=CASE
-          WHEN ?>0 THEN 0
-          ELSE carried_charges
-         END,
+         weekly_fee=?,
+         carried_charges=?,
          payment_url=NULL,
          provider=NULL,
          provider_session_id=NULL,
@@ -7009,8 +8132,12 @@ app.post(
      WHERE id=?
     `).run(
      remaining,
-     Number(plan.paid_amount||0),
-     Number(plan.paid_amount||0),
+     plan.status==='draft'
+      ?Number(source.weekly_fee||0)
+      :0,
+     plan.status==='draft'
+      ?Number(source.carried_charges||0)
+      :0,
      now,
      source.id
     );
@@ -7281,6 +8408,8 @@ app.post(
      db.prepare(`
       UPDATE payment_requests
       SET amount=?,
+          weekly_fee=0,
+          carried_charges=0,
           status='open',
           due_at=?,
           payment_url=NULL,
@@ -7329,12 +8458,8 @@ app.post(
       plan.callsign,
       plan.driver_name,
       -remaining,
-      Number(plan.paid_amount||0)>0
-       ?0
-       :Number(source.weekly_fee||0),
-      Number(plan.paid_amount||0)>0
-       ?0
-       :Number(source.carried_charges||0),
+      0,
+      0,
       remaining,
       'open',
       null,
@@ -7745,12 +8870,8 @@ app.post(
       plan.callsign,
       plan.driver_name,
       -remaining,
-      Number(plan.paid_amount||0)>0
-       ?0
-       :Number(source.weekly_fee||0),
-      Number(plan.paid_amount||0)>0
-       ?0
-       :Number(source.carried_charges||0),
+      0,
+      0,
       Number(first.amount||0),
       'plan_paused',
       null,
@@ -8164,6 +9285,7 @@ app.post('/api/admin/launch-reset',adminAuth,requireStaffRole('administrator'),(
   db.exec(`VACUUM INTO '${backupPath.replaceAll("'","''")}'`);
   db.exec('BEGIN IMMEDIATE');
   for(const table of [
+   'payment_plan_settlement_allocations',
    'driver_payment_plan_events',
    'driver_payment_plan_instalments',
    'driver_payment_plans',
@@ -8469,6 +9591,13 @@ app.get('/api/driver/me',driverAuth,(req,res)=>{
       'SELECT id,title,message,type,read_at readAt,created_at createdAt FROM driver_notifications WHERE driver_id=? ORDER BY created_at DESC LIMIT 20'
     ).all(d.driverId);
 
+    const livePaymentPlan=
+      paymentPlans.find(
+        x=>['active','paused','defaulted'].includes(x.status)
+      )||null;
+
+    const earlyTiming=earlyPayoutTiming(settings);
+
     res.json({
       driver:{
         driverId:d.driverId,
@@ -8500,10 +9629,22 @@ app.get('/api/driver/me',driverAuth,(req,res)=>{
       notifications,
       stripeConfigured:Boolean(stripe),
       reservedForEarlyPayout:reserved,
-      earlyPayoutAllowed:earlyPayoutTiming(settings).requestDayAllowed,
-      earlyPayoutTiming:earlyPayoutTiming(settings),
-      earlyPayoutWindowMessage:earlyPayoutWindowMessage(settings),
-      availableForEarlyPayout:available
+      earlyPayoutAllowed:
+        !livePaymentPlan &&
+        earlyTiming.requestDayAllowed,
+      earlyPayoutBlockedReason:
+        livePaymentPlan
+          ?'Early payouts are unavailable while you have an active payment plan.'
+          :null,
+      earlyPayoutTiming:earlyTiming,
+      earlyPayoutWindowMessage:
+        livePaymentPlan
+          ?'Early payouts are unavailable while you have an active payment plan.'
+          :earlyPayoutWindowMessage(settings),
+      availableForEarlyPayout:
+        livePaymentPlan
+          ?0
+          :available
     });
 
   }catch(e){
@@ -8511,7 +9652,7 @@ app.get('/api/driver/me',driverAuth,(req,res)=>{
       error:e.message
     });
   }
-});app.post('/api/driver/early-payout',driverAuth,(req,res)=>{try{const settings=getSettings(),timing=earlyPayoutTiming(settings);if(!timing.requestDayAllowed)return res.status(400).json({error:earlyPayoutWindowMessage(settings)});const d=cachedDriver(req.auth.driverId);if(!d)return res.status(404).json({error:'Driver not found in FleetPay cache'});const early=db.prepare("SELECT gross_amount,status FROM payouts WHERE driver_id=? AND type='early'").all(d.driverId);const reserved=early.filter(x=>['requested','approved','batched'].includes(x.status)).reduce((s,x)=>s+Number(x.gross_amount||0),0),available=Math.max(0,Number(d.currentBalance||0)-reserved),gross=Number(req.body.amount||0),fee=Number(settings.earlyPayoutFee||0);if(gross<=fee)return res.status(400).json({error:`Requested amount must be greater than the £${fee.toFixed(2)} fee`});if(gross>available+0.00001)return res.status(400).json({error:'Requested amount exceeds your available current balance'});const itemId=id('early'),now=new Date().toISOString();db.prepare('INSERT INTO payouts(id,driver_id,callsign,driver_name,gross_amount,fee,net_amount,amount,type,status,created_at,eligible_run_date,submitted_after_cutoff) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)').run(itemId,d.driverId,d.callsign,d.fullName,gross,fee,gross-fee,gross-fee,'early','requested',now,timing.runDate,timing.afterCutoff?1:0);const timingText=timing.beforeCutoff?'It is eligible for today\'s payment run if approved.':`Today's ${timing.cutoff} cutoff has passed, so it is queued for the ${timing.runLabel} payment run if approved.`;notify(d.driverId,'Payout request received',`Your request for £${(gross-fee).toFixed(2)} after the £${fee.toFixed(2)} fee is awaiting approval. ${timingText}`,'info',itemId);audit(req,'driver',d.driverId,'early_payout_requested','payout',itemId,{gross,fee,net:gross-fee,eligibleRunDate:timing.runDate,submittedAfterCutoff:timing.afterCutoff});res.json({id:itemId,grossAmount:gross,fee,netAmount:gross-fee,status:'requested',createdAt:now,eligibleRunDate:timing.runDate,submittedAfterCutoff:timing.afterCutoff,message:timingText})}catch(e){res.status(500).json({error:e.message})}});
+});app.post('/api/driver/early-payout',driverAuth,(req,res)=>{try{const settings=getSettings(),timing=earlyPayoutTiming(settings);if(!timing.requestDayAllowed)return res.status(400).json({error:earlyPayoutWindowMessage(settings)});const d=cachedDriver(req.auth.driverId);if(!d)return res.status(404).json({error:'Driver not found in FleetPay cache'});const livePlan=db.prepare("SELECT id,status FROM driver_payment_plans WHERE driver_id=? AND status IN ('active','paused','defaulted') ORDER BY created_at DESC LIMIT 1").get(d.driverId);if(livePlan)return res.status(409).json({error:'Early payouts are unavailable while you have an active payment plan.'});const early=db.prepare("SELECT gross_amount,status FROM payouts WHERE driver_id=? AND type='early'").all(d.driverId);const reserved=early.filter(x=>['requested','approved','batched'].includes(x.status)).reduce((s,x)=>s+Number(x.gross_amount||0),0),available=Math.max(0,Number(d.currentBalance||0)-reserved),gross=Number(req.body.amount||0),fee=Number(settings.earlyPayoutFee||0);if(gross<=fee)return res.status(400).json({error:`Requested amount must be greater than the £${fee.toFixed(2)} fee`});if(gross>available+0.00001)return res.status(400).json({error:'Requested amount exceeds your available current balance'});const itemId=id('early'),now=new Date().toISOString();db.prepare('INSERT INTO payouts(id,driver_id,callsign,driver_name,gross_amount,fee,net_amount,amount,type,status,created_at,eligible_run_date,submitted_after_cutoff) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)').run(itemId,d.driverId,d.callsign,d.fullName,gross,fee,gross-fee,gross-fee,'early','requested',now,timing.runDate,timing.afterCutoff?1:0);const timingText=timing.beforeCutoff?'It is eligible for today\'s payment run if approved.':`Today's ${timing.cutoff} cutoff has passed, so it is queued for the ${timing.runLabel} payment run if approved.`;notify(d.driverId,'Payout request received',`Your request for £${(gross-fee).toFixed(2)} after the £${fee.toFixed(2)} fee is awaiting approval. ${timingText}`,'info',itemId);audit(req,'driver',d.driverId,'early_payout_requested','payout',itemId,{gross,fee,net:gross-fee,eligibleRunDate:timing.runDate,submittedAfterCutoff:timing.afterCutoff});res.json({id:itemId,grossAmount:gross,fee,netAmount:gross-fee,status:'requested',createdAt:now,eligibleRunDate:timing.runDate,submittedAfterCutoff:timing.afterCutoff,message:timingText})}catch(e){res.status(500).json({error:e.message})}});
 app.post('/api/driver/notifications/read',driverAuth,(req,res)=>{db.prepare('UPDATE driver_notifications SET read_at=? WHERE driver_id=? AND read_at IS NULL').run(new Date().toISOString(),req.auth.driverId);res.json({ok:true})});
 
 app.get('/payment-success',(_req,res)=>{
