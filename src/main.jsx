@@ -3764,8 +3764,21 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
             );
 
            const needsAttention=
-            plan.status==='defaulted'||
+            ['paused','defaulted'].includes(plan.status)||
             nextInstalment?.status==='overdue';
+
+           const attentionText=
+            plan.status==='defaulted'
+             ?plan.defaultReason||(
+               nextInstalment?.status==='overdue'
+                ?`Overdue ${money(nextInstalment.amount)} · due ${dateOnly(nextInstalment.dueAt)}`
+                :'Payment plan needs review'
+              )
+             :plan.status==='paused'
+              ?plan.pauseReason||'Payment plan paused'
+              :nextInstalment?.status==='overdue'
+               ?`Overdue ${money(nextInstalment.amount)} · due ${dateOnly(nextInstalment.dueAt)}`
+               :'';
 
            return <tr
             key={plan.id}
@@ -3777,6 +3790,11 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
               <div>
                <b>{plan.driverName}</b>
                <small>{plan.frequency} plan</small>
+               {attentionText&&
+                <small className="paymentPlanAttentionSummary">
+                 {attentionText}
+                </small>
+               }
               </div>
              </div>
             </td>
@@ -3834,7 +3852,11 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
                className="mini"
                onClick={()=>openPaymentPlanDetails(plan)}
               >
-               {plan.status==='defaulted'?'Review':'View'}
+               {plan.status==='defaulted'
+                ?'Review overdue'
+                :plan.status==='paused'
+                 ?'Review paused'
+                 :'View'}
               </button>
 
               {canMoney&&plan.status==='draft'&&

@@ -6630,3 +6630,5 @@ body {
 
 .paymentPlanTimelineTitle{display:flex;align-items:center;gap:8px;min-width:0}
 .paymentPlanTimelineTitle .pill{flex:0 0 auto}
+
+.paymentPlanAttentionSummary{display:block;margin-top:4px;max-width:280px;font-size:11px!important;line-height:1.35;color:#b63a3a!important;font-weight:600}
