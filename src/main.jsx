@@ -115,7 +115,301 @@ function DemoLab({demo,loadDemo,resetDemo,action,demoEmail,setDemoEmail,demoMobi
  {run.stage==='monitor'&&<div className="demoActions"><button className="secondary" disabled={!processing(run,early).length} onClick={()=>action(`${base}/refresh-status`,'Simulate Wise completing the processing payments and FleetPay posting the successful Autocab adjustments?')}><RefreshCw/>Refresh Wise + Autocab status</button><button className="secondary dangerOutline" disabled={!failed(run,early).length} onClick={()=>action(`${base}/retry-failed`,'Simulate correcting the failed recipient and retry only that payment?')}><AlertTriangle/>Correct & retry failed ({failed(run,early).length})</button><button className="primary" disabled={failed(run,early).length>0||processing(run,early).length>0} onClick={()=>action(`${base}/reconcile`,'Final check: every approved Wise payment is Paid and every matching Autocab adjustment is Updated. Reconcile and permanently lock this demo run?')}><ShieldCheck/>Reconcile & lock run</button></div>}
  {run.stage==='complete'&&<div className="demoComplete"><CheckCircle2/><div><b>Run reconciled and locked</b><span>{approved(run,early).length} successful payments · {money(paymentTotal(run,early))} · all matching Autocab adjustments confirmed.</span></div></div>}
  </section>};
- return <><section className="demoWarning"><ShieldCheck/><div><b>DEMO MODE — NO REAL MONEY OR AUTOCAB CHANGES</b><span>This is the planned live operator workflow. Demo balances, Wise details and payment results are made-up.</span></div><button className="secondary" onClick={resetDemo}>Reset demo data</button></section><section className="officePageIntro"><div><span>OPERATOR TRAINING</span><h2>FleetPay Payment Process Demo Lab</h2><p>Every operator follows the same gated process. FleetPay will block the next step until the previous control has been completed.</p></div></section>{!demo?<section className="emptyState"><PlayCircle/><h3>Load training scenario</h3><p>Load isolated made-up drivers and balances.</p><button className="primary" onClick={loadDemo}>Load Demo Lab</button></section>:<div className="demoV22Stack"><RunCard kind="monday" run={demo.monday}/><RunCard kind="early" run={demo.early} early/><section className="panel demoComms"><div className="panelHead"><div><span className="sectionKicker">COMMUNICATION TEST</span><h3>Send clearly marked demo messages</h3><p>These are the only Demo Lab actions that can leave FleetPay. Use your own test address or mobile number.</p></div></div><div className="demoCommsGrid"><label>Test email address<input type="email" value={demoEmail} onChange={e=>setDemoEmail(e.target.value)} placeholder="your@email.co.uk"/><button className="secondary" onClick={sendEmail}><Mail/>Send demo email</button></label><label>Test mobile number<input value={demoMobile} onChange={e=>setDemoMobile(e.target.value)} placeholder="07..."/><button className="secondary" onClick={sendSms}><Smartphone/>Send demo SMS</button></label></div></section></div>}</>;
+
+ const PaymentPlanCard=({plan})=>{
+  if(!plan)return null;
+
+  const status=String(plan.status||'draft');
+  const live=['active','paused','defaulted'].includes(status);
+  const canActivate=status==='draft';
+  const canPay=['active','paused','defaulted'].includes(status)&&!!plan.currentPaymentRequest;
+  const canPause=['active','defaulted'].includes(status);
+  const canResume=status==='paused';
+  const canCancel=['active','paused','defaulted'].includes(status);
+  const canSettle=['active','paused','defaulted'].includes(status);
+  const canAmend=['draft','paused'].includes(status);
+  const earlyBlocked=['active','paused','defaulted'].includes(status);
+
+  const current=plan.instalments?.find(x=>['due','overdue'].includes(x.status));
+  const events=[...(plan.events||[])].slice().reverse();
+  const comms=[...(plan.communications||[])].slice().reverse();
+
+  const askAmount=(label,initial='')=>{
+   const v=prompt(label,initial);
+   if(v===null)return null;
+   const n=Number(v);
+   if(!Number.isFinite(n)||n<=0){
+    alert('Enter a positive amount.');
+    return null;
+   }
+   return n;
+  };
+
+  const mondayPartial=()=>{
+   const amount=askAmount(
+    'Demo Monday balance to apply partially to the current instalment:',
+    current?String(Math.max(1,Number(current.amount||0)-Number(current.paidAmount||0)-1)):''
+   );
+   if(amount===null)return;
+   action(
+    '/api/admin/demo/payment-plan/monday-partial',
+    `Apply ${money(amount)} from the demo Monday settlement to this payment plan?`,
+    {amount}
+   );
+  };
+
+  const mondayFull=()=>{
+   const amount=askAmount(
+    'Demo positive Monday balance available before payout:',
+    current?String(Number(current.amount||0)-Number(current.paidAmount||0)):''
+   );
+   if(amount===null)return;
+   action(
+    '/api/admin/demo/payment-plan/monday-full',
+    `Use up to the current instalment from ${money(amount)} of demo Monday balance, then leave the remainder available for payout?`,
+    {amount}
+   );
+  };
+
+  const amend=()=>{
+   const frequency=prompt(
+    'Frequency: weekly, fortnightly or monthly',
+    plan.frequency||'weekly'
+   );
+   if(frequency===null)return;
+
+   const instalmentAmount=askAmount(
+    'New instalment amount:',
+    String(plan.instalmentAmount||50)
+   );
+   if(instalmentAmount===null)return;
+
+   const startDate=prompt(
+    'Next payment date (YYYY-MM-DD):',
+    plan.nextDueDate||plan.startDate||new Date().toISOString().slice(0,10)
+   );
+   if(startDate===null||!startDate.trim())return;
+
+   action(
+    '/api/admin/demo/payment-plan/amend',
+    'Apply this amendment to the isolated demo payment plan?',
+    {frequency:frequency.trim(),instalmentAmount,startDate:startDate.trim()}
+   );
+  };
+
+  const cancel=()=>{
+   const reason=prompt('Reason for cancelling this demo payment plan:');
+   if(reason===null||!reason.trim())return;
+
+   action(
+    '/api/admin/demo/payment-plan/cancel',
+    `Cancel the demo plan and return ${money(plan.remainingAmount)} to the simulated Autocab balance?`,
+    {reason:reason.trim()}
+   );
+  };
+
+  return <section className="panel demoRunV22">
+   <div className="panelHead">
+    <div>
+     <span className="sectionKicker">DEMO PAYMENT PLAN</span>
+     <h3>Payment-plan lifecycle walkthrough</h3>
+     <p>Completely isolated demo state. No live payment-plan records, real driver messages or Autocab requests are changed.</p>
+    </div>
+    <Pill tone={status==='completed'?'good':status==='cancelled'?'bad':status==='paused'||status==='defaulted'?'warn':'neutral'}>
+     {status.replaceAll('_',' ')}
+    </Pill>
+   </div>
+
+   <div className="demoDecisionSummary">
+    <div><span>Original debt</span><b>{money(plan.originalDebt)}</b></div>
+    <div><span>Paid</span><b>{money(plan.paidAmount)}</b></div>
+    <div><span>Remaining</span><b>{money(plan.remainingAmount)}</b></div>
+   </div>
+
+   <div className="demoDecisionSummary">
+    <div><span>Instalment</span><b>{money(plan.instalmentAmount)} · {plan.frequency}</b></div>
+    <div><span>Next due</span><b>{plan.nextDueDate||'—'}</b></div>
+    <div><span>Current amount due</span><b>{money(plan.nextDueAmount||0)}</b></div>
+   </div>
+
+   <div className={`operatorWarning ${plan.autocab?.transferred?'green':'blue'}`}>
+    {plan.autocab?.transferred?<CheckCircle2/>:<RefreshCw/>}
+    <div>
+     <b>Simulated Autocab position</b>
+     <span>
+      Before: {money(plan.autocab?.balanceBefore||0)} ·
+      Current: {money(plan.autocab?.balanceAfter||0)} ·
+      {plan.autocab?.transferred?' Debt transferred to FleetPay in demo':' Draft only — debt not transferred'}
+     </span>
+    </div>
+   </div>
+
+   <div className={`operatorWarning ${earlyBlocked?'':'green'}`}>
+    {earlyBlocked?<AlertTriangle/>:<CheckCircle2/>}
+    <div>
+     <b>Early payout</b>
+     <span>
+      {earlyBlocked
+       ?`Blocked while payment plan status is ${status}.`
+       :'Available — no active, paused or defaulted payment plan blocks it.'}
+     </span>
+    </div>
+   </div>
+
+   <div className="demoActions">
+    {canActivate&&
+     <button className="primary" onClick={()=>action(
+      '/api/admin/demo/payment-plan/activate',
+      'Activate this demo payment plan? The simulated £500 debt will move out of Autocab and instalment 1 will become due.'
+     )}>
+      Activate plan
+     </button>
+    }
+
+    {canPay&&
+     <button className="primary" onClick={()=>action(
+      '/api/admin/demo/payment-plan/pay-instalment',
+      `Simulate paying the current ${money(plan.currentPaymentRequest?.amount||0)} instalment in full?`
+     )}>
+      Pay current instalment
+     </button>
+    }
+
+    {live&&current&&
+     <button className="secondary" onClick={mondayPartial}>
+      Monday partial deduction
+     </button>
+    }
+
+    {live&&current&&
+     <button className="secondary" onClick={mondayFull}>
+      Monday full deduction
+     </button>
+    }
+
+    {canPause&&
+     <button className="secondary" onClick={()=>action(
+      '/api/admin/demo/payment-plan/pause',
+      'Pause this demo payment plan?'
+     )}>
+      Pause
+     </button>
+    }
+
+    {canResume&&
+     <button className="secondary" onClick={()=>action(
+      '/api/admin/demo/payment-plan/resume',
+      'Resume this demo payment plan?'
+     )}>
+      Resume
+     </button>
+    }
+
+    {canAmend&&
+     <button className="secondary" onClick={amend}>
+      Amend schedule
+     </button>
+    }
+
+    {canSettle&&
+     <button className="secondary" onClick={()=>action(
+      '/api/admin/demo/payment-plan/settle-early',
+      `Convert the remaining ${money(plan.remainingAmount)} into one final payment request due now?`
+     )}>
+      Settle early
+     </button>
+    }
+
+    {canCancel&&
+     <button className="secondary dangerOutline" onClick={cancel}>
+      Cancel plan
+     </button>
+    }
+   </div>
+
+   <div className="tableWrap proTable">
+    <table>
+     <thead>
+      <tr>
+       <th>#</th>
+       <th>Due date</th>
+       <th>Amount</th>
+       <th>Paid</th>
+       <th>Status</th>
+      </tr>
+     </thead>
+     <tbody>
+      {(plan.instalments||[]).map(x=><tr key={x.id}>
+       <td>{x.instalmentNumber}</td>
+       <td>{x.dueAt||'—'}</td>
+       <td>{money(x.amount||0)}</td>
+       <td>{money(x.paidAmount||0)}</td>
+       <td><Pill tone={tone(x.status)}>{String(x.status||'').replaceAll('_',' ')}</Pill></td>
+      </tr>)}
+     </tbody>
+    </table>
+   </div>
+
+   <div className="demoFundingGrid">
+    <div>
+     <span>Source request</span>
+     <strong>{plan.sourceRequest?.status||'—'}</strong>
+    </div>
+    <div>
+     <span>Current request</span>
+     <strong>{plan.currentPaymentRequest?money(plan.currentPaymentRequest.amount):'None'}</strong>
+    </div>
+    <div>
+     <span>Instalments paid</span>
+     <strong>{plan.instalmentsPaid||0} / {plan.instalmentsTotal||0}</strong>
+    </div>
+    <div>
+     <span>Plan ID</span>
+     <strong>{plan.planId}</strong>
+    </div>
+   </div>
+
+   <div className="panelHead">
+    <div>
+     <span className="sectionKicker">DEMO HISTORY</span>
+     <h3>Events & driver communications</h3>
+    </div>
+   </div>
+
+   <div className="tableWrap proTable">
+    <table>
+     <thead>
+      <tr>
+       <th>Time</th>
+       <th>Event</th>
+       <th>Amount</th>
+       <th>Detail</th>
+      </tr>
+     </thead>
+     <tbody>
+      {events.slice(0,12).map((x,i)=><tr key={`${x.at}-${i}`}>
+       <td>{x.at?new Date(x.at).toLocaleString('en-GB'):'—'}</td>
+       <td>{String(x.type||'').replaceAll('_',' ')}</td>
+       <td>{x.amount===undefined?'—':money(x.amount)}</td>
+       <td>{x.note||'—'}</td>
+      </tr>)}
+     </tbody>
+    </table>
+   </div>
+
+   {comms.length>0&&<div className="demoComms">
+    {comms.slice(0,8).map((x,i)=><div className="operatorWarning blue" key={`${x.at}-${i}`}>
+     <Mail/>
+     <div>
+      <b>{x.title}</b>
+      <span>{x.message}</span>
+     </div>
+    </div>)}
+   </div>}
+  </section>;
+ };
+
+ return <><section className="demoWarning"><ShieldCheck/><div><b>DEMO MODE — NO REAL MONEY OR AUTOCAB CHANGES</b><span>This is the planned live operator workflow. Demo balances, Wise details and payment results are made-up.</span></div><button className="secondary" onClick={resetDemo}>Reset demo data</button></section><section className="officePageIntro"><div><span>OPERATOR TRAINING</span><h2>FleetPay Payment Process Demo Lab</h2><p>Every operator follows the same gated process. FleetPay will block the next step until the previous control has been completed.</p></div></section>{!demo?<section className="emptyState"><PlayCircle/><h3>Load training scenario</h3><p>Load isolated made-up drivers and balances.</p><button className="primary" onClick={loadDemo}>Load Demo Lab</button></section>:<div className="demoV22Stack"><PaymentPlanCard plan={demo.paymentPlan}/><RunCard kind="monday" run={demo.monday}/><RunCard kind="early" run={demo.early} early/><section className="panel demoComms"><div className="panelHead"><div><span className="sectionKicker">COMMUNICATION TEST</span><h3>Send clearly marked demo messages</h3><p>These are the only Demo Lab actions that can leave FleetPay. Use your own test address or mobile number.</p></div></div><div className="demoCommsGrid"><label>Test email address<input type="email" value={demoEmail} onChange={e=>setDemoEmail(e.target.value)} placeholder="your@email.co.uk"/><button className="secondary" onClick={sendEmail}><Mail/>Send demo email</button></label><label>Test mobile number<input value={demoMobile} onChange={e=>setDemoMobile(e.target.value)} placeholder="07..."/><button className="secondary" onClick={sendSms}><Smartphone/>Send demo SMS</button></label></div></section></div>}</>;
 }
 function AdminLogin({onLogin}){
  const[phase,setPhase]=useState('password');

@@ -9232,14 +9232,121 @@ function freshDemoState(){
     {id:'de417',callsign:'417',driverName:'Noah Evans',grossAmount:95,fee:2.50,netAmount:92.50,status:'requested',wiseStatus:'not_sent',autocabStatus:'not_posted'},
     {id:'de422',callsign:'422',driverName:'Amelia Green',grossAmount:210,fee:2.50,netAmount:207.50,status:'approved',wiseStatus:'not_sent',autocabStatus:'not_posted'}
    ]
+  },
+  paymentPlan:{
+   schemaVersion:2,
+   stage:'draft',
+   status:'draft',
+   locked:false,
+   planId:'DPP-001',
+   callsign:'550',
+   driverName:'Demo Driver',
+   originalDebt:500,
+   planAmount:500,
+   remainingAmount:500,
+   paidAmount:0,
+   instalmentAmount:50,
+   frequency:'weekly',
+   startDate:new Date().toISOString().slice(0,10),
+   instalmentsTotal:10,
+   instalmentsPaid:0,
+   nextDueAmount:50,
+   nextDueDate:new Date().toISOString().slice(0,10),
+
+   sourceRequest:{
+    id:'DREQ-001',
+    amount:500,
+    status:'open',
+    paymentUrl:'demo://full-balance',
+    provider:'demo',
+    note:'Demo-only source outstanding balance.'
+   },
+
+   currentPaymentRequest:null,
+
+   instalments:Array.from({length:10},(_,i)=>({
+    id:`DINST-${String(i+1).padStart(3,'0')}`,
+    instalmentNumber:i+1,
+    amount:50,
+    paidAmount:0,
+    dueAt:paymentPlanAddDate(
+     new Date().toISOString().slice(0,10),
+     i,
+     'weekly'
+    ),
+    status:'scheduled',
+    paymentRequestId:null,
+    paidAt:null
+   })),
+
+   autocab:{
+    balanceBefore:500,
+    balanceAfter:500,
+    transferred:false,
+    note:'Demo simulation only — no Autocab request is made.'
+   },
+
+   paused:false,
+   defaulted:false,
+   completed:false,
+   cancelled:false,
+   activatedAt:null,
+   pausedAt:null,
+   resumedAt:null,
+   completedAt:null,
+   cancelledAt:null,
+
+   communications:[],
+
+   events:[
+    {
+     type:'plan_created',
+     amount:500,
+     at:now,
+     note:'Demo payment plan draft created — no live records changed.'
+    }
+   ]
   }
  };
 }
 function readDemoState(){
  const row=db.prepare("SELECT value_json FROM demo_state WHERE key='office_demo'").get();
- if(row){try{const x=JSON.parse(row.value_json);if(x?.monday?.stage&&x?.early?.stage)return x}catch{}}
- const state=freshDemoState();writeDemoState(state);return state;
+
+ if(row){
+  try{
+   const x=JSON.parse(row.value_json);
+
+   if(x?.monday?.stage&&x?.early?.stage){
+    const fresh=freshDemoState();
+
+    /*
+     * Demo-only schema migration.
+     * Preserve existing Monday/Early demo progress, but replace an older
+     * payment-plan demo structure with the current isolated model.
+     */
+    const paymentPlanCurrent=
+     x?.paymentPlan?.schemaVersion===2 &&
+     x?.paymentPlan?.sourceRequest &&
+     Array.isArray(x?.paymentPlan?.instalments) &&
+     x?.paymentPlan?.autocab &&
+     Array.isArray(x?.paymentPlan?.events) &&
+     Array.isArray(x?.paymentPlan?.communications);
+
+    if(!paymentPlanCurrent){
+     x.paymentPlan=fresh.paymentPlan;
+     writeDemoState(x);
+    }
+
+    return x;
+   }
+  }catch{}
+ }
+
+ const state=freshDemoState();
+ writeDemoState(state);
+ return state;
 }
+
 function writeDemoState(state){state.updatedAt=demoStamp();db.prepare("INSERT INTO demo_state(key,value_json,updated_at) VALUES('office_demo',?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at").run(JSON.stringify(state),state.updatedAt);return state}
 function demoApproved(run,isEarly=false){return run.items.filter(x=>x.status==='approved'||x.status==='paid').filter(x=>isEarly?Number(x.netAmount)>0:Number(x.amount)>0)}
 function demoPending(run,isEarly=false){return run.items.filter(x=>isEarly?x.status==='requested':x.status==='pending')}
@@ -9250,6 +9357,1013 @@ function demoCanReconcile(run,isEarly=false){const approved=demoApproved(run,isE
 
 app.get('/api/admin/demo',adminAuth,(req,res)=>res.json(readDemoState()));
 app.post('/api/admin/demo/reset',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const state=writeDemoState(freshDemoState());audit(req,'staff',req.auth.email,'demo_data_reset','demo','office_demo');res.json(state)});
+
+/* Demo payment plan: isolated state only — never writes live payment-plan or Autocab data */
+app.post('/api/admin/demo/payment-plan/activate',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{
+ const state=readDemoState();
+ const p=state.paymentPlan;
+
+ if(!p){
+  return res.status(400).json({error:'Demo payment-plan state is unavailable. Reset Demo Lab and try again.'});
+ }
+
+ if(p.status!=='draft'){
+  return res.status(400).json({error:`Only a draft demo payment plan can be activated. Current status: ${p.status}`});
+ }
+
+ if(p.sourceRequest?.status!=='open'){
+  return res.status(400).json({error:'The demo source outstanding balance is no longer open.'});
+ }
+
+ const first=p.instalments?.find(x=>x.status==='scheduled');
+
+ if(!first){
+  return res.status(400).json({error:'The demo payment plan has no scheduled instalment to activate.'});
+ }
+
+ const now=demoStamp();
+ const requestId='DREQ-INST-001';
+
+ /*
+  * Simulate the production activation movement.
+  * This changes demo_state only. No Autocab function is called.
+  */
+ p.autocab.balanceAfter=0;
+ p.autocab.transferred=true;
+ p.autocab.transferredAt=now;
+
+ p.sourceRequest.status='on_plan';
+ p.sourceRequest.paymentUrl=null;
+ p.sourceRequest.provider=null;
+
+ first.status='due';
+ first.paymentRequestId=requestId;
+
+ p.currentPaymentRequest={
+  id:requestId,
+  amount:Number(first.amount||0),
+  status:'open',
+  dueAt:first.dueAt,
+  paymentPlanId:p.planId,
+  instalmentId:first.id,
+  requestType:'payment_plan_instalment',
+  paymentUrl:null,
+  provider:null
+ };
+
+ p.stage='active';
+ p.status='active';
+ p.activatedAt=now;
+ p.nextDueAmount=Number(first.amount||0);
+ p.nextDueDate=first.dueAt;
+ p.paused=false;
+ p.defaulted=false;
+ p.completed=false;
+ p.cancelled=false;
+
+ p.events.push({
+  type:'plan_activated',
+  amount:Number(p.planAmount||0),
+  at:now,
+  note:`Demo payment plan activated. Instalment 1 of £${Number(first.amount||0).toFixed(2)} is now due.`
+ });
+
+ p.communications.push({
+  type:'notification',
+  title:'Payment plan active',
+  message:`Your FleetPay payment plan is now active. Your first payment of £${Number(first.amount||0).toFixed(2)} is due ${first.dueAt}.`,
+  at:now
+ });
+
+ writeDemoState(state);
+ res.json(state);
+});
+
+app.post('/api/admin/demo/payment-plan/pay-instalment',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{
+ const state=readDemoState();
+ const p=state.paymentPlan;
+
+ if(!p){
+  return res.status(400).json({error:'Demo payment-plan state is unavailable. Reset Demo Lab and try again.'});
+ }
+
+ if(!['active','paused','defaulted'].includes(p.status)){
+  return res.status(400).json({error:`The demo payment plan is not in a payable state. Current status: ${p.status}`});
+ }
+
+ const current=p.instalments?.find(x=>['due','overdue'].includes(x.status));
+
+ if(!current){
+  return res.status(400).json({error:'No due demo payment-plan instalment could be found.'});
+ }
+
+ if(!p.currentPaymentRequest || p.currentPaymentRequest.instalmentId!==current.id){
+  return res.status(400).json({error:'The current demo instalment does not have a matching payment request.'});
+ }
+
+ const scheduledAmount=Number(current.amount||0);
+ const alreadyPaid=Number(current.paidAmount||0);
+ const amount=Number(Math.max(0,scheduledAmount-alreadyPaid).toFixed(2));
+
+ if(amount<=0){
+  return res.status(400).json({error:'The current demo instalment has already been paid.'});
+ }
+
+ const now=demoStamp();
+
+ current.paidAmount=scheduledAmount;
+ current.status='paid';
+ current.paidAt=now;
+
+ p.currentPaymentRequest.status='paid';
+ p.currentPaymentRequest.provider='demo_manual';
+ p.currentPaymentRequest.paidAt=now;
+
+ p.paidAmount=Number(
+  Math.min(
+   Number(p.planAmount||0),
+   Number(p.paidAmount||0)+amount
+  ).toFixed(2)
+ );
+
+ p.remainingAmount=Number(
+  Math.max(
+   0,
+   Number(p.planAmount||0)-Number(p.paidAmount||0)
+  ).toFixed(2)
+ );
+
+ p.instalmentsPaid=
+  p.instalments.filter(x=>x.status==='paid').length;
+
+ if(p.remainingAmount<=0.00001){
+  p.remainingAmount=0;
+  p.status='completed';
+  p.stage='completed';
+  p.completed=true;
+  p.completedAt=now;
+  p.nextDueAmount=0;
+  p.nextDueDate=null;
+  p.currentPaymentRequest=null;
+  p.sourceRequest.status='paid';
+
+  p.events.push({
+   type:'plan_completed',
+   amount,
+   at:now,
+   note:`Demo payment plan completed. £${Number(p.planAmount||0).toFixed(2)} paid in total.`
+  });
+
+  p.communications.push({
+   type:'notification',
+   title:'Payment plan completed',
+   message:`Your FleetPay payment plan has been completed. All £${Number(p.planAmount||0).toFixed(2)} has now been paid.`,
+   at:now
+  });
+
+ }else{
+  const next=p.instalments
+   .filter(x=>x.status==='scheduled')
+   .sort((a,b)=>a.instalmentNumber-b.instalmentNumber)[0];
+
+  if(!next){
+   p.status='defaulted';
+   p.stage='defaulted';
+   p.defaulted=true;
+   p.nextDueAmount=0;
+   p.nextDueDate=null;
+   p.currentPaymentRequest=null;
+
+   p.events.push({
+    type:'schedule_exhausted',
+    amount,
+    at:now,
+    note:`Demo payment received but £${p.remainingAmount.toFixed(2)} remains with no scheduled instalment.`
+   });
+
+   p.communications.push({
+    type:'notification',
+    title:'Payment plan requires review',
+    message:`Your payment of £${amount.toFixed(2)} has been received. £${p.remainingAmount.toFixed(2)} remains on your payment plan, but there are no further scheduled instalments.`,
+    at:now
+   });
+
+  }else{
+   const requestId=`DREQ-INST-${String(next.instalmentNumber).padStart(3,'0')}`;
+
+   next.status='due';
+   next.paymentRequestId=requestId;
+
+   p.status='active';
+   p.stage='active';
+   p.paused=false;
+   p.defaulted=false;
+   p.nextDueAmount=Number(next.amount||0);
+   p.nextDueDate=next.dueAt;
+
+   p.currentPaymentRequest={
+    id:requestId,
+    amount:Number(next.amount||0),
+    status:'open',
+    dueAt:next.dueAt,
+    paymentPlanId:p.planId,
+    instalmentId:next.id,
+    requestType:'payment_plan_instalment',
+    paymentUrl:null,
+    provider:null
+   };
+
+   p.events.push({
+    type:'instalment_paid',
+    amount,
+    at:now,
+    note:`Demo instalment ${current.instalmentNumber} paid. £${p.remainingAmount.toFixed(2)} remains.`
+   });
+
+   p.communications.push({
+    type:'notification',
+    title:'Payment received',
+    message:`Thank you. Your payment of £${amount.toFixed(2)} has been received. £${p.remainingAmount.toFixed(2)} remains on your payment plan. Your next payment of £${Number(next.amount||0).toFixed(2)} is due ${next.dueAt}.`,
+    at:now
+   });
+  }
+ }
+
+ writeDemoState(state);
+ res.json(state);
+});
+
+app.post('/api/admin/demo/payment-plan/monday-partial',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{
+ const state=readDemoState();
+ const p=state.paymentPlan;
+
+ if(!p){
+  return res.status(400).json({error:'Demo payment-plan state is unavailable. Reset Demo Lab and try again.'});
+ }
+
+ if(!['active','defaulted'].includes(p.status)){
+  return res.status(400).json({error:`Monday payment-plan allocation is unavailable while the demo plan is ${p.status}.`});
+ }
+
+ const current=p.instalments?.find(x=>['due','overdue'].includes(x.status));
+
+ if(!current){
+  return res.status(400).json({error:'No due demo payment-plan instalment could be found.'});
+ }
+
+ if(!p.currentPaymentRequest || p.currentPaymentRequest.instalmentId!==current.id){
+  return res.status(400).json({error:'The current demo instalment does not have a matching payment request.'});
+ }
+
+ const scheduledAmount=Number(current.amount||0);
+ const alreadyPaid=Number(current.paidAmount||0);
+
+ const instalmentRemaining=Number(
+  Math.max(0,scheduledAmount-alreadyPaid).toFixed(2)
+ );
+
+ const planRemaining=Number(
+  Math.max(0,Number(p.remainingAmount||0)).toFixed(2)
+ );
+
+ const requestedAmount=Number(req.body.amount||0);
+
+ if(!Number.isFinite(requestedAmount) || requestedAmount<=0){
+  return res.status(400).json({error:'Enter a positive demo Monday allocation amount.'});
+ }
+
+ const amount=Number(
+  Math.min(
+   requestedAmount,
+   instalmentRemaining,
+   planRemaining
+  ).toFixed(2)
+ );
+
+ if(amount<=0.00001){
+  return res.status(400).json({error:'No demo payment-plan balance remains to allocate.'});
+ }
+
+ if(amount+0.00001>=instalmentRemaining){
+  return res.status(400).json({
+   error:`This route is for partial Monday deductions only. The current instalment has £${instalmentRemaining.toFixed(2)} remaining.`
+  });
+ }
+
+ const now=demoStamp();
+
+ current.paidAmount=Number(
+  (alreadyPaid+amount).toFixed(2)
+ );
+
+ p.paidAmount=Number(
+  Math.min(
+   Number(p.planAmount||0),
+   Number(p.paidAmount||0)+amount
+  ).toFixed(2)
+ );
+
+ p.remainingAmount=Number(
+  Math.max(
+   0,
+   Number(p.planAmount||0)-Number(p.paidAmount||0)
+  ).toFixed(2)
+ );
+
+ const remainingOnInstalment=Number(
+  Math.max(
+   0,
+   scheduledAmount-Number(current.paidAmount||0)
+  ).toFixed(2)
+ );
+
+ p.currentPaymentRequest.amount=remainingOnInstalment;
+ p.currentPaymentRequest.status='open';
+ p.currentPaymentRequest.provider=null;
+ p.currentPaymentRequest.paymentUrl=null;
+
+ p.nextDueAmount=remainingOnInstalment;
+ p.nextDueDate=current.dueAt;
+
+ p.events.push({
+  type:'monday_partial_allocation',
+  amount,
+  at:now,
+  note:`£${amount.toFixed(2)} applied from the demo Monday settlement. £${remainingOnInstalment.toFixed(2)} remains on instalment ${current.instalmentNumber}.`
+ });
+
+ p.communications.push({
+  type:'notification',
+  title:'Payment plan payment applied',
+  message:`£${amount.toFixed(2)} from your Monday FleetPay balance has been applied to your payment plan. £${remainingOnInstalment.toFixed(2)} remains due on this instalment.`,
+  at:now
+ });
+
+ writeDemoState(state);
+ res.json(state);
+});
+
+app.post('/api/admin/demo/payment-plan/monday-full',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{
+ const state=readDemoState();
+ const p=state.paymentPlan;
+
+ if(!p){
+  return res.status(400).json({error:'Demo payment-plan state is unavailable. Reset Demo Lab and try again.'});
+ }
+
+ if(!['active','defaulted'].includes(p.status)){
+  return res.status(400).json({error:`Monday payment-plan allocation is unavailable while the demo plan is ${p.status}.`});
+ }
+
+ const current=p.instalments?.find(x=>['due','overdue'].includes(x.status));
+
+ if(!current){
+  return res.status(400).json({error:'No due demo payment-plan instalment could be found.'});
+ }
+
+ if(!p.currentPaymentRequest || p.currentPaymentRequest.instalmentId!==current.id){
+  return res.status(400).json({error:'The current demo instalment does not have a matching payment request.'});
+ }
+
+ const scheduledAmount=Number(current.amount||0);
+ const alreadyPaid=Number(current.paidAmount||0);
+
+ const instalmentRemaining=Number(
+  Math.max(0,scheduledAmount-alreadyPaid).toFixed(2)
+ );
+
+ const availableAmount=Number(req.body.amount||0);
+
+ if(!Number.isFinite(availableAmount) || availableAmount<=0){
+  return res.status(400).json({error:'Enter the positive demo Monday balance available for allocation.'});
+ }
+
+ if(availableAmount+0.00001<instalmentRemaining){
+  return res.status(400).json({
+   error:`The demo Monday balance only covers £${availableAmount.toFixed(2)} of the £${instalmentRemaining.toFixed(2)} remaining instalment. Use the partial allocation action instead.`
+  });
+ }
+
+ const amount=Number(
+  Math.min(
+   instalmentRemaining,
+   Number(p.remainingAmount||0)
+  ).toFixed(2)
+ );
+
+ if(amount<=0.00001){
+  return res.status(400).json({error:'No demo payment-plan balance remains to allocate.'});
+ }
+
+ const now=demoStamp();
+
+ current.paidAmount=scheduledAmount;
+ current.status='paid';
+ current.paidAt=now;
+
+ p.currentPaymentRequest.status='paid';
+ p.currentPaymentRequest.provider='demo_monday_settlement';
+ p.currentPaymentRequest.paidAt=now;
+ p.currentPaymentRequest.paymentUrl=null;
+
+ p.paidAmount=Number(
+  Math.min(
+   Number(p.planAmount||0),
+   Number(p.paidAmount||0)+amount
+  ).toFixed(2)
+ );
+
+ p.remainingAmount=Number(
+  Math.max(
+   0,
+   Number(p.planAmount||0)-Number(p.paidAmount||0)
+  ).toFixed(2)
+ );
+
+ p.instalmentsPaid=
+  p.instalments.filter(x=>x.status==='paid').length;
+
+ if(p.remainingAmount<=0.00001){
+  p.remainingAmount=0;
+  p.status='completed';
+  p.stage='completed';
+  p.completed=true;
+  p.completedAt=now;
+  p.nextDueAmount=0;
+  p.nextDueDate=null;
+  p.currentPaymentRequest=null;
+  p.sourceRequest.status='paid';
+
+  p.events.push({
+   type:'plan_completed',
+   amount,
+   at:now,
+   note:`Final £${amount.toFixed(2)} applied from the demo Monday settlement. Payment plan completed.`
+  });
+
+  p.communications.push({
+   type:'notification',
+   title:'Payment plan completed',
+   message:`Your FleetPay payment plan has been completed. All £${Number(p.planAmount||0).toFixed(2)} has now been paid.`,
+   at:now
+  });
+
+ }else{
+  const next=p.instalments
+   .filter(x=>x.status==='scheduled')
+   .sort((a,b)=>a.instalmentNumber-b.instalmentNumber)[0];
+
+  if(!next){
+   p.status='defaulted';
+   p.stage='defaulted';
+   p.defaulted=true;
+   p.nextDueAmount=0;
+   p.nextDueDate=null;
+   p.currentPaymentRequest=null;
+
+   p.events.push({
+    type:'schedule_exhausted',
+    amount,
+    at:now,
+    note:`Demo Monday allocation applied, but £${p.remainingAmount.toFixed(2)} remains with no scheduled instalment.`
+   });
+
+  }else{
+   const requestId=`DREQ-INST-${String(next.instalmentNumber).padStart(3,'0')}`;
+
+   next.status='due';
+   next.paymentRequestId=requestId;
+
+   p.status='active';
+   p.stage='active';
+   p.defaulted=false;
+   p.nextDueAmount=Number(next.amount||0);
+   p.nextDueDate=next.dueAt;
+
+   p.currentPaymentRequest={
+    id:requestId,
+    amount:Number(next.amount||0),
+    status:'open',
+    dueAt:next.dueAt,
+    paymentPlanId:p.planId,
+    instalmentId:next.id,
+    requestType:'payment_plan_instalment',
+    paymentUrl:null,
+    provider:null
+   };
+
+   p.events.push({
+    type:'monday_full_allocation',
+    amount,
+    at:now,
+    note:`£${amount.toFixed(2)} applied from the demo Monday settlement. Instalment ${current.instalmentNumber} paid in full.`
+   });
+
+   p.communications.push({
+    type:'notification',
+    title:'Payment plan payment applied',
+    message:`£${amount.toFixed(2)} from your Monday FleetPay balance has been applied to your payment plan. £${p.remainingAmount.toFixed(2)} remains. Your next payment of £${Number(next.amount||0).toFixed(2)} is due ${next.dueAt}.`,
+    at:now
+   });
+  }
+ }
+
+ writeDemoState(state);
+ res.json({
+  ...state,
+  demoMondayAllocation:{
+   allocatedAmount:amount,
+   availableAmount,
+   payoutRemaining:Number(Math.max(0,availableAmount-amount).toFixed(2))
+  }
+ });
+});
+
+
+app.post('/api/admin/demo/payment-plan/pause',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{
+ const state=readDemoState();
+ const p=state.paymentPlan;
+
+ if(!p){
+  return res.status(400).json({error:'Demo payment-plan state is unavailable. Reset Demo Lab and try again.'});
+ }
+
+ if(!['active','defaulted'].includes(p.status)){
+  return res.status(400).json({error:`The demo payment plan cannot be paused from status ${p.status}.`});
+ }
+
+ const current=p.instalments?.find(x=>['due','overdue'].includes(x.status));
+
+ if(!current){
+  return res.status(400).json({error:'No current demo instalment could be found to pause.'});
+ }
+
+ const now=demoStamp();
+
+ p.status='paused';
+ p.stage='paused';
+ p.paused=true;
+ p.pausedAt=now;
+
+ if(p.currentPaymentRequest){
+  p.currentPaymentRequest.previousStatus=p.currentPaymentRequest.status;
+  p.currentPaymentRequest.status='plan_paused';
+  p.currentPaymentRequest.paymentUrl=null;
+  p.currentPaymentRequest.provider=null;
+ }
+
+ p.events.push({
+  type:'plan_paused',
+  amount:Number(p.remainingAmount||0),
+  at:now,
+  note:'Demo payment plan paused.'
+ });
+
+ p.communications.push({
+  type:'notification',
+  title:'Payment plan paused',
+  message:'Your FleetPay payment plan has been paused. No plan payment is currently required while the arrangement is paused.',
+  at:now
+ });
+
+ writeDemoState(state);
+ res.json(state);
+});
+
+app.post('/api/admin/demo/payment-plan/resume',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{
+ const state=readDemoState();
+ const p=state.paymentPlan;
+
+ if(!p){
+  return res.status(400).json({error:'Demo payment-plan state is unavailable. Reset Demo Lab and try again.'});
+ }
+
+ if(p.status!=='paused'){
+  return res.status(400).json({error:`Only a paused demo payment plan can be resumed. Current status: ${p.status}`});
+ }
+
+ const current=p.instalments?.find(x=>['due','overdue'].includes(x.status));
+
+ if(!current){
+  return res.status(400).json({error:'No current demo instalment could be found to resume.'});
+ }
+
+ const now=demoStamp();
+ const today=new Date().toISOString().slice(0,10);
+ const overdue=String(current.dueAt||'')<today;
+
+ if(overdue){
+  current.status='overdue';
+ }else{
+  current.status='due';
+ }
+
+ p.status='active';
+ p.stage='active';
+ p.paused=false;
+ p.resumedAt=now;
+ p.nextDueDate=current.dueAt;
+ p.nextDueAmount=Number(
+  Math.max(
+   0,
+   Number(current.amount||0)-Number(current.paidAmount||0)
+  ).toFixed(2)
+ );
+
+ if(p.currentPaymentRequest){
+  p.currentPaymentRequest.status='open';
+  p.currentPaymentRequest.amount=p.nextDueAmount;
+  p.currentPaymentRequest.dueAt=current.dueAt;
+ }
+
+ p.events.push({
+  type:'plan_resumed',
+  amount:Number(p.remainingAmount||0),
+  at:now,
+  note:overdue
+   ?'Demo payment plan resumed with the current instalment overdue.'
+   :'Demo payment plan resumed.'
+ });
+
+ p.communications.push({
+  type:'notification',
+  title:'Payment plan resumed',
+  message:overdue
+   ?'Your FleetPay payment plan has been resumed. The current instalment is overdue and is available to pay now.'
+   :'Your FleetPay payment plan has been resumed.',
+  at:now
+ });
+
+ writeDemoState(state);
+ res.json(state);
+});
+
+app.post('/api/admin/demo/payment-plan/cancel',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{
+ const state=readDemoState();
+ const p=state.paymentPlan;
+
+ if(!p){
+  return res.status(400).json({error:'Demo payment-plan state is unavailable. Reset Demo Lab and try again.'});
+ }
+
+ if(!['active','paused','defaulted'].includes(p.status)){
+  return res.status(400).json({error:`The demo payment plan cannot be cancelled from status ${p.status}.`});
+ }
+
+ const reason=String(req.body.reason||'').trim();
+
+ if(!reason){
+  return res.status(400).json({error:'Enter a reason for cancelling the demo payment plan.'});
+ }
+
+ const remaining=Number(
+  Math.max(0,Number(p.remainingAmount||0)).toFixed(2)
+ );
+
+ if(remaining<=0.00001){
+  return res.status(400).json({error:'The demo payment plan has no remaining balance.'});
+ }
+
+ const now=demoStamp();
+
+ /*
+  * Demo simulation of returning the remaining debt to Autocab.
+  * No Autocab helper or live table is called here.
+  */
+ p.autocab.balanceAfter=remaining;
+ p.autocab.returnedAmount=remaining;
+ p.autocab.returnedAt=now;
+ p.autocab.returned=true;
+ p.autocab.note='Demo cancellation simulation — remaining balance returned to simulated Autocab only.';
+
+ for(const instalment of p.instalments){
+  if(['scheduled','due','overdue'].includes(instalment.status)){
+   instalment.status='cancelled';
+  }
+ }
+
+ if(p.currentPaymentRequest){
+  p.currentPaymentRequest.status='cancelled';
+  p.currentPaymentRequest.cancelledAt=now;
+  p.currentPaymentRequest.paymentUrl=null;
+ }
+
+ p.sourceRequest.status='open';
+ p.sourceRequest.amount=remaining;
+ p.sourceRequest.paymentUrl=null;
+ p.sourceRequest.provider=null;
+
+ p.status='cancelled';
+ p.stage='cancelled';
+ p.cancelled=true;
+ p.cancelledAt=now;
+ p.cancelReason=reason;
+ p.paused=false;
+ p.defaulted=false;
+ p.nextDueAmount=0;
+ p.nextDueDate=null;
+ p.currentPaymentRequest=null;
+
+ p.events.push({
+  type:'plan_cancelled',
+  amount:remaining,
+  at:now,
+  note:`Demo payment plan cancelled. £${remaining.toFixed(2)} returned to the simulated outstanding balance. Reason: ${reason}`
+ });
+
+ p.communications.push({
+  type:'notification',
+  title:'Payment plan cancelled',
+  message:`Your FleetPay payment plan has been cancelled. The remaining balance of £${remaining.toFixed(2)} is now shown as an outstanding payment.`,
+  at:now
+ });
+
+ writeDemoState(state);
+ res.json(state);
+});
+
+app.post('/api/admin/demo/payment-plan/settle-early',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{
+ const state=readDemoState();
+ const p=state.paymentPlan;
+
+ if(!p){
+  return res.status(400).json({error:'Demo payment-plan state is unavailable. Reset Demo Lab and try again.'});
+ }
+
+ if(!['active','paused','defaulted'].includes(p.status)){
+  return res.status(400).json({error:`The demo payment plan cannot be settled early from status ${p.status}.`});
+ }
+
+ const remaining=Number(
+  Math.max(0,Number(p.remainingAmount||0)).toFixed(2)
+ );
+
+ if(remaining<=0.00001){
+  return res.status(400).json({error:'The demo payment plan has no remaining balance.'});
+ }
+
+ let current=p.instalments?.find(x=>['due','overdue'].includes(x.status));
+
+ if(!current){
+  current=p.instalments
+   ?.filter(x=>x.status==='scheduled')
+   .sort((a,b)=>a.instalmentNumber-b.instalmentNumber)[0];
+ }
+
+ if(!current){
+  return res.status(400).json({error:'No unpaid demo payment-plan instalment could be found.'});
+ }
+
+ const now=demoStamp();
+ const today=new Date().toISOString().slice(0,10);
+ const requestId=
+  p.currentPaymentRequest?.id ||
+  `DREQ-INST-${String(current.instalmentNumber).padStart(3,'0')}`;
+
+ /*
+  * Production settle-early does not complete the plan here.
+  * It converts the current instalment into one final request for
+  * the full remaining FleetPay-owned balance.
+  */
+
+ for(const instalment of p.instalments){
+  if(
+   instalment.instalmentNumber>current.instalmentNumber &&
+   instalment.status==='scheduled'
+  ){
+   instalment.status='cancelled';
+  }
+ }
+
+ current.amount=remaining;
+ current.dueAt=today;
+ current.status='due';
+ current.paymentRequestId=requestId;
+
+ p.currentPaymentRequest={
+  id:requestId,
+  amount:remaining,
+  status:'open',
+  dueAt:today,
+  paymentPlanId:p.planId,
+  instalmentId:current.id,
+  requestType:'payment_plan_instalment',
+  paymentUrl:null,
+  provider:null
+ };
+
+ p.status='active';
+ p.stage='active';
+ p.paused=false;
+ p.defaulted=false;
+ p.nextDueAmount=remaining;
+ p.nextDueDate=today;
+
+ p.settleEarlyRequested=true;
+ p.settleEarlyRequestedAt=now;
+ p.settleEarlyRequestAmount=remaining;
+
+ /*
+  * The debt stays owned by FleetPay.
+  * No Autocab credit or live helper is called.
+  */
+ p.autocab.balanceAfter=0;
+ p.autocab.note='Demo early settlement requested inside FleetPay — no Autocab credit posted.';
+
+ p.events.push({
+  type:'early_settlement_requested',
+  amount:remaining,
+  at:now,
+  note:`Demo early settlement requested. Final payment of £${remaining.toFixed(2)} is now due.`
+ });
+
+ p.communications.push({
+  type:'notification',
+  title:'Payment plan – settle remaining balance',
+  message:`Your remaining FleetPay payment-plan balance of £${remaining.toFixed(2)} is now available to pay in full.`,
+  at:now
+ });
+
+ writeDemoState(state);
+
+ res.json({
+  ...state,
+  demoEarlySettlement:{
+   remainingAmount:remaining,
+   paymentRequestId:requestId
+  }
+ });
+});
+
+
+app.post('/api/admin/demo/payment-plan/amend',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{
+ const state=readDemoState();
+ const p=state.paymentPlan;
+
+ if(!p){
+  return res.status(400).json({error:'Demo payment-plan state is unavailable.'});
+ }
+
+ if(!['draft','paused'].includes(p.status)){
+  return res.status(400).json({
+   error:'Only a draft or paused demo payment plan can be amended. Pause an active plan first.'
+  });
+ }
+
+ const frequency=String(req.body.frequency||p.frequency||'weekly').trim();
+ const instalmentAmount=Number(req.body.instalmentAmount||0);
+ const startDate=paymentPlanDateOnly(req.body.startDate);
+
+ if(!['weekly','fortnightly','monthly'].includes(frequency)){
+  return res.status(400).json({error:'Frequency must be weekly, fortnightly or monthly.'});
+ }
+
+ if(!Number.isFinite(instalmentAmount) || instalmentAmount<=0){
+  return res.status(400).json({error:'Instalment amount must be greater than zero.'});
+ }
+
+ if(!startDate){
+  return res.status(400).json({error:'A valid next payment date is required.'});
+ }
+
+ const remaining=Number(
+  (
+   p.status==='draft'
+    ?Number(p.planAmount||0)
+    :Number(p.remainingAmount||0)
+  ).toFixed(2)
+ );
+
+ if(remaining<=0){
+  return res.status(400).json({error:'This demo payment plan has no remaining balance to amend.'});
+ }
+
+ if(instalmentAmount>remaining){
+  return res.status(400).json({error:'Instalment amount cannot exceed the remaining balance.'});
+ }
+
+ const paid=p.instalments
+  .filter(x=>x.status==='paid')
+  .sort((a,b)=>a.instalmentNumber-b.instalmentNumber);
+
+ const lastPaidNumber=paid.reduce(
+  (max,x)=>Math.max(max,Number(x.instalmentNumber||0)),
+  0
+ );
+
+ const schedule=[];
+ let scheduleRemaining=remaining;
+ let i=0;
+
+ while(scheduleRemaining>0.00001){
+  const instalmentNumber=lastPaidNumber+i+1;
+
+  if(instalmentNumber>104){
+   return res.status(400).json({
+    error:'This amendment would exceed 104 total instalments. Increase the instalment amount.'
+   });
+  }
+
+  const amount=Number(
+   Math.min(instalmentAmount,scheduleRemaining).toFixed(2)
+  );
+
+  schedule.push({
+   id:`DINST-${String(instalmentNumber).padStart(3,'0')}`,
+   instalmentNumber,
+   amount,
+   paidAmount:0,
+   dueAt:paymentPlanAddDate(startDate,i,frequency),
+   status:'scheduled',
+   paymentRequestId:null,
+   paidAt:null
+  });
+
+  scheduleRemaining=Number(
+   (scheduleRemaining-amount).toFixed(2)
+  );
+
+  i++;
+ }
+
+ const now=demoStamp();
+ const today=new Date().toISOString().slice(0,10);
+
+ if(p.status==='draft'){
+  p.instalments=schedule;
+  p.currentPaymentRequest=null;
+
+ }else{
+  const first=schedule[0];
+
+  first.status=
+   first.dueAt<today
+    ?'overdue'
+    :'due';
+
+  const requestId=`DREQ-INST-${String(first.instalmentNumber).padStart(3,'0')}`;
+
+  first.paymentRequestId=requestId;
+
+  p.instalments=[...paid,...schedule];
+
+  p.currentPaymentRequest={
+   id:requestId,
+   amount:Number(first.amount||0),
+   status:'plan_paused',
+   dueAt:first.dueAt,
+   paymentPlanId:p.planId,
+   instalmentId:first.id,
+   requestType:'payment_plan_instalment',
+   paymentUrl:null,
+   provider:null
+  };
+
+  p.communications.push({
+   type:'notification',
+   title:'Payment plan amended',
+   message:`Your payment plan has been amended. Remaining balance £${remaining.toFixed(2)}. New instalment £${instalmentAmount.toFixed(2)} ${frequency}. Next payment date ${startDate}. The plan remains paused until FleetPay resumes it.`,
+   at:now
+  });
+ }
+
+ p.frequency=frequency;
+ p.instalmentAmount=Number(instalmentAmount.toFixed(2));
+ p.startDate=startDate;
+ p.instalmentsTotal=p.instalments.length;
+ p.instalmentsPaid=paid.length;
+ p.nextDueAmount=Number(schedule[0].amount||0);
+ p.nextDueDate=schedule[0].dueAt;
+
+ p.events.push({
+  type:'plan_amended',
+  amount:remaining,
+  at:now,
+  note:`Demo payment plan amended to £${instalmentAmount.toFixed(2)} ${frequency}.`
+ });
+
+ writeDemoState(state);
+ res.json(state);
+});
+
+
+app.get('/api/admin/demo/payment-plan/early-payout-status',adminAuth,(req,res)=>{
+ const state=readDemoState();
+ const p=state.paymentPlan;
+
+ const blocked=Boolean(
+  p && ['active','paused','defaulted'].includes(p.status)
+ );
+
+ res.json({
+  blocked,
+  planStatus:p?.status||null,
+  reason:blocked
+   ?'Early payouts are unavailable while the demo driver has an active payment plan.'
+   :null
+ });
+});
+
 
 /* Demo Monday: Sync -> Review -> Freeze -> Fund -> Release -> Monitor -> Reconcile */
 app.post('/api/admin/demo/monday/confirm-rentsheets',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const state=readDemoState(),r=state.monday;if(r.locked)return res.status(400).json({error:'This demo run is locked. Reset Demo Lab to start again.'});if(r.stage!=='rentsheets')return res.status(400).json({error:'Rent Sheets have already been confirmed for this demo run.'});r.rentSheetsConfirmedAt=demoStamp();r.stage='sync';r.status='ready_to_sync';writeDemoState(state);res.json(state)});
