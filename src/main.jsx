@@ -85,6 +85,15 @@ function Stat({icon:Icon,label,value,sub,onClick,active=false}){
 
 function Pill({children,tone='neutral'}){return <span className={`pill ${tone}`}>{children}</span>}
 
+function WizardSteps({steps,currentIndex=0}){
+ return <div className="liveSteps wizardSteps">
+  {steps.map((label,i)=><div key={label} className={`${i<=currentIndex?'done':''} ${i===currentIndex?'current':''}`}>
+   <span>{i<currentIndex?'✓':i+1}</span>
+   <b>{label}</b>
+  </div>)}
+ </div>
+}
+
 
 function DemoLab({demo,loadDemo,resetDemo,action,demoEmail,setDemoEmail,demoMobile,setDemoMobile,sendEmail,sendSms}){
  const tone=v=>['paid','updated','approved','reconciled','funded','cleared'].includes(String(v))?'good':['failed','excluded','declined','collection','not_posted'].includes(String(v))?'bad':['processing','waiting','requested','pending','frozen','funding_wait'].includes(String(v))?'warn':'neutral';
@@ -96,7 +105,7 @@ function DemoLab({demo,loadDemo,resetDemo,action,demoEmail,setDemoEmail,demoMobi
  const weeklySteps=[['rentsheets','Confirm Rent Sheets'],['sync','Sync Autocab'],['review','Review & approve'],['funding','Create run'],['funding_wait','Fund Wise'],['funded','Release payouts'],['monitor','Update Autocab'],['complete','Reconcile']];
  const earlySteps=[['balance','Sync current balance'],['review','Review requests'],['funding','Create run'],['funding_wait','Check Wise funds'],['funded','Release payouts'],['monitor','Update Autocab'],['complete','Reconcile']];
  const stepIndex=(run,early)=>{const steps=early?earlySteps:weeklySteps;const i=steps.findIndex(x=>x[0]===run?.stage);if(run?.stage==='funding'&&Number(run?.topUpRequired||0)<=0)return 3;return Math.max(0,i)};
- const StepBar=({run,early=false})=>{const steps=early?earlySteps:weeklySteps,idx=stepIndex(run,early);return <div className="demoProcessSteps v23">{steps.map((x,i)=><div key={x[1]} className={`${i<=idx?'done':''} ${i===idx?'current':''}`}><span>{i<idx?'✓':i+1}</span><b>{x[1]}</b></div>)}</div>};
+ const StepBar=({run,early=false})=>{const steps=(early?earlySteps:weeklySteps).map(x=>x[1]),idx=stepIndex(run,early);return <WizardSteps steps={steps} currentIndex={idx}/>};
  const Procedure=({early=false})=><div className="operatorProcedure"><div className="procedureTitle"><ShieldCheck/><div><b>{early?'Early payout operator procedure':'Monday weekly operator procedure'}</b><span>{early?'Uses the driver’s current Autocab balance — no Rent Sheets step.':'Always start after Monday Rent Sheets have been completed in Autocab.'}</span></div></div><div className="procedureGrid">{(early?[
   ['1','Sync current balance','Refresh Autocab and confirm the driver still has enough available balance.'],['2','Review requests','Approve/decline every request. Nothing advances with pending decisions.'],['3','Create & lock run','Freeze the approved amounts so they cannot silently change.'],['4','Check Wise cleared funds','Use existing GBP balance first. If short, transfer only the shortfall.'],['5','Release payouts','Blocked until FaivoPay confirms cleared Wise balance is sufficient.'],['6','Monitor Wise','Track each driver payment individually. Retry failures only.'],['7','Update Autocab','Only successful bank payouts create the matching Autocab adjustment.'],['8','Reconcile & lock','Wise paid total and Autocab adjustments must match before completion.']
  ]:[
@@ -104,19 +113,120 @@ function DemoLab({demo,loadDemo,resetDemo,action,demoEmail,setDemoEmail,demoMobi
  ]).map(x=><div key={x[0]}><span>{x[0]}</span><div><b>{x[1]}</b><small>{x[2]}</small></div></div>)}</div></div>;
  const Funding=({run,title,early=false})=>{if(!['funding','funding_wait','funded','monitor','complete'].includes(run.stage))return null;const required=Number(run.fundingRequired||paymentTotal(run,early)),top=Number(run.topUpRequired||0),sent=Number(run.fundingTransferAmount||0);return <div className="demoFundingBox v23"><div className="demoFundingHead"><div><span>DEMO WISE FUNDING CONTROL</span><h4>{title}</h4></div><Pill tone={run.stage==='funded'||run.stage==='monitor'||run.stage==='complete'?'good':'warn'}>{run.stage==='funded'||run.stage==='monitor'||run.stage==='complete'?'Cleared funds confirmed':run.stage==='funding_wait'?'Bank transfer sent — awaiting clearance':'Funding check required'}</Pill></div><div className="demoFundingGrid"><div><span>Approved payout total</span><strong>{money(required)}</strong></div><div><span>Cleared demo Wise balance</span><strong>{money(run.wiseBalance||0)}</strong></div><div><span>Shortfall to transfer</span><strong className={top>0?'negative':''}>{money(top)}</strong></div><div><span>Payment run reference</span><strong>{run.reference||'—'}</strong></div></div><div className="demoBankDetails"><div><span>Account name</span><b>{run.wiseAccount?.name}</b></div><div><span>Sort code</span><b>{run.wiseAccount?.sortCode}</b></div><div><span>Account number</span><b>{run.wiseAccount?.accountNumber}</b></div></div>{run.stage==='funding'&&<div className="operatorWarning"><AlertTriangle/><div><b>Funding gate</b><span>{top>0?`Transfer exactly ${money(top)} using reference ${run.reference}. FaivoPay must not release any driver payment until Wise reports the money as cleared.`:'The existing Wise balance already covers this run. Check the cleared balance before release.'}</span></div></div>}{run.stage==='funding_wait'&&<div className="operatorWarning blue"><Clock3/><div><b>Waiting for cleared funds</b><span>{money(sent)} has been simulated as sent from the taxi company bank. The payout button stays locked until Wise confirms the credit.</span></div></div>}</div>};
  const StatusTable=({run,early=false})=>!['monitor','complete'].includes(run.stage)?null:<div className="demoMonitor"><div className="panelHead"><div><span className="sectionKicker">PAYMENT + AUTOCAB MONITOR</span><h3>Process each driver to final reconciliation</h3><p>A successful Wise payout is the trigger for the matching Autocab update. Failed bank payments must never reduce the driver’s Autocab balance.</p></div></div><div className="tableWrap proTable"><table><thead><tr><th>Driver</th><th>Payout</th><th>Wise payment</th><th>Autocab adjustment</th><th>Result</th></tr></thead><tbody>{approved(run,early).map(x=><tr key={x.id}><td><div className="driverCell"><span className="callsign">{x.callsign}</span><b>{x.driverName}</b></div></td><td><b>{money(early?x.netAmount:x.amount)}</b></td><td><Pill tone={tone(x.wiseStatus)}>{String(x.wiseStatus||'not_sent').replaceAll('_',' ')}</Pill></td><td><Pill tone={tone(x.autocabStatus)}>{String(x.autocabStatus||'not_posted').replaceAll('_',' ')}</Pill></td><td>{x.failureReason?<span className="failureText"><AlertTriangle/>{x.failureReason}</span>:x.wiseStatus==='paid'&&x.autocabStatus==='updated'?<span className="successText"><CheckCircle2/>Paid & reconciled</span>:'Waiting'}</td></tr>)}</tbody></table></div></div>;
- const RunCard=({kind,run,early=false})=>{const base=`/api/admin/demo/${kind}`;const title=early?'Early payout — complete operator walkthrough':'Monday weekly payout — complete operator walkthrough';return <section className="panel demoRunV22"><div className="panelHead"><div><span className="sectionKicker">{early?'DEMO EARLY PAYOUT':'DEMO MONDAY RUN'}</span><h3>{title}</h3><p>{early?'Uses the current Autocab balance and the same funding/release/reconciliation controls as Monday.':'This is the exact sequence the live Monday process will follow once Wise is connected.'}</p></div><Pill tone={run.stage==='complete'?'good':run.stage==='monitor'?'warn':'neutral'}>{run.stage==='complete'?'Reconciled':String(run.status||run.stage).replaceAll('_',' ')}</Pill></div><StepBar run={run} early={early}/><Procedure early={early}/>
- {!early&&run.stage==='rentsheets'&&<div className="demoActionStage"><div className="operatorWarning"><AlertTriangle/><div><b>Step 1 — Have Monday Rent Sheets been run?</b><span>Do not continue until Autocab Rent Sheets are complete. FaivoPay will use the post-rent-sheet Previous Balance for the weekly settlement.</span></div></div><button className="primary largeAction" onClick={()=>action(`${base}/confirm-rentsheets`,'Confirm that Monday Rent Sheets have finished in Autocab?')}><CheckCircle2/>Confirm Rent Sheets completed</button></div>}
- {!early&&run.stage==='sync'&&<div className="demoActionStage"><div className="operatorWarning blue"><RefreshCw/><div><b>Step 2 — Sync Autocab Previous Balances</b><span>FaivoPay now refreshes Autocab and captures the balances used for this run.</span></div></div><button className="primary largeAction" onClick={()=>action(`${base}/sync`,'Simulate a fresh Autocab sync after Rent Sheets?')}><RefreshCw/>Sync Autocab balances</button></div>}
- {early&&run.stage==='balance'&&<div className="demoActionStage"><div className="operatorWarning blue"><RefreshCw/><div><b>Step 1 — Sync current Autocab balances</b><span>No Rent Sheets are required. Early payouts are checked against the driver’s current available balance at the time of the run.</span></div></div><button className="primary largeAction" onClick={()=>action(`${base}/sync`,'Simulate a fresh current-balance sync for the early payout run?')}><RefreshCw/>Sync current balances</button></div>}
- {run.stage==='review'&&<><div className="operatorWarning"><AlertTriangle/><div><b>{early?'Step 2 — Review every early payout':'Step 3 — Review every weekly payout'}</b><span>{early?'Approve or decline every request after checking current balance.':'Approve or exclude every positive Previous Balance. The run cannot be created while any payout is undecided.'}</span></div></div><div className="tableWrap proTable"><table><thead><tr><th>Driver</th><th>{early?'Current request':'Previous balance'}</th><th>Fee</th><th>{early?'Driver receives':'Weekly payout'}</th><th>Status</th><th>Operator action</th></tr></thead><tbody>{run.items.map(x=><tr key={x.id}><td><div className="driverCell"><span className="callsign">{x.callsign}</span><b>{x.driverName}</b></div></td><td className={!early&&x.previousBalance<0?'negative':''}>{money(early?x.grossAmount:x.previousBalance)}</td><td>{money(early?x.fee:x.weeklyFee)}</td><td><b>{Number(early?x.netAmount:x.amount)>0?money(early?x.netAmount:x.amount):'—'}</b></td><td><Pill tone={tone(x.status)}>{x.status}</Pill></td><td>{((early&&x.status==='requested')||(!early&&x.status!=='collection'))&&!['paid'].includes(x.status)&&<div className="compactActions"><button className="mini success" onClick={()=>action(`${base}/${x.id}`,'',{status:'approved'})}>Approve</button><button className="mini danger" onClick={()=>action(`${base}/${x.id}`,'',{status:early?'declined':'excluded'})}>{early?'Decline':'Exclude'}</button></div>}</td></tr>)}</tbody></table></div><div className="demoDecisionSummary"><div><span>Approved</span><b>{approved(run,early).length}</b></div><div><span>Still awaiting decision</span><b className={pending(run,early).length?'negative':''}>{pending(run,early).length}</b></div><div><span>Approved payout total</span><b>{money(paymentTotal(run,early))}</b></div></div><div className="demoActions"><button className="secondary" onClick={()=>action(`${base}/approve-all`,`Approve all remaining ${pending(run,early).length} demo payment(s)?`)}>Approve all remaining</button><button className="primary" disabled={pending(run,early).length>0||!approved(run,early).length} onClick={()=>action(`${base}/freeze`,'Final check: are all approved payment amounts correct? This locks the run before funding.')}>Create & lock payment run</button></div></>}
- <Funding run={run} title={early?'Early payout funding':'Monday weekly funding'} early={early}/>
- {run.stage==='funding'&&<div className="demoActions">{Number(run.topUpRequired||0)>0?<button className="primary" onClick={()=>action(`${base}/top-up`,`Simulate sending ${money(run.topUpRequired)} from the taxi company bank to the Wise GBP account? It will NOT be treated as cleared yet.`)}><Banknote/>Simulate bank transfer to Wise</button>:<button className="primary" onClick={()=>action(`${base}/fund`,'Check the demo Wise balance and confirm sufficient cleared funds are available?')}><RefreshCw/>Check cleared Wise funds</button>}</div>}
- {run.stage==='funding_wait'&&<div className="demoActions"><button className="primary successButton" onClick={()=>action(`${base}/fund`,'Simulate Wise confirming the incoming bank transfer has cleared?')}><RefreshCw/>Check Wise — funds now cleared</button></div>}
- {run.stage==='funded'&&<div className="demoActionStage"><div className="operatorWarning green"><CheckCircle2/><div><b>Funding gate passed</b><span>FaivoPay has confirmed sufficient cleared Wise funds. Verify the approved count and total one final time before releasing the batch.</span></div></div><button className="primary largeAction" onClick={()=>action(`${base}/release`,`Release ${approved(run,early).length} demo payments totalling ${money(run.fundingRequired)}? In live mode this is the point the Wise batch is funded and money begins leaving.`)}><Send/>Release {early?'early payout':'weekly'} batch</button></div>}
- <StatusTable run={run} early={early}/>
- {run.stage==='monitor'&&<div className="demoActions"><button className="secondary" disabled={!processing(run,early).length} onClick={()=>action(`${base}/refresh-status`,'Simulate Wise completing the processing payments and FaivoPay posting the successful Autocab adjustments?')}><RefreshCw/>Refresh Wise + Autocab status</button><button className="secondary dangerOutline" disabled={!failed(run,early).length} onClick={()=>action(`${base}/retry-failed`,'Simulate correcting the failed recipient and retry only that payment?')}><AlertTriangle/>Correct & retry failed ({failed(run,early).length})</button><button className="primary" disabled={failed(run,early).length>0||processing(run,early).length>0} onClick={()=>action(`${base}/reconcile`,'Final check: every approved Wise payment is Paid and every matching Autocab adjustment is Updated. Reconcile and permanently lock this demo run?')}><ShieldCheck/>Reconcile & lock run</button></div>}
- {run.stage==='complete'&&<div className="demoComplete"><CheckCircle2/><div><b>Run reconciled and locked</b><span>{approved(run,early).length} successful payments · {money(paymentTotal(run,early))} · all matching Autocab adjustments confirmed.</span></div></div>}
- </section>};
+ const RunCard=({kind,run,early=false})=>{
+  const base=`/api/admin/demo/${kind}`;
+  const title=early?'Early payout':'Monday weekly payout';
+  const steps=early
+   ?['Review requests','Create run','Funding','Funds cleared','Release payouts','Processing','Update Autocab','Reconcile']
+   :['Rent Sheets','Sync balances','Plan deductions','Review payouts','Create run','Funding','Release','Reconcile'];
+
+  const idx=early
+   ?run.stage==='balance'?0
+    :run.stage==='review'?0
+    :run.stage==='funding'?2
+    :run.stage==='funding_wait'?3
+    :run.stage==='funded'?4
+    :run.stage==='monitor'?(processing(run,early).length>0?5:6)
+    :run.stage==='complete'?7
+    :0
+   :run.stage==='rentsheets'?0
+    :run.stage==='sync'?1
+    :run.stage==='review'?3
+    :run.stage==='funding'?5
+    :run.stage==='funding_wait'?5
+    :run.stage==='funded'?6
+    :run.stage==='monitor'?6
+    :run.stage==='complete'?7
+    :0;
+
+  return <section className="liveWorkflowCard wizardFlowCard demoRunV22">
+   <div className="liveWorkflowHead">
+    <div>
+     <span>{early?'DEMO EARLY PAYOUT':'DEMO MONDAY RUN'}</span>
+     <h3>{title}</h3>
+     <p>{early?'Guided early-payout process using isolated Demo Lab data.':'Guided Monday settlement using isolated Demo Lab data.'}</p>
+    </div>
+    <Pill tone={run.stage==='complete'?'good':run.stage==='monitor'?'warn':'neutral'}>
+     {run.stage==='complete'?'Reconciled':String(run.status||run.stage).replaceAll('_',' ')}
+    </Pill>
+   </div>
+
+   <WizardSteps steps={steps} currentIndex={idx}/>
+
+   <div className="wizardStageBody">
+    {!early&&run.stage==='rentsheets'&&<div className="demoActionStage">
+     <div className="operatorWarning"><AlertTriangle/><div><b>Confirm Monday Rent Sheets</b><span>Do not continue until Autocab Rent Sheets are complete. FaivoPay will use the post-rent-sheet Previous Balance.</span></div></div>
+     <button className="primary largeAction" onClick={()=>action(`${base}/confirm-rentsheets`,'Confirm that Monday Rent Sheets have finished in Autocab?')}><CheckCircle2/>Confirm Rent Sheets completed</button>
+    </div>}
+
+    {!early&&run.stage==='sync'&&<div className="demoActionStage">
+     <div className="operatorWarning blue"><RefreshCw/><div><b>Sync Autocab Previous Balances</b><span>Refresh the balances that will be used for this Monday settlement.</span></div></div>
+     <button className="primary largeAction" onClick={()=>action(`${base}/sync`,'Simulate a fresh Autocab sync after Rent Sheets?')}><RefreshCw/>Sync Autocab balances</button>
+    </div>}
+
+    {early&&run.stage==='balance'&&<div className="demoActionStage">
+     <div className="operatorWarning blue"><RefreshCw/><div><b>Sync current Autocab balances</b><span>Early payouts are checked against the driver's current available balance.</span></div></div>
+     <button className="primary largeAction" onClick={()=>action(`${base}/sync`,'Simulate a fresh current-balance sync for the early payout run?')}><RefreshCw/>Sync current balances</button>
+    </div>}
+
+    {run.stage==='review'&&<>
+     <div className="operatorWarning"><AlertTriangle/><div><b>{early?'Review every early payout request':'Review every weekly payout'}</b><span>{early?'Approve or decline every request after checking current balance.':'Approve or exclude the positive Previous Balances before creating the payment run.'}</span></div></div>
+     <div className="tableWrap proTable"><table>
+      <thead><tr><th>Driver</th><th>{early?'Current request':'Previous balance'}</th><th>Fee</th><th>{early?'Driver receives':'Weekly payout'}</th><th>Status</th><th>Operator action</th></tr></thead>
+      <tbody>{run.items.map(x=><tr key={x.id}>
+       <td><div className="driverCell"><span className="callsign">{x.callsign}</span><b>{x.driverName}</b></div></td>
+       <td className={!early&&x.previousBalance<0?'negative':''}>{money(early?x.grossAmount:x.previousBalance)}</td>
+       <td>{money(early?x.fee:x.weeklyFee)}</td>
+       <td><b>{Number(early?x.netAmount:x.amount)>0?money(early?x.netAmount:x.amount):'—'}</b></td>
+       <td><Pill tone={tone(x.status)}>{x.status}</Pill></td>
+       <td>{((early&&x.status==='requested')||(!early&&x.status!=='collection'))&&!['paid'].includes(x.status)&&<div className="compactActions">
+        <button className="mini success" onClick={()=>action(`${base}/${x.id}`,'',{status:'approved'})}>Approve</button>
+        <button className="mini danger" onClick={()=>action(`${base}/${x.id}`,'',{status:early?'declined':'excluded'})}>{early?'Decline':'Exclude'}</button>
+       </div>}</td>
+      </tr>)}</tbody>
+     </table></div>
+
+     <div className="demoDecisionSummary">
+      <div><span>Approved</span><b>{approved(run,early).length}</b></div>
+      <div><span>Awaiting decision</span><b className={pending(run,early).length?'negative':''}>{pending(run,early).length}</b></div>
+      <div><span>Approved payout total</span><b>{money(paymentTotal(run,early))}</b></div>
+     </div>
+
+     <div className="demoActions">
+      <button className="secondary" onClick={()=>action(`${base}/approve-all`,`Approve all remaining ${pending(run,early).length} demo payment(s)?`)}>Approve all remaining</button>
+      <button className="primary" disabled={pending(run,early).length>0||!approved(run,early).length} onClick={()=>action(`${base}/freeze`,'Final check: are all approved payment amounts correct? This locks the run before funding.')}>Create & lock payment run</button>
+     </div>
+    </>}
+
+    <Funding run={run} title={early?'Early payout funding':'Monday weekly funding'} early={early}/>
+
+    {run.stage==='funding'&&<div className="demoActions">
+     {Number(run.topUpRequired||0)>0
+      ?<button className="primary" onClick={()=>action(`${base}/top-up`,`Simulate sending ${money(run.topUpRequired)} from the taxi company bank to the Wise GBP account? It will NOT be treated as cleared yet.`)}><Banknote/>Simulate bank transfer to Wise</button>
+      :<button className="primary" onClick={()=>action(`${base}/fund`,'Check the demo Wise balance and confirm sufficient cleared funds are available?')}><RefreshCw/>Check cleared Wise funds</button>}
+    </div>}
+
+    {run.stage==='funding_wait'&&<div className="demoActions">
+     <button className="primary successButton" onClick={()=>action(`${base}/fund`,'Simulate Wise confirming the incoming bank transfer has cleared?')}><RefreshCw/>Check Wise — funds now cleared</button>
+    </div>}
+
+    {run.stage==='funded'&&<div className="demoActionStage">
+     <div className="operatorWarning green"><CheckCircle2/><div><b>Funds cleared — review before release</b><span>Verify the approved count and total one final time before payouts are released.</span></div></div>
+     <button className="primary largeAction" onClick={()=>action(`${base}/release`,`Release ${approved(run,early).length} demo payments totalling ${money(run.fundingRequired)}?`)}><Send/>Release {early?'early payout':'weekly'} batch</button>
+    </div>}
+
+    <StatusTable run={run} early={early}/>
+
+    {run.stage==='monitor'&&<div className="demoActions">
+     <button className="secondary" disabled={!processing(run,early).length} onClick={()=>action(`${base}/refresh-status`,'Simulate Wise completing the processing payments and FaivoPay posting the successful Autocab adjustments?')}><RefreshCw/>Refresh Wise + Autocab status</button>
+     <button className="secondary dangerOutline" disabled={!failed(run,early).length} onClick={()=>action(`${base}/retry-failed`,'Simulate correcting the failed recipient and retry only that payment?')}><AlertTriangle/>Correct & retry failed ({failed(run,early).length})</button>
+     <button className="primary" disabled={failed(run,early).length>0||processing(run,early).length>0} onClick={()=>action(`${base}/reconcile`,'Final check: every approved Wise payment is Paid and every matching Autocab adjustment is Updated. Reconcile and permanently lock this demo run?')}><ShieldCheck/>Reconcile & lock run</button>
+    </div>}
+
+    {run.stage==='complete'&&<div className="demoComplete"><CheckCircle2/><div><b>Run reconciled and locked</b><span>{approved(run,early).length} successful payments · {money(paymentTotal(run,early))} · all matching Autocab adjustments confirmed.</span></div></div>}
+   </div>
+  </section>
+ };
 
  const PaymentPlanCard=({plan})=>{
   if(!plan)return null;
@@ -805,6 +915,76 @@ function AdminApp(){
  const weeklyIncomingFeesCharges=Math.max(0,weeklyOutstandingTotal-weeklyIncomingBeforeFees);
  const weeklyExcludedBeforeFees=weeklyExcluded.reduce((a,x)=>a+Math.max(0,Number(x.previousBalance||0)),0);
  const activeMondayCancelledBatch=activeMonday?sett.payoutRuns.find(r=>r.runType==='weekly'&&r.status==='cancelled'&&String(r.notes||'').includes(activeMonday.id)):null;
+
+ const activeWeeklyPayoutRun=activeMonday?.payoutRunId
+  ?sett.payoutRuns.find(r=>String(r.id)===String(activeMonday.payoutRunId))||null
+  :null;
+
+ const activeEarlyPayoutRun=sett.payoutRuns.find(
+  r=>r.runType==='early'&&!['paid','cancelled'].includes(r.status)
+ )||null;
+
+ const mondayWizardSteps=[
+  'Rent Sheets',
+  'Sync balances',
+  'Plan deductions',
+  'Review payouts',
+  'Create run',
+  'Funding',
+  'Release',
+  'Reconcile'
+ ];
+
+ const mondayWizardIndex=(()=>{
+  if(!activeMonday)return 0;
+
+  if(
+   pendingPlanAllocations.length||
+   applyingPlanAllocations.length||
+   failedPlanAllocations.length
+  )return 2;
+
+  if(!activeMonday.payoutRunId){
+   if(weeklyPending.length>0)return 3;
+   return 4;
+  }
+
+  const r=activeWeeklyPayoutRun;
+  if(!r)return 4;
+
+  if(['ready','funding_pending'].includes(r.status))return 5;
+  if(r.status==='funded')return 6;
+  if(['submitted_sandbox','submitted','processing','paid'].includes(r.status))return 7;
+
+  return 4;
+ })();
+
+ const earlyWizardSteps=[
+  'Review requests',
+  'Create run',
+  'Funding',
+  'Funds cleared',
+  'Release payouts',
+  'Processing',
+  'Update Autocab',
+  'Reconcile'
+ ];
+
+ const earlyWizardIndex=(()=>{
+  const r=activeEarlyPayoutRun;
+
+  if(!r){
+   return sett.earlyPayoutRequests.some(x=>x.status==='approved')?1:0;
+  }
+
+  if(r.status==='ready')return 2;
+  if(r.status==='funding_pending')return 3;
+  if(r.status==='funded')return 4;
+  if(['submitted_sandbox','submitted'].includes(r.status))return 5;
+  if(r.status==='processing')return 6;
+
+  return 0;
+ })();
  const standardOutstanding=outstanding.filter(
   x=>x.status==='open'&&x.request_type!=='payment_plan_instalment'
  );
@@ -1598,7 +1778,48 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
  async function demoSendSms(){try{await api('/api/admin/demo/test-sms',{method:'POST',body:JSON.stringify({to:demoMobile})});alert('Demo SMS sent.')}catch(e){alert(e.message)}}
  async function demoAction(path,confirmText='',body={}){if(confirmText&&!confirm(confirmText))return;try{setDemo(await api(path,{method:'POST',body:JSON.stringify(body)}))}catch(e){alert(e.message)}}
  async function launchReset(){if(resetPhrase!=='RESET FAIVOPAY FOR LIVE LAUNCH')return alert('Type the confirmation phrase exactly.');if(!confirm('FINAL CHECK: create a backup and clear FaivoPay operational data for live launch?'))return;try{const j=await api('/api/admin/launch-reset',{method:'POST',body:JSON.stringify({phrase:resetPhrase,includeDriverAccounts:resetDrivers})});setResetPhrase('');alert(`Launch reset complete. Backup: ${j.backupFile}`);await refreshCore()}catch(e){alert(e.message)}}
- const LiveRunCard=({r})=>{const idx=r.status==='ready'?3:r.status==='funding_pending'?4:r.status==='funded'?5:['submitted_sandbox','submitted','processing'].includes(r.status)?6:r.status==='paid'?7:r.status==='cancelled'?-1:3;const steps=r.runType==='weekly'?['Rent Sheets','Sync & approve','Lock run','Funding','Funds cleared','Release','Autocab','Reconciled']:['Sync balance','Approve','Lock run','Funding','Funds cleared','Release','Autocab','Reconciled'];const canCancel=['ready','funding_pending','funded'].includes(r.status)&&!r.providerRef&&!r.releasedAt;return <div className={`liveWorkflowCard ${r.status==='cancelled'?'cancelled':''}`}><div className="liveWorkflowHead"><div><span>{r.runType==='weekly'?'WEEKLY PAYMENT RUN':'EARLY PAYOUT RUN'} · {dt(r.createdAt)}</span><h3>{money(r.totalAmount)}</h3><p>{r.itemCount} drivers · {r.id}</p></div><Pill tone={statusTone(r.status)}>{String(r.status).replaceAll('_',' ')}</Pill></div><div className="liveSteps">{steps.map((x,i)=><div key={x} className={`${idx>=0&&i<=idx?'done':''} ${i===idx?'current':''}`}><span>{i<idx?'✓':i+1}</span><b>{x}</b></div>)}</div>{r.status==='ready'&&<div className="operatorWarning"><AlertTriangle/><div><b>Funding required before release</b><span>Approved drivers are locked into this run. Transfer the required funds, then record that the transfer has been sent.</span></div></div>}{r.status==='funding_pending'&&<div className="operatorWarning blue"><Clock3/><div><b>Waiting for cleared funds</b><span>Do not release the payment run until the funds are visible as cleared in the payout account.</span></div></div>}{r.status==='funded'&&<div className="operatorWarning green"><CheckCircle2/><div><b>Funding gate passed</b><span>Cleared funds have been confirmed. One final operator check is required before release.</span></div></div>}<div className="runCardActions liveRunActions">{canCancel&&canMoney&&<button className="dangerOutline" onClick={()=>cancelPayoutRun(r)}><X/>Cancel run</button>}{r.status==='ready'&&canMoney&&<button className="secondary" onClick={()=>confirmFundingSent(r)}><Banknote/>Funding transfer sent</button>}{r.status==='funding_pending'&&canMoney&&<button className="primary" onClick={()=>confirmFundsCleared(r)}><CheckCircle2/>Confirm funds cleared</button>}{r.status==='funded'&&integrations?.wise?.environment==='sandbox'&&canMoney&&<button className="primary" onClick={()=>sendWiseSandbox(r)}><Send/>Release to Wise sandbox</button>}{r.status==='funded'&&integrations?.wise?.environment!=='sandbox'&&<span className="tinyNote">Live provider release will unlock when Wise production payout API is connected.</span>}{['submitted_sandbox','submitted','processing'].includes(r.status)&&canMoney&&<button className="primary" onClick={()=>markRunPaid(r)}><ShieldCheck/>Confirm paid & update Autocab</button>}</div>{r.status==='paid'&&<div className="demoComplete"><CheckCircle2/><div><b>Run reconciled</b><span>Provider payment confirmed and matching Autocab updates completed.</span></div></div>}{r.status==='cancelled'&&<div className="cancelledRunNote"><X/><span>Cancelled before release. Included drivers were returned to Approved.</span></div>}</div>};
+ const LiveRunCard=({r,showSteps=true})=>{
+  const idx=r.status==='ready'?3:r.status==='funding_pending'?4:r.status==='funded'?5:['submitted_sandbox','submitted','processing'].includes(r.status)?6:r.status==='paid'?7:r.status==='cancelled'?-1:3;
+  const steps=r.runType==='weekly'
+   ?['Rent Sheets','Sync & approve','Lock run','Funding','Funds cleared','Release','Autocab','Reconciled']
+   :['Review requests','Create run','Funding','Funds cleared','Review payouts','Release','Processing','Complete'];
+  const canCancel=['ready','funding_pending','funded'].includes(r.status)&&!r.providerRef&&!r.releasedAt;
+
+  return <div className={`liveWorkflowCard wizardFlowCard ${r.status==='cancelled'?'cancelled':''}`}>
+   <div className="liveWorkflowHead">
+    <div>
+     <span>{r.runType==='weekly'?'WEEKLY PAYMENT RUN':'EARLY PAYOUT RUN'} · {dt(r.createdAt)}</span>
+     <h3>{money(r.totalAmount)}</h3>
+     <p>{r.itemCount} drivers · {r.id}</p>
+    </div>
+    <Pill tone={statusTone(r.status)}>{String(r.status).replaceAll('_',' ')}</Pill>
+   </div>
+
+   {showSteps&&<WizardSteps steps={steps} currentIndex={idx}/>}
+
+   <div className="wizardStageBody">
+    {r.status==='ready'&&<div className="operatorWarning"><AlertTriangle/><div><b>Funding required</b><span>The payment run is locked. Transfer the required funds, then record that the transfer has been sent.</span></div></div>}
+
+    {r.status==='funding_pending'&&<div className="operatorWarning blue"><Clock3/><div><b>Funding transfer sent</b><span>Cancellation is still available. Do not release payouts until the funds are visibly cleared in the payout account.</span></div></div>}
+
+    {r.status==='funded'&&<div className="operatorWarning green"><CheckCircle2/><div><b>Funds cleared — final review</b><span>Check the driver count and total before releasing payouts. Cancellation remains available until release.</span></div></div>}
+
+    {['submitted_sandbox','submitted','processing'].includes(r.status)&&<div className="operatorWarning blue"><Clock3/><div><b>Payouts processing</b><span>The run has been released to the payment provider. Cancellation is no longer available.</span></div></div>}
+
+    <div className="runCardActions liveRunActions">
+     {canCancel&&canMoney&&<button className="dangerOutline" onClick={()=>cancelPayoutRun(r)}><X/>Cancel payment run</button>}
+     {r.status==='ready'&&canMoney&&<button className="primary" onClick={()=>confirmFundingSent(r)}><Banknote/>Funding transfer sent</button>}
+     {r.status==='funding_pending'&&canMoney&&<button className="primary" onClick={()=>confirmFundsCleared(r)}><CheckCircle2/>Confirm funds cleared</button>}
+     {r.status==='funded'&&integrations?.wise?.environment==='sandbox'&&canMoney&&<button className="primary" onClick={()=>sendWiseSandbox(r)}><Send/>Release payouts to Wise sandbox</button>}
+     {r.status==='funded'&&integrations?.wise?.environment!=='sandbox'&&<span className="tinyNote">Live provider release will unlock when Wise production payout API is connected.</span>}
+     {['submitted_sandbox','submitted','processing'].includes(r.status)&&canMoney&&<button className="primary" onClick={()=>markRunPaid(r)}><ShieldCheck/>Confirm paid & update Autocab</button>}
+    </div>
+
+    {r.status==='paid'&&<div className="demoComplete"><CheckCircle2/><div><b>Run reconciled</b><span>Provider payment confirmed and matching Autocab updates completed.</span></div></div>}
+    {r.status==='cancelled'&&<div className="cancelledRunNote"><X/><span>Cancelled before release. Included drivers were returned to Approved.</span></div>}
+   </div>
+  </div>
+ };
    const txTypes=[['all','All activity'],['customer_payment','Customer payments'],['customer_refund','Customer refunds'],['driver_payment','Driver payments'],['weekly_payout','Weekly payouts'],['early_payout','Early payouts'],['fee','Fees']];
    const transactionKind=x=>
     x?.requestType==='payment_plan_instalment'?'Plan instalment':
@@ -3772,31 +3993,119 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
 
     </div>}
 
-   {view==='monday'&&<><section className="officePageIntro"><div><span>WEEKLY SETTLEMENT</span><h2>Monday payment run</h2><p>Run Rent Sheets in Autocab first. FaivoPay then syncs and uses <b>Previous Balance</b>, showing both drivers to pay and drivers who owe before any payment run is released.</p></div>{canMoney&&<button className="primary" onClick={createMonday}><PlayCircle/>Create Monday draft</button>}</section>{activeMonday?<><section className="runControlHero"><div><span>{activeMonday.runDate||'Monday run'}</span><h3>{activeMonday.status==='batched'?'Payment batch created':'Monday settlement active'}</h3><p>{activeMonday.id}</p></div><div className="mondayFinanceSummary">
-<div className="mondayFinanceRow">
-<div className="mondayFinanceLabel"><span>OUTGOING</span><b>Driver payouts</b></div>
-<div><span>Before fees</span><b>{money(weeklyPayoutBeforeFees)}</b></div>
-<div><span>Fees & charges</span><b>{money(weeklyPayoutFeesCharges)}</b></div>
-<div><span>Plan deductions</span><b>{money(weeklyPayoutPlanDeductions)}</b></div>
-<div><span>Actual payout</span><b>{money(weeklyApprovedTotal)}</b></div>
-<div><span>Drivers</span><b>{weeklyApproved.length}</b></div>
-</div>
+   {view==='monday'&&<>
+    <section className="officePageIntro">
+     <div>
+      <span>WEEKLY SETTLEMENT</span>
+      <h2>Monday payment run</h2>
+      <p>Complete the settlement in order from Rent Sheets through to reconciliation.</p>
+     </div>
+     {canMoney&&!activeMonday&&<button className="primary" onClick={createMonday}><PlayCircle/>Start Monday run</button>}
+    </section>
 
-<div className="mondayFinanceRow incoming">
-<div className="mondayFinanceLabel"><span>INCOMING</span><b>Driver collections</b></div>
-<div><span>Before fees</span><b>{money(weeklyIncomingBeforeFees)}</b></div>
-<div><span>Fees & charges</span><b>{money(weeklyIncomingFeesCharges)}</b></div>
-<div><span>Actual collection</span><b>{money(weeklyOutstandingTotal)}</b></div>
-<div><span>Drivers</span><b>{weeklyCollections.length}</b></div>
-</div>
+    <section className="panel wizardOverview">
+     <div className="panelHead">
+      <div><span className="sectionKicker">MONDAY PAYMENT WIZARD</span><h3>Guided weekly settlement</h3><p>Only the current working stage is shown below.</p></div>
+      <Pill tone={activeMonday?'warn':'neutral'}>{activeMonday?'In progress':'Not started'}</Pill>
+     </div>
+     <WizardSteps steps={mondayWizardSteps} currentIndex={mondayWizardIndex}/>
+    </section>
 
-<div className="mondayFinanceOther">
-<div><span>Pending payouts</span><b>{weeklyPending.length}</b></div>
-<div><span>Carried forward</span><b>{weeklyCarryForward.length+weeklyPayoutCarryForward.length}</b></div>
-<div><span>Excluded payouts</span><b>{weeklyExcluded.length}</b><small>{money(weeklyExcludedBeforeFees)} before fees</small></div>
-</div>
-</div></section>{activeMondayCancelledBatch&&<div className="operatorWarning blue"><AlertTriangle/><div><b>Previous payment batch cancelled safely</b><span>The payment batch was cancelled before release. The same Monday settlement remains open so the approved drivers can be reviewed, changed and placed into a corrected payment run. No Autocab payout adjustment was posted by the cancellation.</span></div></div>}<section className="panel"><div className="panelHead"><div><h3>Payment-plan deductions</h3><p>Amounts reserved from positive Monday balances before driver payouts. These deductions must be applied to Autocab and the FaivoPay plan before the payout batch can be created.</p></div><div className="compactStatus"><Pill tone={pendingPlanAllocations.length?'warn':'good'}>{pendingPlanAllocations.length} pending</Pill>{applyingPlanAllocations.length>0&&<Pill tone="warn">{applyingPlanAllocations.length} applying</Pill>}{failedPlanAllocations.length>0&&<Pill tone="bad">{failedPlanAllocations.length} review</Pill>}<Pill tone="good">{appliedPlanAllocations.length} applied</Pill></div></div>{mondayPlanAllocations.length?<><div className="mondayFinanceOther"><div><span>Total deductions</span><b>{money(mondayPlanAllocationTotal)}</b></div><div><span>Applied</span><b>{money(mondayPlanAllocationAppliedTotal)}</b></div><div><span>Remaining</span><b>{money(Math.max(0,mondayPlanAllocationTotal-mondayPlanAllocationAppliedTotal))}</b></div></div><div className="tableWrap proTable"><table><thead><tr><th>Driver</th><th>Instalment</th><th>Monday deduction</th><th>Status</th><th>Details</th><th>Action</th></tr></thead><tbody>{mondayPlanAllocations.map(x=>{const driver=drivers.find(d=>String(d.driverId)===String(x.driverId));return <tr key={x.id}><td><div className="driverCell"><span className="callsign">{x.callsign}</span><div><b>{driver?.fullName||`Driver ${x.driverId}`}</b><small>Payment plan</small></div></div></td><td>{money(x.scheduledAmount)}</td><td><b>{money(x.allocatedAmount)}</b></td><td><Pill tone={x.status==='applied'?'good':x.error?'bad':'warn'}>{x.status}</Pill></td><td>{x.error?<small className="reasonText">{x.error}</small>:x.status==='applied'?<small className="reasonText">Applied to payment plan</small>:x.status==='applying'?<small className="reasonText">Processing or manual review required</small>:<small className="reasonText">Awaiting application</small>}</td><td><div className="compactActions">{canMoney&&!activeMonday.payoutRunId&&x.status==='pending'&&<button className="mini success" disabled={Boolean(planAllocationBusy)} onClick={()=>applyMondayPlanAllocation(x)}>{planAllocationBusy===x.id?'Applying…':'Apply deduction'}</button>}{x.status==='applied'&&<span className="tinyNote">Complete</span>}{x.status==='applying'&&<span className="tinyNote">Review</span>}</div></td></tr>})}</tbody></table></div></>:<div className="emptyInline good"><CheckCircle2/>No payment-plan deductions are required for this Monday settlement.</div>}</section><section className="panel"><div className="panelHead"><div><h3>Drivers to pay</h3><p>Positive Previous Balances. Only approved drivers are included in the payment run.</p></div><div className="rowActions">{weeklyPending.length>0&&canMoney&&<button className="secondary" onClick={approveAllWeekly}><CheckCircle2/>Approve all pending</button>}{selectedWeeklyPayouts.length>0&&!activeMonday.payoutRunId&&canMoney&&<button className="dangerAction" onClick={excludeSelectedWeekly}>Exclude selected ({selectedWeeklyPayouts.length})</button>}{weeklyApproved.length>0&&!activeMonday.payoutRunId&&canMoney&&<button className="primary" onClick={createWeeklyBatch}><Send/>Create payment run</button>}</div></div>{weeklyItems.length?<div className="tableWrap proTable"><table><thead><tr><th className="selectCol"><input type="checkbox" aria-label="Select all payouts" disabled={Boolean(activeMonday.payoutRunId)} checked={weeklyItems.length>0&&weeklyItems.every(x=>selectedWeeklyPayouts.includes(x.payoutId))} onChange={toggleAllWeeklyPayouts}/></th><th>Driver</th><th>Previous balance</th><th>Weekly fee</th><th>Payout</th><th>Payout account</th><th>Decision</th><th>Actions</th></tr></thead><tbody>{weeklyItems.map(x=><tr key={x.payoutId} className={selectedWeeklyPayouts.includes(x.payoutId)?'selectedPayoutRow':''}><td className="selectCol"><input type="checkbox" aria-label={`Select callsign ${x.callsign}`} disabled={Boolean(activeMonday.payoutRunId)} checked={selectedWeeklyPayouts.includes(x.payoutId)} onChange={()=>toggleWeeklyPayout(x.payoutId)}/></td><td><div className="driverCell"><span className="callsign">{x.callsign}</span><div><b>{x.driverName}</b><small>Driver {x.driverId}</small></div></div></td><td>{money(x.previousBalance)}</td><td>{x.weeklyFeeWaivedInactive?<div><b>{money(0)}</b><small className="reasonText">Fee waived · no work recorded</small></div>:money(x.weeklyFee)}</td><td><b>{money(x.amount)}</b></td><td><Pill tone={bankTone(bankFor(x.driverId))}>{bankFor(x.driverId).label}</Pill></td><td><Pill tone={x.approvalStatus==='approved'?'good':x.approvalStatus==='excluded'?'bad':'warn'}>{x.approvalStatus||'pending'}</Pill>{x.exclusionReason&&<small className="reasonText">{x.exclusionReason}</small>}</td><td><div className="compactActions">{canMoney&&!activeMonday.payoutRunId&&<><button className="mini success" onClick={()=>weeklyDecision(x,'approved')}>Approve</button><button className="mini danger" onClick={()=>weeklyDecision(x,'excluded')}>Exclude</button></>}</div></td></tr>)}</tbody></table></div>:<div className="emptyInline">No payouts are above the minimum payout threshold for this Monday settlement.</div>}{weeklyPayoutCarryForward.length>0&&<div className="carryNote"><Info/> {weeklyPayoutCarryForward.length} positive balance{weeklyPayoutCarryForward.length===1?' is':'s are'} below the minimum payout threshold and will remain on the driver account for a future settlement.</div>}</section><section className="panel"><div className="panelHead"><div><h3>Drivers owing</h3><p>Negative Previous Balances above the configured threshold. These are collection requests, not payout items.</p></div><button className="secondary" onClick={()=>go('outstanding')}>Open full Outstanding view</button></div>{weeklyCollections.length?<div className="tableWrap proTable"><table><thead><tr><th>Driver</th><th>Previous balance</th><th>Weekly fee</th><th>Amount due</th><th>Due</th><th>Communication</th><th>Status</th></tr></thead><tbody>{weeklyCollections.map(x=>{const req=outstanding.find(o=>o.id===x.requestId);return <tr key={x.requestId||x.driverId}><td><div className="driverCell"><span className="callsign">{x.callsign}</span><b>{x.driverName}</b></div></td><td className="negative">{money(x.previousBalance)}</td><td>{x.weeklyFeeWaivedInactive?<div><b>{money(0)}</b><small className="reasonText">Fee waived · no work recorded</small></div>:money(x.weeklyFee)}</td><td><b className="negative">{money(x.amount)}</b></td><td>{req?.dueAt?dt(req.dueAt):'—'}</td><td><div className="compactStatus"><Pill tone={req?.emailSentAt?'good':'warn'}>Email {req?.emailSentAt?'sent':'pending'}</Pill><Pill tone={req?.smsSentAt?'good':'warn'}>SMS {req?.smsSentAt?'sent':'pending'}</Pill></div></td><td><Pill tone={req?.overdue?'bad':statusTone(req?.status||'open')}>{req?.overdue?'overdue':req?.status||'open'}</Pill></td></tr>})}</tbody></table></div>:<div className="emptyInline good"><CheckCircle2/>No drivers are above the outstanding-payment threshold for this run.</div>}{weeklyCarryForward.length>0&&<div className="carryNote"><Info/> {weeklyCarryForward.length} small negative balance{weeklyCarryForward.length===1?' is':'s are'} below the threshold and will be carried forward.</div>}</section></>:<section className="emptyState"><CalendarDays/><h3>No active Monday settlement</h3><p>Once Rent Sheets are complete, create the Monday draft. FaivoPay will separate drivers to pay from drivers who owe automatically.</p></section>}<section className="panel"><div className="panelHead"><div><h3>Weekly payment-run history</h3><p>Cancelled runs stay here for audit. They do not represent money sent.</p></div></div><div className="runCards liveRunStack">{sett.payoutRuns.filter(r=>r.runType==='weekly').slice(0,12).map(r=><LiveRunCard key={r.id} r={r}/>)}</div></section></>}
-    {view==='early'&&<><section className="officePageIntro"><div><span>DAILY PAYOUT CONTROL</span><h2>Early payouts</h2><p>Approve requests individually, batch only approved payments, then reconcile the paid batch back to Autocab.</p></div><div className="rowActions"><button className="secondary" onClick={sendEarlySummary}><Mail/>Send office summary now</button>{canMoney&&sett.earlyPayoutRequests.some(x=>x.status==='approved')&&<button className="primary" onClick={createEarlyBatch}><Send/>Create approved batch</button>}</div></section><section className="summaryBanner"><div><Clock3/><div><b>Today's cutoff: {earlySummary?.cutoff||settings?.earlyPayoutCutoffTime||'11:00'}</b><span>{earlySummary?.summary?.status==='sent'?`Office email sent ${dt(earlySummary.summary.sent_at)}`:'Automatic office summary will send after cutoff.'}</span></div></div><div className="summaryNumbers"><span>{dueEarly.length} requests</span><b>{money(dueEarly.reduce((a,x)=>a+Number(x.netAmount||x.amount||0),0))}</b></div></section><section className="panel"><div className="tableWrap proTable"><table><thead><tr><th>Driver</th><th>Requested</th><th>Fee</th><th>Driver receives</th><th>Payout account</th><th>Due</th><th>Status</th><th>Actions</th></tr></thead><tbody>{sett.earlyPayoutRequests.map(x=><tr key={x.id}><td><div className="driverCell"><span className="callsign">{x.callsign}</span><b>{x.driverName}</b></div></td><td>{money(x.grossAmount)}</td><td>{money(x.fee)}</td><td><b>{money(x.netAmount??x.amount)}</b></td><td><Pill tone={bankTone(bankFor(x.driverId))}>{bankFor(x.driverId).label}</Pill></td><td>{x.eligibleRunDate||'—'}</td><td><Pill tone={statusTone(x.status)}>{x.status}</Pill></td><td><div className="compactActions">{x.status==='requested'&&canMoney&&<><button className="mini success" onClick={()=>reviewEarly(x,'approved')}>Approve</button><button className="mini danger" onClick={()=>reviewEarly(x,'declined')}>Decline</button></>}{x.status==='approved'&&<span className="tinyNote">Ready to batch</span>}</div></td></tr>)}</tbody></table></div></section><section className="panel"><div className="panelHead"><div><h3>Early payout payment runs</h3><p>Review, cancel or complete daily payout runs. A run can only be cancelled before it is submitted to the payment provider.</p></div></div><div className="runCards liveRunStack">{sett.payoutRuns.filter(r=>r.runType==='early').slice(0,12).map(r=><LiveRunCard key={r.id} r={r}/>)}</div></section></>}
+    {!activeMonday
+     ?<section className="liveWorkflowCard wizardStageCard">
+       <div className="liveWorkflowHead"><div><span>STEP 1</span><h3>Confirm Rent Sheets & sync balances</h3><p>Run Monday Rent Sheets in Autocab first. Starting the run then captures the fresh Previous Balance for each driver.</p></div><Pill tone="neutral">Ready</Pill></div>
+       <div className="operatorWarning"><AlertTriangle/><div><b>Before you continue</b><span>Confirm Autocab Rent Sheets have completed. FaivoPay will immediately create the Monday settlement from the fresh balances.</span></div></div>
+       {canMoney&&<div className="runCardActions"><button className="primary" onClick={createMonday}><PlayCircle/>Confirm & start Monday run</button></div>}
+      </section>
+     :<>
+      <section className="panel wizardFinancePanel">
+       <div className="panelHead"><div><span className="sectionKicker">{activeMonday.runDate||'MONDAY RUN'}</span><h3>Settlement summary</h3><p>{activeMonday.id}</p></div><Pill tone="warn">{String(activeMonday.status||'active').replaceAll('_',' ')}</Pill></div>
+       <div className="mondayFinanceSummary">
+        <div><span>Payout before fees</span><b>{money(weeklyPayoutBeforeFees)}</b></div>
+        <div><span>Fees & charges</span><b>{money(weeklyPayoutFeesCharges)}</b></div>
+        <div><span>Plan deductions</span><b>{money(weeklyPayoutPlanDeductions)}</b></div>
+        <div><span>Actual payout</span><b>{money(weeklyApprovedTotal)}</b></div>
+        <div><span>Drivers to pay</span><b>{weeklyApproved.length}</b></div>
+        <div><span>Collections</span><b>{money(weeklyOutstandingTotal)}</b></div>
+        <div><span>Drivers owing</span><b>{weeklyCollections.length}</b></div>
+        <div><span>Pending decisions</span><b>{weeklyPending.length}</b></div>
+       </div>
+      </section>
+
+      {activeMondayCancelledBatch&&<div className="operatorWarning blue"><AlertTriangle/><div><b>Previous payment batch cancelled safely</b><span>The batch was cancelled before release. This Monday settlement remains open so the approved drivers can be reviewed and placed into a corrected payment run.</span></div></div>}
+
+      {mondayWizardIndex===2&&<section className="panel wizardStageCard">
+       <div className="panelHead"><div><span className="sectionKicker">STEP 3</span><h3>Payment-plan deductions</h3><p>Apply amounts reserved from positive Monday balances before driver payouts.</p></div><div className="compactStatus"><Pill tone={pendingPlanAllocations.length?'warn':'good'}>{pendingPlanAllocations.length} pending</Pill>{applyingPlanAllocations.length>0&&<Pill tone="warn">{applyingPlanAllocations.length} applying</Pill>}{failedPlanAllocations.length>0&&<Pill tone="bad">{failedPlanAllocations.length} review</Pill>}<Pill tone="good">{appliedPlanAllocations.length} applied</Pill></div></div>
+       {mondayPlanAllocations.length?<><div className="mondayFinanceOther"><div><span>Total deductions</span><b>{money(mondayPlanAllocationTotal)}</b></div><div><span>Applied</span><b>{money(mondayPlanAllocationAppliedTotal)}</b></div><div><span>Remaining</span><b>{money(Math.max(0,mondayPlanAllocationTotal-mondayPlanAllocationAppliedTotal))}</b></div></div>
+       <div className="tableWrap proTable"><table><thead><tr><th>Driver</th><th>Instalment</th><th>Monday deduction</th><th>Status</th><th>Details</th><th>Action</th></tr></thead><tbody>{mondayPlanAllocations.map(x=>{const driver=drivers.find(d=>String(d.driverId)===String(x.driverId));return <tr key={x.id}><td><div className="driverCell"><span className="callsign">{x.callsign}</span><div><b>{driver?.fullName||`Driver ${x.driverId}`}</b><small>Payment plan</small></div></div></td><td>{money(x.scheduledAmount)}</td><td><b>{money(x.allocatedAmount)}</b></td><td><Pill tone={x.status==='applied'?'good':x.error?'bad':'warn'}>{x.status}</Pill></td><td>{x.error?<small className="reasonText">{x.error}</small>:x.status==='applied'?<small className="reasonText">Applied to payment plan</small>:x.status==='applying'?<small className="reasonText">Processing or manual review required</small>:<small className="reasonText">Awaiting application</small>}</td><td><div className="compactActions">{canMoney&&!activeMonday.payoutRunId&&x.status==='pending'&&<button className="mini success" disabled={Boolean(planAllocationBusy)} onClick={()=>applyMondayPlanAllocation(x)}>{planAllocationBusy===x.id?'Applying…':'Apply deduction'}</button>}{x.status==='applied'&&<span className="tinyNote">Complete</span>}{x.status==='applying'&&<span className="tinyNote">Review</span>}</div></td></tr>})}</tbody></table></div></>:<div className="emptyInline good"><CheckCircle2/>No payment-plan deductions are required.</div>}
+      </section>}
+
+      {[3,4].includes(mondayWizardIndex)&&<>
+       <section className="panel wizardStageCard">
+        <div className="panelHead">
+         <div><span className="sectionKicker">{mondayWizardIndex===3?'STEP 4':'STEP 5'}</span><h3>{mondayWizardIndex===3?'Review driver payouts':'Create payment run'}</h3><p>{mondayWizardIndex===3?'Approve or exclude the drivers to be paid.':'Review the final approved list and create the locked payment run.'}</p></div>
+         <div className="rowActions">
+          {weeklyPending.length>0&&canMoney&&<button className="secondary" onClick={approveAllWeekly}><CheckCircle2/>Approve all pending</button>}
+          {selectedWeeklyPayouts.length>0&&!activeMonday.payoutRunId&&canMoney&&<button className="dangerAction" onClick={excludeSelectedWeekly}>Exclude selected ({selectedWeeklyPayouts.length})</button>}
+          {weeklyApproved.length>0&&!activeMonday.payoutRunId&&canMoney&&<button className="primary" onClick={createWeeklyBatch}><Send/>Create payment run</button>}
+         </div>
+        </div>
+
+        {mondayWizardIndex===4&&<div className="operatorWarning green"><CheckCircle2/><div><b>Ready to create payment run</b><span>{weeklyApproved.length} approved drivers totalling {money(weeklyApprovedTotal)}. Creating the run locks these payouts before funding.</span></div></div>}
+
+        {weeklyItems.length?<div className="tableWrap proTable"><table><thead><tr><th className="selectCol"><input type="checkbox" aria-label="Select all payouts" disabled={Boolean(activeMonday.payoutRunId)} checked={weeklyItems.length>0&&weeklyItems.every(x=>selectedWeeklyPayouts.includes(x.payoutId))} onChange={toggleAllWeeklyPayouts}/></th><th>Driver</th><th>Previous balance</th><th>Weekly fee</th><th>Payout</th><th>Payout account</th><th>Decision</th><th>Actions</th></tr></thead><tbody>{weeklyItems.map(x=><tr key={x.payoutId} className={selectedWeeklyPayouts.includes(x.payoutId)?'selectedPayoutRow':''}><td className="selectCol"><input type="checkbox" aria-label={`Select callsign ${x.callsign}`} disabled={Boolean(activeMonday.payoutRunId)} checked={selectedWeeklyPayouts.includes(x.payoutId)} onChange={()=>toggleWeeklyPayout(x.payoutId)}/></td><td><div className="driverCell"><span className="callsign">{x.callsign}</span><div><b>{x.driverName}</b><small>Driver {x.driverId}</small></div></div></td><td>{money(x.previousBalance)}</td><td>{x.weeklyFeeWaivedInactive?<div><b>{money(0)}</b><small className="reasonText">Fee waived · no work recorded</small></div>:money(x.weeklyFee)}</td><td><b>{money(x.amount)}</b></td><td><Pill tone={bankTone(bankFor(x.driverId))}>{bankFor(x.driverId).label}</Pill></td><td><Pill tone={x.approvalStatus==='approved'?'good':x.approvalStatus==='excluded'?'bad':'warn'}>{x.approvalStatus||'pending'}</Pill>{x.exclusionReason&&<small className="reasonText">{x.exclusionReason}</small>}</td><td><div className="compactActions">{canMoney&&!activeMonday.payoutRunId&&<><button className="mini success" onClick={()=>weeklyDecision(x,'approved')}>Approve</button><button className="mini danger" onClick={()=>weeklyDecision(x,'excluded')}>Exclude</button></>}</div></td></tr>)}</tbody></table></div>:<div className="emptyInline">No payouts are above the minimum payout threshold.</div>}
+
+        {weeklyPayoutCarryForward.length>0&&<div className="carryNote"><Info/> {weeklyPayoutCarryForward.length} positive balance{weeklyPayoutCarryForward.length===1?' is':'s are'} below the minimum payout threshold and will remain on the driver account.</div>}
+       </section>
+
+       <section className="panel wizardSecondaryPanel">
+        <div className="panelHead"><div><h3>Drivers owing</h3><p>Collection requests created from negative Previous Balances.</p></div><button className="secondary" onClick={()=>go('outstanding')}>Open Outstanding</button></div>
+        {weeklyCollections.length?<div className="tableWrap proTable"><table><thead><tr><th>Driver</th><th>Previous balance</th><th>Weekly fee</th><th>Amount due</th><th>Due</th><th>Communication</th><th>Status</th></tr></thead><tbody>{weeklyCollections.map(x=>{const req=outstanding.find(o=>o.id===x.requestId);return <tr key={x.requestId||x.driverId}><td><div className="driverCell"><span className="callsign">{x.callsign}</span><b>{x.driverName}</b></div></td><td className="negative">{money(x.previousBalance)}</td><td>{x.weeklyFeeWaivedInactive?<div><b>{money(0)}</b><small className="reasonText">Fee waived · no work recorded</small></div>:money(x.weeklyFee)}</td><td><b className="negative">{money(x.amount)}</b></td><td>{req?.dueAt?dt(req.dueAt):'—'}</td><td><div className="compactStatus"><Pill tone={req?.emailSentAt?'good':'warn'}>Email {req?.emailSentAt?'sent':'pending'}</Pill><Pill tone={req?.smsSentAt?'good':'warn'}>SMS {req?.smsSentAt?'sent':'pending'}</Pill></div></td><td><Pill tone={req?.overdue?'bad':statusTone(req?.status||'open')}>{req?.overdue?'overdue':req?.status||'open'}</Pill></td></tr>})}</tbody></table></div>:<div className="emptyInline good"><CheckCircle2/>No drivers are above the outstanding-payment threshold.</div>}
+        {weeklyCarryForward.length>0&&<div className="carryNote"><Info/> {weeklyCarryForward.length} small negative balance{weeklyCarryForward.length===1?' is':'s are'} below the threshold and will be carried forward.</div>}
+       </section>
+      </>}
+
+      {mondayWizardIndex>=5&&activeWeeklyPayoutRun&&<section className="wizardActiveRun"><LiveRunCard r={activeWeeklyPayoutRun} showSteps={false}/></section>}
+     </>}
+
+    <section className="panel">
+     <div className="panelHead"><div><h3>Weekly payment-run history</h3><p>Completed and cancelled runs remain here for audit.</p></div></div>
+     <div className="runCards liveRunStack">{sett.payoutRuns.filter(r=>r.runType==='weekly'&&String(r.id)!==String(activeWeeklyPayoutRun?.id||'')).slice(0,12).map(r=><LiveRunCard key={r.id} r={r}/>)}</div>
+    </section>
+   </>}
+    {view==='early'&&<>
+     <section className="officePageIntro">
+      <div><span>DAILY PAYOUT CONTROL</span><h2>Early payouts</h2><p>Review requests, create the payment run, fund it, release payouts and reconcile the result.</p></div>
+      <button className="secondary" onClick={sendEarlySummary}><Mail/>Send office summary now</button>
+     </section>
+
+     <section className="panel wizardOverview">
+      <div className="panelHead"><div><span className="sectionKicker">EARLY PAYOUT WIZARD</span><h3>Guided daily payout run</h3><p>The same payment-run controls and cancellation boundary are used as Monday.</p></div><Pill tone={activeEarlyPayoutRun?'warn':'neutral'}>{activeEarlyPayoutRun?'In progress':'Review'}</Pill></div>
+      <WizardSteps steps={earlyWizardSteps} currentIndex={earlyWizardIndex}/>
+     </section>
+
+     {!activeEarlyPayoutRun
+      ?<>
+       <section className="summaryBanner"><div><Clock3/><div><b>Today's cutoff: {earlySummary?.cutoff||settings?.earlyPayoutCutoffTime||'11:00'}</b><span>{earlySummary?.summary?.status==='sent'?`Office email sent ${dt(earlySummary.summary.sent_at)}`:'Automatic office summary will send after cutoff.'}</span></div></div><div className="summaryNumbers"><span>{dueEarly.length} requests</span><b>{money(dueEarly.reduce((a,x)=>a+Number(x.netAmount||x.amount||0),0))}</b></div></section>
+
+       <section className="panel wizardStageCard">
+        <div className="panelHead">
+         <div><span className="sectionKicker">{earlyWizardIndex===1?'STEP 2':'STEP 1'}</span><h3>{earlyWizardIndex===1?'Create approved payment run':'Review early payout requests'}</h3><p>{earlyWizardIndex===1?'Approved requests are ready to be locked into a payment run.':'Approve or decline each request before batching.'}</p></div>
+         {canMoney&&sett.earlyPayoutRequests.some(x=>x.status==='approved')&&<button className="primary" onClick={createEarlyBatch}><Send/>Create approved payment run</button>}
+        </div>
+
+        {earlyWizardIndex===1&&<div className="operatorWarning green"><CheckCircle2/><div><b>Approved requests ready</b><span>Creating the payment run locks the approved values before funding.</span></div></div>}
+
+        <div className="tableWrap proTable"><table><thead><tr><th>Driver</th><th>Requested</th><th>Fee</th><th>Driver receives</th><th>Payout account</th><th>Due</th><th>Status</th><th>Actions</th></tr></thead><tbody>{sett.earlyPayoutRequests.map(x=><tr key={x.id}><td><div className="driverCell"><span className="callsign">{x.callsign}</span><b>{x.driverName}</b></div></td><td>{money(x.grossAmount)}</td><td>{money(x.fee)}</td><td><b>{money(x.netAmount??x.amount)}</b></td><td><Pill tone={bankTone(bankFor(x.driverId))}>{bankFor(x.driverId).label}</Pill></td><td>{x.eligibleRunDate||'—'}</td><td><Pill tone={statusTone(x.status)}>{x.status}</Pill></td><td><div className="compactActions">{x.status==='requested'&&canMoney&&<><button className="mini success" onClick={()=>reviewEarly(x,'approved')}>Approve</button><button className="mini danger" onClick={()=>reviewEarly(x,'declined')}>Decline</button></>}{x.status==='approved'&&<span className="tinyNote">Ready to batch</span>}</div></td></tr>)}</tbody></table></div>
+       </section>
+      </>
+      :<section className="wizardActiveRun"><LiveRunCard r={activeEarlyPayoutRun} showSteps={false}/></section>}
+
+     <section className="panel">
+      <div className="panelHead"><div><h3>Early payout payment-run history</h3><p>Completed and cancelled runs remain here for audit.</p></div></div>
+      <div className="runCards liveRunStack">{sett.payoutRuns.filter(r=>r.runType==='early'&&String(r.id)!==String(activeEarlyPayoutRun?.id||'')).slice(0,12).map(r=><LiveRunCard key={r.id} r={r}/>)}</div>
+     </section>
+    </>}
     {view==='outstanding'&&<>
 
      <section className="officePageIntro">
@@ -4481,10 +4790,10 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
     {view==='settings'&&isAdmin&&settings&&<><section className="officePageIntro"><div><span>ADMINISTRATION</span><h2>FaivoPay settings</h2><p>Operational rules, payout descriptions, communications and fee splits. Secret values are stored encrypted and are never returned to the browser.</p></div><button className="primary" onClick={saveSettings}><Settings/>Save all settings</button></section><div className="settingsSections">
      <section className="panel settingsCardV2"><div className="settingsHead"><CalendarDays/><div><h3>Settlement & payout rules</h3><p>Controls used for Monday and early payout processing.</p></div></div><div className="formGrid2"><label>Outstanding threshold<div className="moneyField"><span>£</span><input type="number" step="0.01" value={settings.negativeThreshold??0} onChange={e=>setSettings({...settings,negativeThreshold:e.target.value})}/></div><small>Amounts owed below this are carried forward.</small></label><label>Minimum payout threshold<div className="moneyField"><span>£</span><input type="number" min="0" step="0.01" value={settings.minimumPayoutThreshold??0} onChange={e=>setSettings({...settings,minimumPayoutThreshold:e.target.value})}/></div><small>Positive balances below this remain on the driver account until a future settlement.</small></label><label>Weekly FaivoPay fee<div className="moneyField"><span>£</span><input type="number" step="0.01" value={settings.weeklyAppFee??0} onChange={e=>setSettings({...settings,weeklyAppFee:e.target.value})}/></div></label><label className="toggleRow"><span className="toggleCopy"><b>Charge weekly fee when no work is recorded</b><small>Turn this off to waive the weekly fee for drivers with no recorded work during the week being settled.</small></span><span className="toggleSwitch"><input type="checkbox" checked={settings.chargeWeeklyFeeWhenInactive!==false} onChange={e=>setSettings({...settings,chargeWeeklyFeeWhenInactive:e.target.checked})}/><span className="toggleSlider"/></span></label><label>Early payout fee<div className="moneyField"><span>£</span><input type="number" step="0.01" value={settings.earlyPayoutFee??0} onChange={e=>setSettings({...settings,earlyPayoutFee:e.target.value})}/></div></label><label>Early payout cutoff<input type="time" value={settings.earlyPayoutCutoffTime||'11:00'} onChange={e=>setSettings({...settings,earlyPayoutCutoffTime:e.target.value})}/></label><label>Outstanding payment deadline<input type="time" value={settings.outstandingDueTime||'17:00'} onChange={e=>setSettings({...settings,outstandingDueTime:e.target.value})}/></label><label>Autocab sync interval<input type="number" min="2" max="60" value={settings.syncMinutes||10} onChange={e=>setSettings({...settings,syncMinutes:e.target.value})}/><small>Minutes between automatic syncs.</small></label></div><div className="formGrid1"><label>Weekly payout Autocab description<input value={settings.weeklyPayoutReasonTemplate||''} onChange={e=>setSettings({...settings,weeklyPayoutReasonTemplate:e.target.value})}/><small>Available: {'{date}'} {'{time}'} {'{callsign}'} {'{amount}'}</small></label><label>Early payout Autocab description<input value={settings.earlyPayoutReasonTemplate||''} onChange={e=>setSettings({...settings,earlyPayoutReasonTemplate:e.target.value})}/></label><div className="formGrid2"><label>Manual pay-in default reason<input value={settings.manualPayInReasonDefault||''} onChange={e=>setSettings({...settings,manualPayInReasonDefault:e.target.value})}/></label><label>Manual payout default reason<input value={settings.manualPayoutReasonDefault||''} onChange={e=>setSettings({...settings,manualPayoutReasonDefault:e.target.value})}/></label></div></div></section>
      <section className="panel settingsCardV2"><div className="settingsHead"><BadgePoundSterling/><div><h3>Fee pricing & split</h3><p>Define the gross fee and how each fee is split between FaivoPay and the taxi company.</p></div></div><div className="formGrid2"><label>Customer payment fee type<select value={settings.customerPaymentFeeType||'fixed'} onChange={e=>setSettings({...settings,customerPaymentFeeType:e.target.value})}><option value="fixed">Fixed amount</option><option value="percentage">Percentage</option></select></label><label>Customer payment fee<div className="moneyField"><span>{settings.customerPaymentFeeType==='percentage'?'%':'£'}</span><input type="number" min="0" step="0.01" value={settings.customerPaymentFeeValue??0} onChange={e=>setSettings({...settings,customerPaymentFeeValue:e.target.value})}/></div></label><label>FaivoPay share – customer fees<div className="moneyField"><span>%</span><input type="number" min="0" max="100" value={settings.customerFeeFleetPayPercent??100} onChange={e=>setSettings({...settings,customerFeeFleetPayPercent:e.target.value})}/></div><small>Taxi company receives the remaining percentage.</small></label><label>FaivoPay share – early payout fee<div className="moneyField"><span>%</span><input type="number" min="0" max="100" value={settings.earlyPayoutFeeFleetPayPercent??100} onChange={e=>setSettings({...settings,earlyPayoutFeeFleetPayPercent:e.target.value})}/></div></label><label>FaivoPay share – weekly fee<div className="moneyField"><span>%</span><input type="number" min="0" max="100" value={settings.weeklyFeeFleetPayPercent??100} onChange={e=>setSettings({...settings,weeklyFeeFleetPayPercent:e.target.value})}/></div></label></div></section>
-     <section className="panel settingsCardV2"><div className="settingsHead"><Smartphone/><div><h3>SMS providers</h3><p>Choose how FaivoPay routes payment and general messages between Twilio and the taxi-company gateway.</p></div></div><div className="formGrid2"><label className="checkLine"><input type="checkbox" checked={Boolean(settings.twilioEnabled)} onChange={e=>setSettings({...settings,twilioEnabled:e.target.checked})}/>Enable Twilio</label><label className="checkLine"><input type="checkbox" checked={Boolean(settings.orionEnabled)} onChange={e=>setSettings({...settings,orionEnabled:e.target.checked})}/>Enable Orion gateway</label><label>Payment-link SMS provider<select value={settings.paymentSmsProvider||'twilio'} onChange={e=>setSettings({...settings,paymentSmsProvider:e.target.value})}><option value="twilio">Twilio</option><option value="orion">Orion gateway</option></select></label><label>General SMS provider<select value={settings.generalSmsProvider||'orion'} onChange={e=>setSettings({...settings,generalSmsProvider:e.target.value})}><option value="orion">Orion gateway</option><option value="twilio">Twilio</option></select></label><label className="checkLine"><input type="checkbox" checked={Boolean(settings.smsFallbackEnabled)} onChange={e=>setSettings({...settings,smsFallbackEnabled:e.target.checked})}/>Use fallback provider if primary fails</label></div><div className="formGrid2"><label>Low Twilio balance warning (£)<input type="number" min="0" step="1" value={settings.twilioLowBalanceThreshold??20} onChange={e=>setSettings({...settings,twilioLowBalanceThreshold:e.target.value})}/></label><label>Low balance email<input type="email" value={settings.twilioLowBalanceEmail||''} onChange={e=>setSettings({...settings,twilioLowBalanceEmail:e.target.value})}/></label><label className="checkLine"><input type="checkbox" checked={Boolean(settings.twilioLowBalanceAlertsEnabled)} onChange={e=>setSettings({...settings,twilioLowBalanceAlertsEnabled:e.target.checked})}/>Enable low-balance alerts</label></div><div className="formGrid2"><label>Orion endpoint URL<input value={settings.smsEndpoint||''} onChange={e=>setSettings({...settings,smsEndpoint:e.target.value})} placeholder="https://..."/></label><label>HTTP method<select value={settings.smsMethod||'POST'} onChange={e=>setSettings({...settings,smsMethod:e.target.value})}><option>POST</option><option>PUT</option><option>PATCH</option></select></label><label>Authentication header<input value={settings.smsAuthHeader||''} onChange={e=>setSettings({...settings,smsAuthHeader:e.target.value})} placeholder="Authorization"/></label><label>Authentication/API value<input type="password" value={settings.smsAuthValue||''} onChange={e=>setSettings({...settings,smsAuthValue:e.target.value})} placeholder={settings.smsAuthConfigured?'Configured – enter only to replace':'Enter secret value'}/></label></div><label>Orion JSON body template<textarea rows="4" value={settings.smsBodyTemplate||''} onChange={e=>setSettings({...settings,smsBodyTemplate:e.target.value})}/><small>Use {'{mobile}'} and {'{message}'}. The final result must be valid JSON.</small></label><div className="testStrip"><input value={testSms.to} onChange={e=>setTestSms({...testSms,to:e.target.value})} placeholder="Test mobile number"/><input value={testSms.message} onChange={e=>setTestSms({...testSms,message:e.target.value})}/><button className="secondary" onClick={testSmsNow}>Send test SMS</button></div></section>
-     <section className="panel settingsCardV2"><div className="settingsHead"><Mail/><div><h3>Email / SMTP</h3><p>SMTP is used for outstanding-payment messages and daily early-payout summaries. Resend remains the fallback if SMTP is blank.</p></div></div><div className="formGrid2"><label>SMTP host<input value={settings.smtpHost||''} onChange={e=>setSettings({...settings,smtpHost:e.target.value})}/></label><label>SMTP port<input type="number" value={settings.smtpPort||587} onChange={e=>setSettings({...settings,smtpPort:e.target.value})}/></label><label>SMTP username<input value={settings.smtpUser||''} onChange={e=>setSettings({...settings,smtpUser:e.target.value})}/></label><label>SMTP password<input type="password" value={settings.smtpPassword||''} onChange={e=>setSettings({...settings,smtpPassword:e.target.value})} placeholder={settings.smtpPasswordConfigured?'Configured – enter only to replace':'Enter password'}/></label><label>From name<input value={settings.smtpFromName||''} onChange={e=>setSettings({...settings,smtpFromName:e.target.value})}/></label><label>From email<input type="email" value={settings.smtpFromEmail||''} onChange={e=>setSettings({...settings,smtpFromEmail:e.target.value})}/></label><label>Office notification email<input type="email" value={settings.officeNotificationEmail||''} onChange={e=>setSettings({...settings,officeNotificationEmail:e.target.value})}/></label><label className="checkLine"><input type="checkbox" checked={Boolean(settings.smtpSecure)} onChange={e=>setSettings({...settings,smtpSecure:e.target.checked})}/>Use secure SMTP (usually port 465)</label></div><div className="testStrip"><input type="email" value={testEmail} onChange={e=>setTestEmail(e.target.value)} placeholder={settings.officeNotificationEmail||'Test email address'}/><button className="secondary" onClick={testEmailNow}>Send test email</button></div></section>
+     <section className="panel settingsCardV2"><div className="settingsHead"><Smartphone/><div><h3>SMS providers</h3><p>Choose how FaivoPay routes payment and general messages between Twilio and the taxi-company gateway.</p></div></div><div className="formGrid2"><label className="toggleRow"><span className="toggleCopy"><b>Enable Twilio</b><small>Allow FaivoPay to send SMS through Twilio.</small></span><span className="toggleSwitch"><input type="checkbox" checked={Boolean(settings.twilioEnabled)} onChange={e=>setSettings({...settings,twilioEnabled:e.target.checked})}/><span className="toggleSlider"/></span></label><label className="toggleRow"><span className="toggleCopy"><b>Enable Orion gateway</b><small>Allow FaivoPay to send SMS through the taxi-company gateway.</small></span><span className="toggleSwitch"><input type="checkbox" checked={Boolean(settings.orionEnabled)} onChange={e=>setSettings({...settings,orionEnabled:e.target.checked})}/><span className="toggleSlider"/></span></label><label>Payment-link SMS provider<select value={settings.paymentSmsProvider||'twilio'} onChange={e=>setSettings({...settings,paymentSmsProvider:e.target.value})}><option value="twilio">Twilio</option><option value="orion">Orion gateway</option></select></label><label>General SMS provider<select value={settings.generalSmsProvider||'orion'} onChange={e=>setSettings({...settings,generalSmsProvider:e.target.value})}><option value="orion">Orion gateway</option><option value="twilio">Twilio</option></select></label><label className="toggleRow"><span className="toggleCopy"><b>Use fallback SMS provider</b><small>Try the secondary provider automatically if the primary provider fails.</small></span><span className="toggleSwitch"><input type="checkbox" checked={Boolean(settings.smsFallbackEnabled)} onChange={e=>setSettings({...settings,smsFallbackEnabled:e.target.checked})}/><span className="toggleSlider"/></span></label></div><div className="formGrid2"><label>Low Twilio balance warning (£)<input type="number" min="0" step="1" value={settings.twilioLowBalanceThreshold??20} onChange={e=>setSettings({...settings,twilioLowBalanceThreshold:e.target.value})}/></label><label>Low balance email<input type="email" value={settings.twilioLowBalanceEmail||''} onChange={e=>setSettings({...settings,twilioLowBalanceEmail:e.target.value})}/></label><label className="toggleRow"><span className="toggleCopy"><b>Enable low-balance alerts</b><small>Email a warning when the Twilio balance falls below the configured threshold.</small></span><span className="toggleSwitch"><input type="checkbox" checked={Boolean(settings.twilioLowBalanceAlertsEnabled)} onChange={e=>setSettings({...settings,twilioLowBalanceAlertsEnabled:e.target.checked})}/><span className="toggleSlider"/></span></label></div><div className="formGrid2"><label>Orion endpoint URL<input value={settings.smsEndpoint||''} onChange={e=>setSettings({...settings,smsEndpoint:e.target.value})} placeholder="https://..."/></label><label>HTTP method<select value={settings.smsMethod||'POST'} onChange={e=>setSettings({...settings,smsMethod:e.target.value})}><option>POST</option><option>PUT</option><option>PATCH</option></select></label><label>Authentication header<input value={settings.smsAuthHeader||''} onChange={e=>setSettings({...settings,smsAuthHeader:e.target.value})} placeholder="Authorization"/></label><label>Authentication/API value<input type="password" value={settings.smsAuthValue||''} onChange={e=>setSettings({...settings,smsAuthValue:e.target.value})} placeholder={settings.smsAuthConfigured?'Configured – enter only to replace':'Enter secret value'}/></label></div><label>Orion JSON body template<textarea rows="4" value={settings.smsBodyTemplate||''} onChange={e=>setSettings({...settings,smsBodyTemplate:e.target.value})}/><small>Use {'{mobile}'} and {'{message}'}. The final result must be valid JSON.</small></label><div className="testStrip"><input value={testSms.to} onChange={e=>setTestSms({...testSms,to:e.target.value})} placeholder="Test mobile number"/><input value={testSms.message} onChange={e=>setTestSms({...testSms,message:e.target.value})}/><button className="secondary" onClick={testSmsNow}>Send test SMS</button></div></section>
+     <section className="panel settingsCardV2"><div className="settingsHead"><Mail/><div><h3>Email / SMTP</h3><p>SMTP is used for outstanding-payment messages and daily early-payout summaries. Resend remains the fallback if SMTP is blank.</p></div></div><div className="formGrid2"><label>SMTP host<input value={settings.smtpHost||''} onChange={e=>setSettings({...settings,smtpHost:e.target.value})}/></label><label>SMTP port<input type="number" value={settings.smtpPort||587} onChange={e=>setSettings({...settings,smtpPort:e.target.value})}/></label><label>SMTP username<input value={settings.smtpUser||''} onChange={e=>setSettings({...settings,smtpUser:e.target.value})}/></label><label>SMTP password<input type="password" value={settings.smtpPassword||''} onChange={e=>setSettings({...settings,smtpPassword:e.target.value})} placeholder={settings.smtpPasswordConfigured?'Configured – enter only to replace':'Enter password'}/></label><label>From name<input value={settings.smtpFromName||''} onChange={e=>setSettings({...settings,smtpFromName:e.target.value})}/></label><label>From email<input type="email" value={settings.smtpFromEmail||''} onChange={e=>setSettings({...settings,smtpFromEmail:e.target.value})}/></label><label>Office notification email<input type="email" value={settings.officeNotificationEmail||''} onChange={e=>setSettings({...settings,officeNotificationEmail:e.target.value})}/></label><label className="toggleRow"><span className="toggleCopy"><b>Use secure SMTP</b><small>Enable TLS immediately on connection, normally when using port 465.</small></span><span className="toggleSwitch"><input type="checkbox" checked={Boolean(settings.smtpSecure)} onChange={e=>setSettings({...settings,smtpSecure:e.target.checked})}/><span className="toggleSlider"/></span></label></div><div className="testStrip"><input type="email" value={testEmail} onChange={e=>setTestEmail(e.target.value)} placeholder={settings.officeNotificationEmail||'Test email address'}/><button className="secondary" onClick={testEmailNow}>Send test email</button></div></section>
      <section className="panel settingsCardV2"><div className="settingsHead"><Mail/><div><h3>Outstanding-payment messages</h3><p>Edit the exact wording drivers receive after the Monday run.</p></div></div><label>Email subject<input value={settings.outstandingEmailSubject||''} onChange={e=>setSettings({...settings,outstandingEmailSubject:e.target.value})}/></label><label>Email message<textarea rows="7" value={settings.outstandingEmailBody||''} onChange={e=>setSettings({...settings,outstandingEmailBody:e.target.value})}/></label><label>SMS message<textarea rows="5" value={settings.outstandingSmsTemplate||''} onChange={e=>setSettings({...settings,outstandingSmsTemplate:e.target.value})}/></label><small>Available variables: {'{driver}'}, {'{callsign}'}, {'{amount}'}, {'{dueDate}'}, {'{dueTime}'}, {'{paymentLink}'}</small></section>
-     <section className="panel settingsCardV2 dangerZone"><div className="settingsHead"><AlertTriangle/><div><h3>Pre-launch data reset</h3><p>Use once before the live launch. FaivoPay creates a timestamped SQLite backup first, then clears operational test data while keeping office users, MFA, settings and integrations.</p></div></div><div className="launchResetInfo"><b>Cleared:</b><span>payments, payment plans, payout runs, settlement runs, fee records, notifications, communication history, adjustments and demo data.</span></div><label className="checkLine"><input type="checkbox" checked={resetDrivers} onChange={e=>setResetDrivers(e.target.checked)}/>Also clear driver app registrations and push subscriptions</label><label>Confirmation phrase<input value={resetPhrase} onChange={e=>setResetPhrase(e.target.value)} placeholder="RESET FAIVOPAY FOR LIVE LAUNCH"/></label><button className="dangerAction" disabled={resetPhrase!=='RESET FAIVOPAY FOR LIVE LAUNCH'} onClick={launchReset}><AlertTriangle/>Create backup & reset operational data</button></section>
+     <section className="panel settingsCardV2 dangerZone"><div className="settingsHead"><AlertTriangle/><div><h3>Pre-launch data reset</h3><p>Use once before the live launch. FaivoPay creates a timestamped SQLite backup first, then clears operational test data while keeping office users, MFA, settings and integrations.</p></div></div><div className="launchResetInfo"><b>Cleared:</b><span>payments, payment plans, payout runs, settlement runs, fee records, notifications, communication history, adjustments and demo data.</span></div><label className="toggleRow"><span className="toggleCopy"><b>Also clear driver app registrations</b><small>Include driver logins and push subscriptions in the pre-launch reset.</small></span><span className="toggleSwitch"><input type="checkbox" checked={resetDrivers} onChange={e=>setResetDrivers(e.target.checked)}/><span className="toggleSlider"/></span></label><label>Confirmation phrase<input value={resetPhrase} onChange={e=>setResetPhrase(e.target.value)} placeholder="RESET FAIVOPAY FOR LIVE LAUNCH"/></label><button className="dangerAction" disabled={resetPhrase!=='RESET FAIVOPAY FOR LIVE LAUNCH'} onClick={launchReset}><AlertTriangle/>Create backup & reset operational data</button></section>
      <section className="panel settingsCardV2"><div className="settingsHead"><Database/><div><h3>Integration status</h3><p>Secrets from environment variables remain server-side.</p></div></div>{integrations&&<div className="integrationGrid"><div><b>Stripe</b><span>{integrations.stripe.configured?(integrations.stripe.testMode?'Test mode':'Live mode'):'Not configured'}</span><Pill tone={integrations.stripe.configured?'good':'warn'}>{integrations.stripe.configured?'Ready':'Setup'}</Pill></div><div><b>Wise</b><span>{integrations.wise.configured?integrations.wise.environment:'Not configured'}</span><Pill tone={integrations.wise.configured?'good':'warn'}>{integrations.wise.configured?'Ready':'Setup'}</Pill></div><div><b>Autocab writes</b><span>{integrations.autocab.adjustmentsEnabled?'Enabled':'Safe mode'}</span><Pill tone={integrations.autocab.adjustmentsEnabled?'good':'warn'}>{integrations.autocab.adjustmentsEnabled?'Enabled':'Disabled'}</Pill></div><div><b>Twilio SMS</b><span>{twilioBalance?.configured?`${twilioBalance.currency==='GBP'?'£':''}${Number(twilioBalance.balance||0).toFixed(2)} ${twilioBalance.currency||''}`:'Not configured'}</span><Pill tone={twilioBalance?.configured?'good':'warn'}>{twilioBalance?.configured?'Ready':'Setup'}</Pill></div></div>}</section>
     </div></>}
    </div>
