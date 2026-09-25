@@ -3535,16 +3535,20 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
             </td>
 
             <td>
-             {plan?.nextDueAt||'—'}
+             {plan?.nextDueAt
+              ?dateOnly(plan.nextDueAt)
+              :'—'}
             </td>
 
             <td>
              <Pill tone={
               plan?.status==='defaulted'
                ?'bad'
-               :plan?.status==='completed'
+               :['active','completed'].includes(plan?.status)
                 ?'good'
-                :'warn'
+                :plan?.status==='paused'
+                 ?'warn'
+                 :'neutral'
              }>
               {plan?.status
                ?String(plan.status).replaceAll('_',' ')
