@@ -6627,3 +6627,6 @@ body {
 .paymentPlanTimelineHead b{font-size:13px;line-height:1.4;color:#263447}
 .paymentPlanTimelineHead span{font-size:11px;white-space:nowrap;color:#8490a0}
 .paymentPlanTimelineBody small{display:block;margin-top:3px;font-size:11px;color:#8a95a4}
+
+.paymentPlanTimelineTitle{display:flex;align-items:center;gap:8px;min-width:0}
+.paymentPlanTimelineTitle .pill{flex:0 0 auto}

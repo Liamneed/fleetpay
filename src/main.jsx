@@ -10,6 +10,22 @@ const money=v=>v==null?'—':new Intl.NumberFormat('en-GB',{style:'currency',cur
 const dt=v=>v?new Intl.DateTimeFormat('en-GB',{dateStyle:'medium',timeStyle:'short'}).format(new Date(v)):'Never';
 const dateOnly=v=>v?new Intl.DateTimeFormat('en-GB',{dateStyle:'medium'}).format(new Date(v)):'—';
 
+const paymentPlanEventMeta=type=>({
+ plan_created:{label:'Created',tone:'neutral'},
+ plan_activated:{label:'Activated',tone:'good'},
+ instalment_paid:{label:'Payment received',tone:'good'},
+ instalment_overdue:{label:'Payment overdue',tone:'bad'},
+ plan_completed:{label:'Completed',tone:'good'},
+ plan_paused:{label:'Paused',tone:'warn'},
+ plan_resumed:{label:'Resumed',tone:'good'},
+ plan_cancelled:{label:'Cancelled',tone:'bad'},
+ early_settlement_requested:{label:'Early settlement',tone:'warn'},
+ plan_amended:{label:'Amended',tone:'neutral'}
+})[type]||{
+ label:String(type||'Plan event').replaceAll('_',' '),
+ tone:'neutral'
+};
+
 const API_BASE = Capacitor.isNativePlatform()
   ? (import.meta.env.VITE_NATIVE_API_BASE_URL || 'http://127.0.0.1:3001')
   : '';
@@ -4378,7 +4394,12 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
 
            <div className="paymentPlanTimelineBody">
             <div className="paymentPlanTimelineHead">
-             <b>{event.description||String(event.eventType||'Plan event').replaceAll('_',' ')}</b>
+             <div className="paymentPlanTimelineTitle">
+              <Pill tone={paymentPlanEventMeta(event.eventType).tone}>
+               {paymentPlanEventMeta(event.eventType).label}
+              </Pill>
+              <b>{event.description||paymentPlanEventMeta(event.eventType).label}</b>
+             </div>
              <span>{dt(event.createdAt)}</span>
             </div>
 
