@@ -20,7 +20,8 @@ const paymentPlanEventMeta=type=>({
  plan_resumed:{label:'Resumed',tone:'good'},
  plan_cancelled:{label:'Cancelled',tone:'bad'},
  early_settlement_requested:{label:'Early settlement',tone:'warn'},
- plan_amended:{label:'Amended',tone:'neutral'}
+ plan_amended:{label:'Amended',tone:'neutral'},
+ schedule_exhausted:{label:'Schedule exhausted',tone:'bad'}
 })[type]||{
  label:String(type||'Plan event').replaceAll('_',' '),
  tone:'neutral'
