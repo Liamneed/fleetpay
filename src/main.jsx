@@ -1600,6 +1600,23 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
  async function launchReset(){if(resetPhrase!=='RESET FLEETPAY FOR LIVE LAUNCH')return alert('Type the confirmation phrase exactly.');if(!confirm('FINAL CHECK: create a backup and clear FleetPay operational data for live launch?'))return;try{const j=await api('/api/admin/launch-reset',{method:'POST',body:JSON.stringify({phrase:resetPhrase,includeDriverAccounts:resetDrivers})});setResetPhrase('');alert(`Launch reset complete. Backup: ${j.backupFile}`);await refreshCore()}catch(e){alert(e.message)}}
  const LiveRunCard=({r})=>{const idx=r.status==='ready'?3:r.status==='funding_pending'?4:r.status==='funded'?5:['submitted_sandbox','submitted','processing'].includes(r.status)?6:r.status==='paid'?7:r.status==='cancelled'?-1:3;const steps=r.runType==='weekly'?['Rent Sheets','Sync & approve','Lock run','Funding','Funds cleared','Release','Autocab','Reconciled']:['Sync balance','Approve','Lock run','Funding','Funds cleared','Release','Autocab','Reconciled'];const canCancel=['ready','funding_pending','funded'].includes(r.status)&&!r.providerRef&&!r.releasedAt;return <div className={`liveWorkflowCard ${r.status==='cancelled'?'cancelled':''}`}><div className="liveWorkflowHead"><div><span>{r.runType==='weekly'?'WEEKLY PAYMENT RUN':'EARLY PAYOUT RUN'} · {dt(r.createdAt)}</span><h3>{money(r.totalAmount)}</h3><p>{r.itemCount} drivers · {r.id}</p></div><Pill tone={statusTone(r.status)}>{String(r.status).replaceAll('_',' ')}</Pill></div><div className="liveSteps">{steps.map((x,i)=><div key={x} className={`${idx>=0&&i<=idx?'done':''} ${i===idx?'current':''}`}><span>{i<idx?'✓':i+1}</span><b>{x}</b></div>)}</div>{r.status==='ready'&&<div className="operatorWarning"><AlertTriangle/><div><b>Funding required before release</b><span>Approved drivers are locked into this run. Transfer the required funds, then record that the transfer has been sent.</span></div></div>}{r.status==='funding_pending'&&<div className="operatorWarning blue"><Clock3/><div><b>Waiting for cleared funds</b><span>Do not release the payment run until the funds are visible as cleared in the payout account.</span></div></div>}{r.status==='funded'&&<div className="operatorWarning green"><CheckCircle2/><div><b>Funding gate passed</b><span>Cleared funds have been confirmed. One final operator check is required before release.</span></div></div>}<div className="runCardActions liveRunActions">{canCancel&&canMoney&&<button className="dangerOutline" onClick={()=>cancelPayoutRun(r)}><X/>Cancel run</button>}{r.status==='ready'&&canMoney&&<button className="secondary" onClick={()=>confirmFundingSent(r)}><Banknote/>Funding transfer sent</button>}{r.status==='funding_pending'&&canMoney&&<button className="primary" onClick={()=>confirmFundsCleared(r)}><CheckCircle2/>Confirm funds cleared</button>}{r.status==='funded'&&integrations?.wise?.environment==='sandbox'&&canMoney&&<button className="primary" onClick={()=>sendWiseSandbox(r)}><Send/>Release to Wise sandbox</button>}{r.status==='funded'&&integrations?.wise?.environment!=='sandbox'&&<span className="tinyNote">Live provider release will unlock when Wise production payout API is connected.</span>}{['submitted_sandbox','submitted','processing'].includes(r.status)&&canMoney&&<button className="primary" onClick={()=>markRunPaid(r)}><ShieldCheck/>Confirm paid & update Autocab</button>}</div>{r.status==='paid'&&<div className="demoComplete"><CheckCircle2/><div><b>Run reconciled</b><span>Provider payment confirmed and matching Autocab updates completed.</span></div></div>}{r.status==='cancelled'&&<div className="cancelledRunNote"><X/><span>Cancelled before release. Included drivers were returned to Approved.</span></div>}</div>};
    const txTypes=[['all','All activity'],['customer_payment','Customer payments'],['customer_refund','Customer refunds'],['driver_payment','Driver payments'],['weekly_payout','Weekly payouts'],['early_payout','Early payouts'],['fee','Fees']];
+   const transactionKind=x=>
+    x?.requestType==='payment_plan_instalment'?'Plan instalment':
+    x?.requestType==='payment_plan_extra'?'Extra plan payment':
+    x?.typeLabel||String(x?.type||'Transaction').replaceAll('_',' ');
+   const transactionKindTone=x=>
+    x?.requestType==='payment_plan_extra'?'good':
+    x?.requestType==='payment_plan_instalment'?'warn':
+    x?.type==='customer_refund'?'bad':
+    x?.type==='customer_payment'?'good':
+    x?.type==='weekly_payout'||x?.type==='early_payout'?'neutral':
+    x?.type==='fee'?'warn':'neutral';
+   const transactionSummary={
+    count:transactions.length,
+    incoming:transactions.filter(x=>x.direction!=='out').reduce((a,x)=>a+Number(x.amount||0),0),
+    outgoing:transactions.filter(x=>x.direction==='out').reduce((a,x)=>a+Number(x.amount||0),0)
+   };
+   transactionSummary.net=transactionSummary.incoming-transactionSummary.outgoing;
    const officeExportByView={
     transactions:{dataset:'transactions',filename:'FleetPay-transactions.csv'},
     customerPayments:{dataset:'customer-payments',filename:'FleetPay-customer-payments.csv'},
@@ -2173,129 +2190,161 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
      </section>
     </>}
 
-    {view==='transactions'&&<><section className="officePageIntro"><div><span>MASTER LEDGER</span><h2>Transaction history</h2><p>Search and filter driver payments, payouts, customer payments and fees.</p></div></section>
-
-<section className="transactionCategoryTabs">
- {[
-  ['all','All transactions'],
-  ['driver_in','Driver pay-ins'],
-  ['driver_out','Driver payouts'],
-  ['customer','Customer activity'],
-  ['fees','Fees']
- ].map(([v,l])=><button key={v} className={txCategory===v?'active':''} onClick={()=>setTxCategory(v)}>{l}</button>)}
-</section>
-
-<section className="panel transactionPanel">
- <div className="transactionFilterGrid">
-  <div className="searchBox transactionSearch">
-   <Search/>
-   <input
-    value={txQ}
-    onChange={e=>setTxQ(e.target.value)}
-    onKeyDown={e=>e.key==='Enter'&&loadTransactions()}
-    placeholder="Search callsign, driver, booking or reference…"
-   />
-   <button onClick={loadTransactions}>Search</button>
-  </div>
-
-  <label>From
-   <input type="date" value={txDateFrom} onChange={e=>setTxDateFrom(e.target.value)}/>
-  </label>
-
-  <label>To
-   <input type="date" value={txDateTo} onChange={e=>setTxDateTo(e.target.value)}/>
-  </label>
-
-  <label>Status
-   <select value={txStatus} onChange={e=>setTxStatus(e.target.value)}>
-    <option value="all">All statuses</option>
-    <option value="paid">Paid</option>
-    <option value="open">Open</option>
-    <option value="approved">Approved</option>
-    <option value="batched">Batched</option>
-    <option value="pending_approval">Pending approval</option>
-    <option value="declined">Declined</option>
-    <option value="cancelled">Cancelled</option>
-    <option value="failed">Failed</option>
-    <option value="completed">Completed</option>
-    <option value="succeeded">Succeeded</option>
-    <option value="uninvoiced">Uninvoiced</option>
-    <option value="invoiced">Invoiced</option>
-   </select>
-  </label>
-
-  <label>Type
-   <select value={txType} onChange={e=>setTxType(e.target.value)}>
-    {txTypes.map(([v,l])=><option key={v} value={v}>{l}</option>)}
-   </select>
-  </label>
-
-  <button className="secondary clearTransactionFilters" onClick={()=>{
-   setTxQ('');
-   setTxType('all');
-   setTxStatus('all');
-   setTxCategory('all');
-   setTxDateFrom('');
-   setTxDateTo('');
-  }}>Clear filters</button>
- </div>
-
- <div className="transactionResultHead">
+    {view==='transactions'&&<div className="transactionsWorkspace">
+ <section className="officePageIntro transactionPageIntro">
   <div>
-   <h3>{transactions.length} transaction{transactions.length===1?'':'s'}</h3>
-   <p>Click any row to view full transaction details.</p>
+   <span>MASTER LEDGER</span>
+   <h2>Transactions</h2>
+   <p>One operational view of money moving into and out of FleetPay. Search by driver, callsign, booking or provider reference, then open any row for the full audit detail.</p>
   </div>
- </div>
+  <div className="transactionPageMeta">
+   <span>Showing</span>
+   <b>{transactions.length}</b>
+   <small>up to 500 matching records</small>
+  </div>
+ </section>
 
- <div className="tableWrap transactionTableWrap">
-  <table className="transactionTable">
-   <thead>
-    <tr>
-     <th>Date / time</th>
-     <th>Type</th>
-     <th>Driver / customer</th>
-     <th>Reference</th>
-     <th>Amount</th>
-     <th>Direction</th>
-     <th>Status</th>
-     <th></th>
-    </tr>
-   </thead>
-   <tbody>
-    {transactions.map(x=><tr key={x.ref} onClick={()=>setSelectedTx(x)}>
-     <td>{dt(x.createdAt)}</td>
-     <td><b>{x.typeLabel}</b></td>
-     <td>
-      <b>{x.callsign?`Callsign ${x.callsign}`:(x.driverName||'FleetPay')}</b>
-      <small>{x.driverName&&x.callsign?x.driverName:(x.bookingId?`Booking ${x.bookingId}`:'')}</small>
-     </td>
-     <td>
-      <span className="transactionRef">{x.bookingId?`Booking ${x.bookingId}`:(x.providerRef||x.id)}</span>
-     </td>
-     <td>
-      <b className={x.direction==='out'?'transactionAmountOut':'transactionAmountIn'}>
-       {x.direction==='out'?'-':'+'}{money(x.amount)}
-      </b>
-      {x.type==='customer_payment'&&Number(x.refundedAmount||0)>0&&
-       <small>
-        Refunded separately: {money(x.refundedAmount)}
-       </small>
-      }
-      {x.type==='customer_refund'&&
-       <small>
-        Original payment: {money(x.originalAmount)}
-       </small>
-      }
-     </td>
-     <td><Pill tone={x.direction==='out'?'bad':'good'}>{x.direction==='out'?'Outgoing':'Incoming'}</Pill></td>
-     <td><Pill tone={statusTone(x.status)}>{x.status}</Pill></td>
-     <td><ChevronRight/></td>
-    </tr>)}
-    {!transactions.length&&<tr><td colSpan="8"><div className="emptyTransactionState">No transactions match the selected filters.</div></td></tr>}
-   </tbody>
-  </table>
- </div>
-</section></>}
+ <section className="transactionSummaryGrid">
+  <div><span>Records</span><b>{transactionSummary.count}</b><small>Current filtered result</small></div>
+  <div className="incoming"><span>Incoming</span><b>{money(transactionSummary.incoming)}</b><small>Money received</small></div>
+  <div className="outgoing"><span>Outgoing</span><b>{money(transactionSummary.outgoing)}</b><small>Money paid or refunded</small></div>
+  <div className={transactionSummary.net<0?'outgoing':'incoming'}><span>Net movement</span><b>{transactionSummary.net<0?'-':''}{money(Math.abs(transactionSummary.net))}</b><small>Incoming less outgoing</small></div>
+ </section>
+
+ <section className="transactionCategoryTabs transactionCategoryTabsV2">
+  {[
+   ['all','All transactions'],
+   ['driver_in','Driver pay-ins'],
+   ['driver_out','Driver payouts'],
+   ['customer','Customer activity'],
+   ['fees','Fees']
+  ].map(([v,l])=><button key={v} className={txCategory===v?'active':''} onClick={()=>setTxCategory(v)}>{l}</button>)}
+ </section>
+
+ <section className="panel transactionPanel transactionPanelV2">
+  <div className="transactionFilterGrid transactionFilterGridV2">
+   <div className="searchBox transactionSearch">
+    <Search/>
+    <input
+     value={txQ}
+     onChange={e=>setTxQ(e.target.value)}
+     onKeyDown={e=>e.key==='Enter'&&loadTransactions()}
+     placeholder="Search callsign, driver, booking or provider reference…"
+    />
+    {txQ&&<button type="button" className="transactionSearchClear" onClick={()=>setTxQ('')} aria-label="Clear search"><X/></button>}
+    <button className="transactionSearchSubmit" onClick={loadTransactions}>Search</button>
+   </div>
+
+   <label>From
+    <input type="date" value={txDateFrom} onChange={e=>setTxDateFrom(e.target.value)}/>
+   </label>
+
+   <label>To
+    <input type="date" value={txDateTo} onChange={e=>setTxDateTo(e.target.value)}/>
+   </label>
+
+   <label>Status
+    <select value={txStatus} onChange={e=>setTxStatus(e.target.value)}>
+     <option value="all">All statuses</option>
+     <option value="paid">Paid</option>
+     <option value="open">Open</option>
+     <option value="approved">Approved</option>
+     <option value="batched">Batched</option>
+     <option value="pending_approval">Pending approval</option>
+     <option value="declined">Declined</option>
+     <option value="cancelled">Cancelled</option>
+     <option value="failed">Failed</option>
+     <option value="completed">Completed</option>
+     <option value="succeeded">Succeeded</option>
+     <option value="uninvoiced">Uninvoiced</option>
+     <option value="invoiced">Invoiced</option>
+    </select>
+   </label>
+
+   <label>Type
+    <select value={txType} onChange={e=>setTxType(e.target.value)}>
+     {txTypes.map(([v,l])=><option key={v} value={v}>{l}</option>)}
+    </select>
+   </label>
+
+   <button className="secondary clearTransactionFilters" onClick={()=>{
+    setTxQ('');
+    setTxType('all');
+    setTxStatus('all');
+    setTxCategory('all');
+    setTxDateFrom('');
+    setTxDateTo('');
+   }}>Clear filters</button>
+  </div>
+
+  <div className="transactionResultHead transactionResultHeadV2">
+   <div>
+    <h3>{transactions.length} transaction{transactions.length===1?'':'s'}</h3>
+    <p>Newest first · select a row for payment, provider and linked-record details.</p>
+   </div>
+   <button className="mini" onClick={loadTransactions}><RefreshCw/>Refresh results</button>
+  </div>
+
+  <div className="tableWrap transactionTableWrap transactionTableWrapV2">
+   <table className="transactionTable transactionTableV2">
+    <thead>
+     <tr>
+      <th>Date / time</th>
+      <th>Payment type</th>
+      <th>Driver / customer</th>
+      <th>Linked record</th>
+      <th className="txAmountColumn">Amount</th>
+      <th>Status</th>
+      <th>Provider</th>
+      <th></th>
+     </tr>
+    </thead>
+    <tbody>
+     {transactions.map(x=><tr key={x.ref||x.id} onClick={()=>setSelectedTx(x)}>
+      <td className="transactionDateCell">
+       <b>{dt(x.createdAt)}</b>
+       <small>{x.completedAt?`Completed ${dt(x.completedAt)}`:'Created'}</small>
+      </td>
+      <td>
+       <span className={`transactionTypeBadge ${transactionKindTone(x)}`}>{transactionKind(x)}</span>
+       {x.requestType&&x.requestType!=='standard'&&
+        <small>{String(x.requestType).replaceAll('_',' ')}</small>
+       }
+      </td>
+      <td>
+       <div className="transactionPartyCell">
+        {x.callsign&&<span className="callsign txCallsign">{x.callsign}</span>}
+        <div>
+         <b>{x.driverName||(!x.callsign&&x.bookingId?'Customer payment':'FleetPay')}</b>
+         <small>{x.callsign?`Driver callsign ${x.callsign}`:(x.bookingId?`Booking ${x.bookingId}`:'System transaction')}</small>
+        </div>
+       </div>
+      </td>
+      <td>
+       <span className="transactionRef">{x.bookingId?`Booking ${x.bookingId}`:(x.paymentPlanId?`Plan ${x.paymentPlanId}`:(x.providerRef||x.id))}</span>
+       {x.paymentPlanInstalmentId&&<small>Instalment {x.paymentPlanInstalmentId}</small>}
+      </td>
+      <td className="txAmountColumn">
+       <b className={x.direction==='out'?'transactionAmountOut':'transactionAmountIn'}>
+        {x.direction==='out'?'-':'+'}{money(x.amount)}
+       </b>
+       <small>{x.direction==='out'?'Outgoing':'Incoming'}</small>
+       {x.type==='customer_payment'&&Number(x.refundedAmount||0)>0&&<small>Refunded: {money(x.refundedAmount)}</small>}
+       {x.type==='customer_refund'&&<small>Original: {money(x.originalAmount)}</small>}
+      </td>
+      <td><Pill tone={statusTone(x.status)}>{String(x.status||'').replaceAll('_',' ')}</Pill></td>
+      <td>
+       <b className="transactionProvider">{x.provider||'—'}</b>
+       {x.providerRef&&<small className="transactionProviderRef">{x.providerRef}</small>}
+      </td>
+      <td className="transactionChevron"><ChevronRight/></td>
+     </tr>)}
+     {!transactions.length&&<tr><td colSpan="8"><div className="emptyTransactionState"><CreditCard/><b>No transactions found</b><span>Try clearing one or more filters, or search for a different driver, booking or reference.</span></div></td></tr>}
+    </tbody>
+   </table>
+  </div>
+ </section>
+</div>}
     {view==='customerPayments'&&<div className="customerPaymentsAdmin customerPaymentsV2">
 
      <section className="officePageIntro customerPaymentsHeader">
@@ -5058,61 +5107,92 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
     </div>
    }
 
-{selectedTx&&<div className="drawerBack transactionDetailLayer" onClick={()=>setSelectedTx(null)}><aside className="drawer txDrawer" onClick={e=>e.stopPropagation()}><button className="drawerClose" onClick={()=>setSelectedTx(null)}><X/></button><div className="txDrawerHead">
+{selectedTx&&<div className="drawerBack transactionDetailLayer" onClick={()=>setSelectedTx(null)}>
+ <aside className="drawer txDrawer txDrawerV2" onClick={e=>e.stopPropagation()}>
+  <button className="drawerClose" onClick={()=>setSelectedTx(null)}><X/></button>
+
+  <div className="txDrawerHead txDrawerHeadV2">
    <div className={`txIcon large ${selectedTx.direction}`}><CreditCard/></div>
    <div>
-    <span>{selectedTx.typeLabel}</span>
+    <span>{transactionKind(selectedTx)}</span>
     <h2>{selectedTx.direction==='out'?'-':'+'}{money(selectedTx.amount)}</h2>
-    {selectedTx.type==='customer_payment'&&Number(selectedTx.refundedAmount||0)>0&&
-     <small>{money(selectedTx.refundedAmount)} refunded as separate transaction</small>
-    }
-    {selectedTx.type==='customer_refund'&&
-     <small>Refund issued to customer</small>
-    }
-    <Pill tone={statusTone(selectedTx.status)}>{selectedTx.status}</Pill>
+    <div className="txDrawerBadges">
+     <Pill tone={statusTone(selectedTx.status)}>{String(selectedTx.status||'').replaceAll('_',' ')}</Pill>
+     <Pill tone={selectedTx.direction==='out'?'bad':'good'}>{selectedTx.direction==='out'?'Outgoing':'Incoming'}</Pill>
+    </div>
+    {selectedTx.type==='customer_payment'&&Number(selectedTx.refundedAmount||0)>0&&<small>{money(selectedTx.refundedAmount)} refunded separately</small>}
+    {selectedTx.type==='customer_refund'&&<small>Refund issued to customer</small>}
    </div>
   </div>
-  <div className="detailList">
-   {[
-    ['FleetPay ID',selectedTx.id],
-    ['Created',dt(selectedTx.createdAt)],
-    ['Completed',selectedTx.completedAt?dt(selectedTx.completedAt):'—'],
-    ['Callsign',selectedTx.callsign||'—'],
-    ['Driver',selectedTx.driverName||'—'],
-    ['Booking',selectedTx.bookingId||'—'],
-    ...(selectedTx.type==='customer_payment'&&Number(selectedTx.refundedAmount||0)>0
-     ?[
-       ['Originally received',money(selectedTx.originalAmount)],
-       ['Refunded separately',money(selectedTx.refundedAmount)]
-      ]
-     :[]
-    ),
-    ...(selectedTx.type==='customer_refund'
-     ?[
-       ['Original customer payment',money(selectedTx.originalAmount)],
-       ['Refund amount',money(selectedTx.amount)],
-       ['Refund source',
-        selectedTx.refundSource==='fleetpay'
-         ? 'FleetPay'
-         : selectedTx.refundSource==='stripe_external'
-         ? 'Stripe dashboard / external'
-         : selectedTx.refundSource||'—'
-       ],
-       ['Processed by',selectedTx.processedBy||'—']
-      ]
-     :[]
-    ),
-    ['Fare',selectedTx.fareAmount!=null?money(selectedTx.fareAmount):'—'],
-    ['FleetPay fee',selectedTx.feeAmount!=null?money(selectedTx.feeAmount):'—'],
-    ...(selectedTx.originalFeeAmount!=null &&
-       Number(selectedTx.originalFeeAmount)!==Number(selectedTx.feeAmount)
-     ?[['Original FleetPay fee',money(selectedTx.originalFeeAmount)]]
-     :[]
-    ),
-    ['Provider',selectedTx.provider||'—'],
-    ['Provider reference',selectedTx.providerRef||'—']
-   ].map(([a,b])=><div key={a}><span>{a}</span><b>{b}</b></div>)}
-  </div><div className="secureFoot"><ShieldCheck/><span>Transaction detail is read-only. Changes are made through controlled workflows and recorded in the audit trail.</span></div></aside></div>}
+
+  <section className="txDetailSection">
+   <div className="txDetailSectionHead"><span>TRANSACTION</span><b>Core details</b></div>
+   <div className="detailList txDetailList">
+    {[
+     ['FleetPay ID',selectedTx.id],
+     ['Created',dt(selectedTx.createdAt)],
+     ['Completed',selectedTx.completedAt?dt(selectedTx.completedAt):'—'],
+     ['Payment type',transactionKind(selectedTx)],
+     ...(selectedTx.requestType?[['Request type',String(selectedTx.requestType).replaceAll('_',' ')]]:[])
+    ].map(([a,b])=><div key={a}><span>{a}</span><b>{b}</b></div>)}
+   </div>
+  </section>
+
+  <section className="txDetailSection">
+   <div className="txDetailSectionHead"><span>LINKED RECORDS</span><b>Driver, booking & plan</b></div>
+   <div className="detailList txDetailList">
+    {[
+     ['Callsign',selectedTx.callsign||'—'],
+     ['Driver',selectedTx.driverName||'—'],
+     ['Booking',selectedTx.bookingId||'—'],
+     ...(selectedTx.paymentPlanId?[['Payment plan',selectedTx.paymentPlanId]]:[]),
+     ...(selectedTx.paymentPlanInstalmentId?[['Plan instalment',selectedTx.paymentPlanInstalmentId]]:[])
+    ].map(([a,b])=><div key={a}><span>{a}</span><b>{b}</b></div>)}
+   </div>
+  </section>
+
+  {(selectedTx.fareAmount!=null||selectedTx.feeAmount!=null||selectedTx.originalAmount!=null||selectedTx.refundedAmount!=null)&&
+   <section className="txDetailSection">
+    <div className="txDetailSectionHead"><span>MONEY</span><b>Amount breakdown</b></div>
+    <div className="detailList txDetailList">
+     {[
+      ...(selectedTx.type==='customer_payment'&&Number(selectedTx.refundedAmount||0)>0
+       ?[['Originally received',money(selectedTx.originalAmount)],['Refunded separately',money(selectedTx.refundedAmount)]]
+       :[]
+      ),
+      ...(selectedTx.type==='customer_refund'
+       ?[
+         ['Original customer payment',money(selectedTx.originalAmount)],
+         ['Refund amount',money(selectedTx.amount)],
+         ['Refund source',selectedTx.refundSource==='fleetpay'?'FleetPay':selectedTx.refundSource==='stripe_external'?'Stripe dashboard / external':selectedTx.refundSource||'—'],
+         ['Processed by',selectedTx.processedBy||'—']
+        ]
+       :[]
+      ),
+      ['Fare',selectedTx.fareAmount!=null?money(selectedTx.fareAmount):'—'],
+      ['FleetPay fee',selectedTx.feeAmount!=null?money(selectedTx.feeAmount):'—'],
+      ...(selectedTx.originalFeeAmount!=null&&Number(selectedTx.originalFeeAmount)!==Number(selectedTx.feeAmount)
+       ?[['Original FleetPay fee',money(selectedTx.originalFeeAmount)]]
+       :[]
+      )
+     ].map(([a,b])=><div key={a}><span>{a}</span><b>{b}</b></div>)}
+    </div>
+   </section>
+  }
+
+  <section className="txDetailSection">
+   <div className="txDetailSectionHead"><span>PROVIDER</span><b>Processing reference</b></div>
+   <div className="detailList txDetailList">
+    {[
+     ['Provider',selectedTx.provider||'—'],
+     ['Provider reference',selectedTx.providerRef||'—']
+    ].map(([a,b])=><div key={a}><span>{a}</span><b>{b}</b></div>)}
+   </div>
+  </section>
+
+  <div className="secureFoot"><ShieldCheck/><span>Read-only audit view. Financial changes must use the controlled FleetPay workflow and are recorded separately.</span></div>
+ </aside>
+</div>}
   {selected&&<div className="drawerBack" onClick={()=>setSelected(null)}>
    <aside className="drawer driverFinanceDrawer" onClick={e=>e.stopPropagation()}>
     <button className="drawerClose" onClick={()=>setSelected(null)}><X/></button>

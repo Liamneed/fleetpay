@@ -6637,3 +6637,94 @@ body {
 .paymentPlanTimelineTitle .pill{flex:0 0 auto}
 
 .paymentPlanAttentionSummary{display:block;margin-top:4px;max-width:280px;font-size:11px!important;line-height:1.35;color:#b63a3a!important;font-weight:600}
+
+/* =========================================================
+   TRANSACTIONS V3 — dense operational ledger
+   ========================================================= */
+.transactionsWorkspace{display:flex;flex-direction:column;gap:14px}
+.transactionPageIntro{margin-bottom:0}
+.transactionPageMeta{min-width:170px;padding:12px 16px;border:1px solid #e2e8f0;border-radius:13px;background:#fff;text-align:right}
+.transactionPageMeta span,.transactionPageMeta small{display:block;color:#64748b;font-size:10px;font-weight:750;text-transform:uppercase;letter-spacing:.06em}
+.transactionPageMeta b{display:block;margin:2px 0;font-size:24px;color:#172033}
+.transactionPageMeta small{text-transform:none;letter-spacing:0;font-weight:600}
+
+.transactionSummaryGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.transactionSummaryGrid>div{padding:15px 17px;border:1px solid #e2e8f0;border-radius:14px;background:#fff;min-width:0}
+.transactionSummaryGrid span{display:block;color:#64748b;font-size:10px;font-weight:850;letter-spacing:.06em;text-transform:uppercase}
+.transactionSummaryGrid b{display:block;margin-top:5px;color:#172033;font-size:21px;letter-spacing:-.025em}
+.transactionSummaryGrid small{display:block;margin-top:3px;color:#94a3b8;font-size:11px}
+.transactionSummaryGrid .incoming b{color:#15803d}
+.transactionSummaryGrid .outgoing b{color:#dc2626}
+
+.transactionCategoryTabsV2{margin:0}
+.transactionPanelV2{border-radius:16px}
+.transactionFilterGridV2{grid-template-columns:minmax(360px,2.2fr) repeat(4,minmax(132px,1fr)) auto;padding:14px 16px;background:#fbfcfe}
+.transactionFilterGridV2 input,.transactionFilterGridV2 select{border:1px solid #dbe3ec;border-radius:9px;background:#fff;padding:9px 10px;color:#26354c;outline:none}
+.transactionFilterGridV2 input:focus,.transactionFilterGridV2 select:focus{border-color:#7aa7ff;box-shadow:0 0 0 3px rgba(37,99,235,.08)}
+.transactionSearch{grid-template-columns:auto minmax(0,1fr) auto auto!important}
+.transactionSearchClear{width:30px!important;min-height:30px!important;padding:0!important;background:transparent!important;color:#64748b!important;border-radius:8px!important}
+.transactionSearchClear svg{width:15px;height:15px}
+.transactionSearchSubmit{min-height:36px!important}
+.transactionResultHeadV2{padding:14px 17px;border-bottom:1px solid #eef2f6}
+.transactionResultHeadV2 .mini{display:inline-flex;align-items:center;gap:6px}
+.transactionResultHeadV2 .mini svg{width:14px}
+
+.transactionTableWrapV2{max-height:680px}
+.transactionTableV2{min-width:1220px}
+.transactionTableV2 thead th{position:sticky;top:0;z-index:2;background:#f8fafc}
+.transactionTableV2 th,.transactionTableV2 td{padding:11px 13px}
+.transactionTableV2 tbody tr{transition:background .12s ease}
+.transactionTableV2 tbody tr:hover{background:#f7faff}
+.transactionDateCell{min-width:160px}
+.transactionDateCell>b{display:block;font-size:12px;color:#26354c}
+.transactionTypeBadge{display:inline-flex;align-items:center;min-height:24px;padding:4px 8px;border-radius:999px;background:#eef2f7;color:#475569;font-size:11px;font-weight:800;white-space:nowrap}
+.transactionTypeBadge.good{background:#e9f8ef;color:#137a45}
+.transactionTypeBadge.warn{background:#fff4df;color:#9a6200}
+.transactionTypeBadge.bad{background:#fff0f1;color:#b52d3e}
+.transactionTypeBadge.neutral{background:#eef2f7;color:#475569}
+.transactionPartyCell{display:flex;align-items:center;gap:9px;min-width:190px}
+.transactionPartyCell>div{min-width:0}
+.transactionPartyCell b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}
+.txCallsign{min-width:36px;padding:5px 7px;border-radius:7px;font-size:11px}
+.txAmountColumn{text-align:right}
+.transactionTableV2 .txAmountColumn b{font-size:14px}
+.transactionProvider{display:block;max-width:135px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-transform:capitalize}
+.transactionProviderRef{display:block;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.transactionChevron{width:38px;text-align:right}
+.transactionChevron svg{width:17px;color:#94a3b8}
+.emptyTransactionState{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px}
+.emptyTransactionState svg{width:25px;color:#94a3b8}
+.emptyTransactionState b{color:#334155}
+.emptyTransactionState span{font-size:12px}
+
+.txDrawerV2{width:min(560px,100%);padding:24px}
+.txDrawerHeadV2{padding-right:42px;margin-bottom:18px}
+.txDrawerHeadV2>div:last-child{min-width:0}
+.txDrawerHeadV2>div:last-child>span{display:block;color:#64748b;font-size:11px;font-weight:850;text-transform:uppercase;letter-spacing:.07em}
+.txDrawerHeadV2 h2{margin:4px 0 8px;font-size:30px;letter-spacing:-.035em}
+.txDrawerHeadV2 small{display:block;margin-top:8px;color:#64748b}
+.txDrawerBadges{display:flex;gap:6px;flex-wrap:wrap}
+.txDetailSection{margin-top:12px;border:1px solid #e5eaf0;border-radius:13px;overflow:hidden;background:#fff}
+.txDetailSectionHead{padding:11px 13px;border-bottom:1px solid #edf1f5;background:#f8fafc}
+.txDetailSectionHead span{display:block;font-size:9px;font-weight:850;letter-spacing:.1em;color:#8a99ad}
+.txDetailSectionHead b{display:block;margin-top:2px;font-size:12px;color:#334155}
+.txDetailList{margin:0}
+.txDetailList>div{padding:10px 13px}
+.txDetailList>div:last-child{border-bottom:0}
+.txDetailList b{min-width:0;max-width:none;overflow-wrap:anywhere;word-break:break-word;text-align:right}
+.txDrawerV2 .secureFoot{margin-top:16px}
+
+@media(max-width:1200px){
+ .transactionSummaryGrid{grid-template-columns:1fr 1fr}
+ .transactionFilterGridV2{grid-template-columns:1fr 1fr 1fr}
+ .transactionFilterGridV2 .transactionSearch{grid-column:1/-1}
+}
+@media(max-width:760px){
+ .transactionPageMeta{width:100%;text-align:left}
+ .transactionSummaryGrid{grid-template-columns:1fr 1fr}
+ .transactionFilterGridV2{grid-template-columns:1fr}
+ .transactionFilterGridV2 .transactionSearch{grid-column:auto}
+ .transactionSearch{grid-template-columns:auto minmax(0,1fr) auto!important}
+ .transactionSearchSubmit{grid-column:1/-1;width:100%}
+ .txDrawerV2{padding:20px}
+}
