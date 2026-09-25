@@ -1398,6 +1398,11 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
           <b>{overview?.attention?.overduePaymentRequests||0}</b>
          </button>
 
+         <button onClick={()=>go('paymentPlans')}>
+          <span>Payment plans</span>
+          <b>{overview?.attention?.paymentPlans||0}</b>
+         </button>
+
          <button onClick={()=>go('transactions')}>
           <span>Failed adjustments</span>
           <b>{overview?.attention?.failedAdjustments||0}</b>

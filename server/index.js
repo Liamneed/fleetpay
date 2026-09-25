@@ -3286,6 +3286,8 @@ app.patch('/api/admin/staff/:id',adminAuth,requireStaffRole('administrator'),(re
 
 
 app.get('/api/admin/office-overview',adminAuth,(req,res)=>{
+ refreshPaymentPlanStatuses();
+
  const today=londonWindow().date;
 
  const customerRows=db.prepare(
@@ -3411,6 +3413,13 @@ app.get('/api/admin/office-overview',adminAuth,(req,res)=>{
   ).get().c
  );
 
+ const paymentPlanAttention=db.prepare(`
+  SELECT
+   SUM(CASE WHEN status='defaulted' THEN 1 ELSE 0 END) defaulted,
+   SUM(CASE WHEN status='paused' THEN 1 ELSE 0 END) paused
+  FROM driver_payment_plans
+ `).get();
+
  const activity=db.prepare(`
   SELECT
    SUM(CASE
@@ -3459,6 +3468,8 @@ app.get('/api/admin/office-overview',adminAuth,(req,res)=>{
   Number(customerAttention.release_failed||0)+
   Number(customerAttention.refund_pending||0)+
   Number(overdueRequests.overdue||0)+
+  Number(paymentPlanAttention.defaulted||0)+
+  Number(paymentPlanAttention.paused||0)+
   failedAdjustments;
 
  res.json({
@@ -3505,6 +3516,11 @@ app.get('/api/admin/office-overview',adminAuth,(req,res)=>{
    openPaymentRequestTotal:Number(Number(openRequests.total||0).toFixed(2)),
    overduePaymentRequests:Number(overdueRequests.overdue||0),
    overduePaymentRequestTotal:Number(Number(overdueRequests.total||0).toFixed(2)),
+   defaultedPaymentPlans:Number(paymentPlanAttention.defaulted||0),
+   pausedPaymentPlans:Number(paymentPlanAttention.paused||0),
+   paymentPlans:
+    Number(paymentPlanAttention.defaulted||0)+
+    Number(paymentPlanAttention.paused||0),
    failedAdjustments
   },
 
