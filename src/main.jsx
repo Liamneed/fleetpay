@@ -3772,9 +3772,12 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
              x=>['due','scheduled','overdue'].includes(x.status)
             );
 
+           const isOverdue=
+            nextInstalment?.status==='overdue';
+
            const needsAttention=
             ['paused','defaulted'].includes(plan.status)||
-            nextInstalment?.status==='overdue';
+            isOverdue;
 
            const attentionText=
             plan.status==='defaulted'
@@ -3826,8 +3829,8 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
               ?<span>Completed</span>
               :<>
                <b>{nextInstalment?money(nextInstalment.amount):'—'}</b>
-               <small className={needsAttention?'negative':''}>
-                {needsAttention?'Overdue · ':''}
+               <small className={isOverdue?'negative':''}>
+                {isOverdue?'Overdue · ':''}
                 {dateOnly(plan.nextDueAt||nextInstalment?.dueAt)}
                </small>
               </>
