@@ -11760,6 +11760,50 @@ if(item.payment_plan_id&&item.request_type==='payment_plan_instalment'){
 }
 const session=await createStripePaymentRequest(item);audit(req,'driver',req.auth.driverId,'stripe_checkout_started','payment_request',item.id,{callsign:item.callsign,amount:item.amount,sessionId:session.id});res.json({ok:true,paymentUrl:session.url})}catch(e){res.status(500).json({error:e.message})}});
 
+
+function driverLiveStateFreshness(row){
+ if(!row){
+  return {
+   globalFeedFresh:false,
+   driverStateFresh:false,
+   globalFeedAgeMs:null,
+   driverStateAgeMs:null
+  };
+ }
+
+ const latestTrack=db.prepare(`
+  SELECT received_at
+  FROM autocab_vehicle_webhooks
+  WHERE event_type='VehicleTracksChanged'
+  ORDER BY received_at DESC
+  LIMIT 1
+ `).get();
+
+ const globalFeedAgeMs=latestTrack?.received_at
+  ? Date.now()-new Date(latestTrack.received_at).getTime()
+  : NaN;
+
+ const driverStateAgeMs=row.updated_at
+  ? Date.now()-new Date(row.updated_at).getTime()
+  : NaN;
+
+ return {
+  globalFeedFresh:
+   Number.isFinite(globalFeedAgeMs) &&
+   globalFeedAgeMs<=30000,
+
+  driverStateFresh:
+   Number.isFinite(driverStateAgeMs) &&
+   driverStateAgeMs<=15*60*1000,
+
+  globalFeedAgeMs:
+   Number.isFinite(globalFeedAgeMs)?globalFeedAgeMs:null,
+
+  driverStateAgeMs:
+   Number.isFinite(driverStateAgeMs)?driverStateAgeMs:null
+ };
+}
+
 app.get('/api/driver/live-state',driverAuth,(req,res)=>{
  try{
   const driverId=Number(req.auth.driverId);
@@ -11790,8 +11834,11 @@ app.get('/api/driver/live-state',driverAuth,(req,res)=>{
    });
   }
 
-  const ageMs=Date.now()-new Date(row.updated_at).getTime();
-  const stale=!Number.isFinite(ageMs) || ageMs>30000;
+  const freshness=driverLiveStateFreshness(row);
+  const stale=
+   !freshness.globalFeedFresh ||
+   !freshness.driverStateFresh;
+
   const bookingId=Number(row.booking_id||0);
 
   res.json({
@@ -11800,6 +11847,18 @@ app.get('/api/driver/live-state',driverAuth,(req,res)=>{
    current:!stale,
    hasBooking:!stale && bookingId>0,
    stale,
+   freshness:{
+    globalFeedFresh:freshness.globalFeedFresh,
+    driverStateFresh:freshness.driverStateFresh,
+    globalFeedAgeSeconds:
+     freshness.globalFeedAgeMs==null
+      ?null
+      :Math.round(freshness.globalFeedAgeMs/1000),
+    driverStateAgeSeconds:
+     freshness.driverStateAgeMs==null
+      ?null
+      :Math.round(freshness.driverStateAgeMs/1000)
+   },
    state:{
     driverId:Number(row.driver_id),
     callsign:row.driver_callsign||'',
@@ -11853,11 +11912,17 @@ app.get('/api/driver/customer-payment/preview',driverAuth,async(req,res)=>{
    });
   }
 
-  const ageMs=Date.now()-new Date(live.updated_at).getTime();
+  const freshness=driverLiveStateFreshness(live);
 
-  if(!Number.isFinite(ageMs) || ageMs>30000){
+  if(!freshness.globalFeedFresh){
    return res.status(409).json({
-    error:'Your live Autocab status is out of date. Please try again.'
+    error:'Live Autocab vehicle updates are temporarily unavailable. Please try again.'
+   });
+  }
+
+  if(!freshness.driverStateFresh){
+   return res.status(409).json({
+    error:'Your current Autocab driver state is too old to use safely. Please try again.'
    });
   }
 
