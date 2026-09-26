@@ -2317,6 +2317,140 @@ db.exec(`
  )
 `);
 
+db.exec(`
+ CREATE TABLE IF NOT EXISTS driver_live_state(
+  driver_id INTEGER PRIMARY KEY,
+  driver_callsign TEXT,
+  vehicle_id INTEGER,
+  vehicle_callsign TEXT,
+  vehicle_status TEXT,
+  booking_id INTEGER,
+  track_timestamp TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+ )
+`);
+
+db.exec(`
+ CREATE INDEX IF NOT EXISTS idx_driver_live_state_booking
+ ON driver_live_state(booking_id)
+`);
+
+
+function updateDriverLiveStateFromTracks(raw){
+ const tracks=Array.isArray(raw?.VehicleTracks)
+  ? raw.VehicleTracks
+  : (Array.isArray(raw?.vehicleTracks)?raw.vehicleTracks:[]);
+
+ if(!tracks.length)return {processed:0,updated:0};
+
+ const receivedAt=new Date().toISOString();
+
+ const upsert=db.prepare(`
+  INSERT INTO driver_live_state(
+   driver_id,
+   driver_callsign,
+   vehicle_id,
+   vehicle_callsign,
+   vehicle_status,
+   booking_id,
+   track_timestamp,
+   updated_at
+  )
+  VALUES(?,?,?,?,?,?,?,?)
+  ON CONFLICT(driver_id) DO UPDATE SET
+   driver_callsign=excluded.driver_callsign,
+   vehicle_id=excluded.vehicle_id,
+   vehicle_callsign=excluded.vehicle_callsign,
+   vehicle_status=excluded.vehicle_status,
+   booking_id=excluded.booking_id,
+   track_timestamp=excluded.track_timestamp,
+   updated_at=excluded.updated_at
+  WHERE excluded.track_timestamp >= driver_live_state.track_timestamp
+ `);
+
+ let processed=0;
+ let updated=0;
+
+ for(const track of tracks){
+  const driver=track?.Driver ?? track?.driver ?? {};
+  const vehicle=track?.Vehicle ?? track?.vehicle ?? {};
+
+  const driverId=Number(
+   driver?.Id ??
+   driver?.id ??
+   driver?.DriverId ??
+   driver?.driverId ??
+   0
+  );
+
+  if(!Number.isFinite(driverId) || driverId<=0)continue;
+
+  const driverCallsign=String(
+   driver?.Callsign ??
+   driver?.callsign ??
+   ''
+  ).trim();
+
+  const vehicleId=Number(
+   vehicle?.Id ??
+   vehicle?.id ??
+   0
+  );
+
+  const vehicleCallsign=String(
+   vehicle?.Callsign ??
+   vehicle?.callsign ??
+   ''
+  ).trim();
+
+  const vehicleStatus=String(
+   track?.VehicleStatus ??
+   track?.vehicleStatus ??
+   ''
+  ).trim();
+
+  const rawBookingId=Number(
+   track?.BookingId ??
+   track?.bookingId ??
+   0
+  );
+
+  const bookingId=
+   Number.isFinite(rawBookingId) && rawBookingId>0
+    ? rawBookingId
+    : null;
+
+  const rawTimestamp=
+   track?.Timestamp ??
+   track?.timestamp ??
+   receivedAt;
+
+  const parsedTimestamp=new Date(rawTimestamp);
+
+  const trackTimestamp=
+   Number.isNaN(parsedTimestamp.getTime())
+    ? receivedAt
+    : parsedTimestamp.toISOString();
+
+  processed++;
+
+  const result=upsert.run(
+   driverId,
+   driverCallsign||null,
+   Number.isFinite(vehicleId) && vehicleId>0 ? vehicleId : null,
+   vehicleCallsign||null,
+   vehicleStatus||null,
+   bookingId,
+   trackTimestamp,
+   receivedAt
+  );
+
+  updated+=Number(result.changes||0);
+ }
+
+ return {processed,updated};
+}
+
 function captureAutocabVehicleWebhook(eventType,raw){
  const payload=
   raw?.Vehicle ??
@@ -2412,8 +2546,17 @@ app.post(
  ['/api/webhooks/autocab/vehicle-tracks','/track'],
  (req,res)=>{
   try{
-   const x=captureAutocabVehicleWebhook('VehicleTracksChanged',req.body||{});
-   res.status(200).json({ok:true,received:true,eventType:'VehicleTracksChanged',webhookId:x.webhookId});
+   const raw=req.body||{};
+   const x=captureAutocabVehicleWebhook('VehicleTracksChanged',raw);
+   const liveState=updateDriverLiveStateFromTracks(raw);
+
+   res.status(200).json({
+    ok:true,
+    received:true,
+    eventType:'VehicleTracksChanged',
+    webhookId:x.webhookId,
+    liveStateProcessed:liveState.processed
+   });
   }catch(e){
    console.error('[FaivoPay] VehicleTracksChanged capture error',e);
    res.status(500).json({ok:false,error:'Vehicle tracks webhook could not be captured'});
