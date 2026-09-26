@@ -7612,3 +7612,2927 @@ body {
     display:none;
   }
 }
+
+
+/* =========================================================
+   FAIVOPAY DRIVER · PAYMENTS V2
+   Modern card treatment — functionality unchanged
+   ========================================================= */
+
+.paymentsPageV2{
+  padding-bottom:14px;
+}
+
+.paymentsPageTitle{
+  margin-bottom:4px;
+}
+
+.liveJourneyCard{
+  position:relative;
+  overflow:hidden!important;
+  padding:18px!important;
+  border-radius:21px!important;
+  transition:border-color .18s ease,box-shadow .18s ease;
+}
+
+.liveJourneyCard.available{
+  border-color:rgba(236,177,55,.48)!important;
+  box-shadow:0 10px 30px rgba(181,125,20,.10)!important;
+}
+
+.liveJourneyCard.ready{
+  border-color:rgba(69,157,216,.35)!important;
+}
+
+.liveJourneyCard.paid{
+  border-color:rgba(43,159,101,.38)!important;
+}
+
+.liveJourneyHead{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:14px;
+}
+
+.liveJourneyKicker{
+  display:block;
+  margin-bottom:5px;
+  color:#cf941f;
+  font-size:10px;
+  line-height:1;
+  font-weight:900;
+  letter-spacing:.13em;
+}
+
+.liveJourneyCard.ready .liveJourneyKicker{
+  color:#3c99d1;
+}
+
+.liveJourneyCard.paid .liveJourneyKicker{
+  color:#24945c;
+}
+
+.liveJourneyHead h2{
+  margin:0;
+  font-size:21px;
+  letter-spacing:-.025em;
+}
+
+.liveJourneyStatus{
+  width:42px;
+  height:42px;
+  flex:0 0 42px;
+  display:grid;
+  place-items:center;
+  border-radius:14px;
+  background:#f4f6f9;
+  color:#6c7a8f;
+}
+
+.liveJourneyStatus svg{
+  width:20px;
+}
+
+.liveJourneyStatus.attention{
+  background:#fff4d9;
+  color:#bc7c09;
+}
+
+.liveJourneyStatus.ready{
+  background:#e9f5fc;
+  color:#2d8fc9;
+}
+
+.liveJourneyStatus.success{
+  background:#e9f8f0;
+  color:#208954;
+}
+
+.liveJourneyLoading,
+.liveJourneyEmpty{
+  margin-top:17px;
+  padding:16px;
+  display:flex;
+  align-items:center;
+  gap:12px;
+  border:1px solid #e8ebef;
+  border-radius:15px;
+  background:#f8fafc;
+}
+
+.liveJourneyLoading svg,
+.liveJourneyEmpty>svg{
+  width:20px;
+  flex:0 0 auto;
+  color:#718198;
+}
+
+.liveJourneyEmpty>div{
+  min-width:0;
+  flex:1;
+}
+
+.liveJourneyEmpty b,
+.liveJourneyEmpty span{
+  display:block;
+}
+
+.liveJourneyEmpty span{
+  margin-top:3px;
+  color:#7b8798;
+  font-size:12px;
+  line-height:1.42;
+}
+
+.liveRefreshButton{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  border:0;
+  border-radius:10px;
+  padding:8px 10px;
+  background:#eef2f7;
+  color:#33445c;
+  font-size:11px;
+  font-weight:850;
+}
+
+.liveRefreshButton svg{
+  width:14px;
+}
+
+.liveJourneyFare{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-top:18px;
+}
+
+.liveJourneyFare span,
+.liveJourneyFare strong{
+  display:block;
+}
+
+.liveJourneyFare>div>span{
+  color:#7f8b9c;
+  font-size:11px;
+  font-weight:750;
+}
+
+.liveJourneyFare>div>strong{
+  margin-top:2px;
+  font-size:34px;
+  line-height:1;
+  letter-spacing:-.045em;
+}
+
+.liveJourneyRoute{
+  margin-top:17px;
+  padding:14px;
+  display:grid;
+  gap:10px;
+  border:1px solid #e9edf2;
+  border-radius:14px;
+  background:#fafbfd;
+}
+
+.liveJourneyRoute>div{
+  display:grid;
+  grid-template-columns:12px 1fr;
+  gap:9px;
+  align-items:start;
+}
+
+.liveJourneyRoute span{
+  color:#536176;
+  font-size:12px;
+  line-height:1.4;
+}
+
+.routeDot{
+  width:8px;
+  height:8px;
+  margin-top:4px;
+  border-radius:50%;
+  background:#2b91cf;
+  box-shadow:0 0 0 3px rgba(43,145,207,.11);
+}
+
+.routeDot.destination{
+  background:#d59a26;
+  box-shadow:0 0 0 3px rgba(213,154,38,.12);
+}
+
+.livePaymentSummary{
+  margin-top:16px;
+  padding:14px;
+  display:grid;
+  gap:10px;
+  border:1px solid #e9edf2;
+  border-radius:15px;
+  background:#f8fafc;
+}
+
+.livePaymentSummary>div{
+  display:flex;
+  justify-content:space-between;
+  gap:14px;
+  align-items:center;
+}
+
+.livePaymentSummary span{
+  color:#718096;
+  font-size:11px;
+}
+
+.livePaymentSummary b{
+  font-size:12px;
+}
+
+.livePaymentTotal{
+  margin-top:2px;
+  padding-top:11px;
+  border-top:1px solid #e4e8ee;
+}
+
+.livePaymentTotal span{
+  color:#27364a!important;
+  font-weight:850;
+}
+
+.livePaymentTotal strong{
+  font-size:20px;
+  letter-spacing:-.025em;
+}
+
+.liveTakePaymentButton{
+  width:100%;
+  min-height:62px;
+  margin-top:16px;
+  padding:12px 14px;
+  display:grid;
+  grid-template-columns:36px 1fr 20px;
+  align-items:center;
+  gap:11px;
+  border:0;
+  border-radius:15px;
+  background:linear-gradient(135deg,#f0bd49,#dfa222);
+  color:#342400;
+  box-shadow:0 10px 24px rgba(181,125,20,.20);
+  text-align:left;
+}
+
+.liveTakePaymentButton>svg:first-child{
+  width:20px;
+  justify-self:center;
+}
+
+.liveTakePaymentButton>svg:last-child{
+  width:18px;
+}
+
+.liveTakePaymentButton span{
+  display:block;
+}
+
+.liveTakePaymentButton b,
+.liveTakePaymentButton small{
+  display:block;
+}
+
+.liveTakePaymentButton b{
+  font-size:14px;
+}
+
+.liveTakePaymentButton small{
+  margin-top:2px;
+  opacity:.7;
+  font-size:10px;
+}
+
+.liveTakePaymentButton:disabled{
+  opacity:.65;
+}
+
+.liveReadyPanel{
+  margin-top:16px;
+  padding:15px;
+  border:1px solid #dfeaf1;
+  border-radius:17px;
+  background:#f6fbfe;
+}
+
+.liveReadyTop{
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  align-items:flex-start;
+}
+
+.liveReadyTop span,
+.liveReadyTop strong,
+.liveReadyTop small{
+  display:block;
+}
+
+.liveReadyTop span{
+  color:#368fc6;
+  font-size:9px;
+  font-weight:900;
+  letter-spacing:.11em;
+}
+
+.liveReadyTop strong{
+  margin-top:3px;
+  font-size:27px;
+}
+
+.liveReadyTop small{
+  margin-top:2px;
+  color:#7d8b9b;
+  font-size:10px;
+}
+
+.liveQrPanel{
+  margin-top:15px!important;
+}
+
+.livePrimaryButton{
+  background:#17263b!important;
+  color:#fff!important;
+  box-shadow:none!important;
+}
+
+.livePaidPanel{
+  margin-top:16px;
+  padding:18px;
+  display:flex;
+  align-items:center;
+  gap:13px;
+  border:1px solid #cdebdc;
+  border-radius:17px;
+  background:#effaf4;
+}
+
+.livePaidPanel>svg{
+  width:32px;
+  height:32px;
+  flex:0 0 32px;
+  color:#208c56;
+}
+
+.livePaidPanel span,
+.livePaidPanel strong,
+.livePaidPanel small{
+  display:block;
+}
+
+.livePaidPanel span{
+  color:#248453;
+  font-size:9px;
+  font-weight:900;
+  letter-spacing:.11em;
+}
+
+.livePaidPanel strong{
+  margin-top:3px;
+  color:#145f3b;
+  font-size:29px;
+}
+
+.livePaidPanel small{
+  margin-top:2px;
+  color:#5e806e;
+  font-size:10px;
+}
+
+.liveRefreshLink{
+  margin:13px auto 0;
+  display:flex;
+  align-items:center;
+  gap:5px;
+  border:0;
+  background:transparent;
+  color:#758297;
+  font-size:10px;
+  font-weight:800;
+}
+
+.liveRefreshLink svg{
+  width:13px;
+}
+
+.manualPaymentDivider{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin:18px 4px 5px;
+  color:#8995a5;
+  font-size:9px;
+  font-weight:850;
+  letter-spacing:.09em;
+  text-transform:uppercase;
+}
+
+.manualPaymentDivider:before,
+.manualPaymentDivider:after{
+  content:"";
+  height:1px;
+  flex:1;
+  background:#e4e9ef;
+}
+
+.driverBottomNav .livePayPulse{
+  width:11px!important;
+  min-width:11px!important;
+  height:11px!important;
+  padding:0!important;
+  top:4px!important;
+  right:calc(50% - 18px)!important;
+  border-width:2px!important;
+  background:#e8a829!important;
+  box-shadow:0 0 0 0 rgba(232,168,41,.45);
+  animation:faivoPayPulse 1.55s ease-out infinite;
+}
+
+@keyframes faivoPayPulse{
+  0%{
+    box-shadow:0 0 0 0 rgba(232,168,41,.48);
+  }
+  70%{
+    box-shadow:0 0 0 8px rgba(232,168,41,0);
+  }
+  100%{
+    box-shadow:0 0 0 0 rgba(232,168,41,0);
+  }
+}
+
+
+/* Dark theme */
+.driverVNext.theme-dark .liveJourneyCard{
+  background:#101c31!important;
+  border-color:rgba(255,255,255,.07)!important;
+}
+
+.driverVNext.theme-dark .liveJourneyCard.available{
+  border-color:rgba(232,168,41,.32)!important;
+}
+
+.driverVNext.theme-dark .liveJourneyHead h2,
+.driverVNext.theme-dark .liveJourneyFare strong{
+  color:#fff;
+}
+
+.driverVNext.theme-dark .liveJourneyLoading,
+.driverVNext.theme-dark .liveJourneyEmpty,
+.driverVNext.theme-dark .livePaymentSummary,
+.driverVNext.theme-dark .liveJourneyRoute{
+  background:#142139!important;
+  border-color:rgba(255,255,255,.07)!important;
+}
+
+.driverVNext.theme-dark .liveJourneyEmpty span,
+.driverVNext.theme-dark .liveJourneyRoute span,
+.driverVNext.theme-dark .livePaymentSummary span{
+  color:#9ba9ba;
+}
+
+.driverVNext.theme-dark .livePaymentSummary b,
+.driverVNext.theme-dark .livePaymentTotal strong,
+.driverVNext.theme-dark .livePaymentTotal span{
+  color:#fff!important;
+}
+
+.driverVNext.theme-dark .livePaymentTotal{
+  border-color:rgba(255,255,255,.08);
+}
+
+.driverVNext.theme-dark .liveReadyPanel{
+  background:#12243a;
+  border-color:rgba(74,170,227,.18);
+}
+
+.driverVNext.theme-dark .livePaidPanel{
+  background:#102c23;
+  border-color:rgba(59,184,119,.19);
+}
+
+.driverVNext.theme-dark .manualPaymentDivider:before,
+.driverVNext.theme-dark .manualPaymentDivider:after{
+  background:rgba(255,255,255,.07);
+}
+
+
+/* Light theme */
+.driverVNext.theme-light .liveJourneyCard{
+  background:#fff!important;
+}
+
+.driverVNext.theme-light .liveJourneyHead h2,
+.driverVNext.theme-light .liveJourneyFare strong{
+  color:#162033;
+}
+
+@media(max-width:430px){
+  .liveJourneyCard{
+    padding:16px!important;
+    border-radius:19px!important;
+  }
+
+  .liveJourneyFare>div>strong{
+    font-size:31px;
+  }
+
+  .liveTakePaymentButton{
+    min-height:60px;
+  }
+}
+
+
+/* =========================================================
+   FAIVOPAY DRIVER · PAYMENTS V2 FINAL POLISH
+   ========================================================= */
+
+.paymentsPageTitle h1{
+  font-size:32px!important;
+  line-height:1.04!important;
+  letter-spacing:-.035em!important;
+}
+
+.paymentsPageTitle p{
+  margin-top:7px!important;
+  line-height:1.4!important;
+}
+
+.livePaymentSummary{
+  padding:12px 14px!important;
+  gap:8px!important;
+}
+
+.livePaymentTotal{
+  padding-top:9px!important;
+}
+
+.liveJourneyFare .pill{
+  padding:6px 10px;
+  font-size:10px;
+}
+
+.liveTakePaymentButton small{
+  color:#614500!important;
+  opacity:.82!important;
+}
+
+.liveRefreshLink{
+  opacity:.72;
+}
+
+.liveJourneyEmpty.accountState{
+  border-color:rgba(131,111,202,.18);
+}
+
+.liveJourneyEmpty.accountState>svg{
+  color:#8d78c7;
+}
+
+
+/* Manual payment is intentionally secondary to live booking */
+.manualPaymentLauncher{
+  width:100%;
+  margin-top:7px;
+  padding:13px 14px;
+  display:grid;
+  grid-template-columns:40px minmax(0,1fr) 18px;
+  gap:11px;
+  align-items:center;
+  border:1px solid #e5eaf0;
+  border-radius:16px;
+  background:#fff;
+  color:#1e2b3e;
+  text-align:left;
+  box-shadow:0 3px 12px rgba(17,33,54,.025);
+}
+
+.manualPaymentLauncherIcon{
+  width:40px;
+  height:40px;
+  display:grid;
+  place-items:center;
+  border-radius:12px;
+  background:#eef5fb;
+  color:#338fc4;
+}
+
+.manualPaymentLauncherIcon svg{
+  width:19px;
+}
+
+.manualPaymentLauncher>div:nth-child(2){
+  min-width:0;
+}
+
+.manualPaymentLauncher b,
+.manualPaymentLauncher span{
+  display:block;
+}
+
+.manualPaymentLauncher b{
+  font-size:13px;
+}
+
+.manualPaymentLauncher span{
+  margin-top:3px;
+  color:#7d8999;
+  font-size:10px;
+}
+
+.manualPaymentLauncher>svg{
+  width:17px;
+  color:#8c98a8;
+  transition:transform .18s ease;
+}
+
+.manualPaymentLauncher.open>svg{
+  transform:rotate(90deg);
+}
+
+.manualPaymentExpanded{
+  margin-top:8px;
+}
+
+.manualPaymentExpanded>.driverCard{
+  margin-top:0!important;
+}
+
+
+/* Dark mode */
+.driverVNext.theme-dark .manualPaymentLauncher{
+  background:#142139;
+  border-color:rgba(255,255,255,.07);
+  color:#fff;
+  box-shadow:none;
+}
+
+.driverVNext.theme-dark .manualPaymentLauncherIcon{
+  background:#18314b;
+  color:#54b9ed;
+}
+
+.driverVNext.theme-dark .manualPaymentLauncher span{
+  color:#94a2b5;
+}
+
+.driverVNext.theme-dark .manualPaymentLauncher>svg{
+  color:#728198;
+}
+
+
+/* Softer empty state */
+.liveJourneyCard.idle .liveJourneyEmpty{
+  min-height:112px;
+}
+
+@media(max-width:430px){
+  .paymentsPageTitle h1{
+    font-size:30px!important;
+  }
+
+  .livePaymentSummary{
+    padding:11px 13px!important;
+  }
+
+  .liveTakePaymentButton{
+    padding-top:11px!important;
+    padding-bottom:11px!important;
+  }
+}
+
+
+/* FAIVOPAY DRIVER · FINAL APP UI PASS */
+
+/* ---------------------------------------------------------
+   Shared screen rhythm
+   --------------------------------------------------------- */
+
+.driverVNext .driverPageView{
+  width:100%;
+}
+
+.driverVNext .pageTitle{
+  margin-bottom:17px;
+}
+
+.driverVNext .pageTitle>span{
+  display:block;
+  color:#55bce9;
+  font-size:10px;
+  line-height:1;
+  font-weight:900;
+  letter-spacing:.16em;
+}
+
+.driverVNext .pageTitle h1{
+  margin:7px 0 0!important;
+  font-size:31px;
+  line-height:1.04;
+  letter-spacing:-.04em!important;
+}
+
+.driverVNext .pageTitle p{
+  max-width:430px;
+  margin:7px 0 0;
+  font-size:12px;
+  line-height:1.45;
+}
+
+
+/* ---------------------------------------------------------
+   Header refinement
+   --------------------------------------------------------- */
+
+.driverVNextHeader{
+  min-height:82px!important;
+  padding-bottom:12px!important;
+  border-bottom:1px solid rgba(255,255,255,.06);
+}
+
+.driverVNextHeader .driverBrandMark{
+  width:46px;
+  height:46px;
+  flex:0 0 46px;
+  border-radius:14px;
+  overflow:hidden;
+  box-shadow:0 8px 20px rgba(26,116,207,.22);
+}
+
+.driverVNextHeader .driverBrandMark img{
+  width:100%;
+  height:100%;
+  display:block;
+  object-fit:cover;
+}
+
+.driverVNextHeader .driverIdentity{
+  gap:10px;
+  margin:0;
+  flex:1;
+  min-width:0;
+}
+
+.driverVNextHeader .driverIdentity>div:last-child{
+  min-width:0;
+}
+
+.driverVNextHeader .driverIdentity span{
+  font-size:9px;
+  font-weight:900;
+  letter-spacing:.15em;
+}
+
+.driverVNextHeader .driverIdentity b{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-size:18px;
+  letter-spacing:-.02em;
+}
+
+.driverVNextHeader .headerRefresh,
+.driverVNextHeader .headerBell{
+  width:42px;
+  height:42px;
+  border-radius:50%!important;
+}
+
+
+/* =========================================================
+   HOME V2
+   ========================================================= */
+
+.driverHomeVNext .driverHeroBalance{
+  padding:20px!important;
+  border-radius:22px!important;
+}
+
+.driverHomeVNext .balanceMeaningLabel{
+  font-size:10px!important;
+  font-weight:900!important;
+  letter-spacing:.11em;
+  text-transform:uppercase;
+}
+
+.driverHomeVNext .balanceMeaning strong{
+  margin-top:4px;
+  font-size:42px!important;
+  line-height:1!important;
+  letter-spacing:-.055em!important;
+}
+
+.driverHomeVNext .balanceMeaning p{
+  margin:7px 0 0!important;
+  font-size:11px!important;
+  line-height:1.4;
+}
+
+.driverHomeVNext .balanceRefresh{
+  width:38px!important;
+  height:38px!important;
+  border-radius:12px!important;
+}
+
+.driverHomeVNext .balanceStateStrip{
+  margin-top:17px!important;
+  padding:13px 14px!important;
+  border-radius:14px!important;
+}
+
+.driverHomeVNext .balanceStateStrip span{
+  font-size:9px!important;
+  font-weight:850!important;
+  letter-spacing:.04em;
+}
+
+.driverHomeVNext .balanceStateStrip b{
+  font-size:11px!important;
+}
+
+.driverHomeVNext .heroBalanceActions{
+  gap:9px!important;
+  margin-top:12px!important;
+}
+
+.driverHomeVNext .heroBalanceActions button{
+  min-height:44px;
+  border-radius:13px!important;
+  font-size:11px!important;
+  font-weight:850!important;
+}
+
+.driverHomeVNext .heroBalanceFoot{
+  margin-top:13px!important;
+  padding-top:12px!important;
+  font-size:9px!important;
+}
+
+
+/* At a glance */
+
+.driverHomeVNext .homeSectionTitle{
+  margin:20px 2px 10px;
+}
+
+.driverHomeVNext .homeSectionTitle span{
+  color:#8290a3;
+  font-size:9px;
+  font-weight:900;
+  letter-spacing:.15em;
+}
+
+.driverHomeVNext .glanceGrid{
+  grid-template-columns:1fr 1fr!important;
+  gap:10px!important;
+}
+
+.driverHomeVNext .glanceCard{
+  min-height:126px!important;
+  padding:15px!important;
+  border-radius:18px!important;
+  box-shadow:none!important;
+}
+
+.driverHomeVNext .glanceCard svg{
+  width:21px!important;
+  height:21px!important;
+  margin-bottom:14px!important;
+}
+
+.driverHomeVNext .glanceCard span{
+  font-size:9px!important;
+  font-weight:850!important;
+  letter-spacing:.04em;
+}
+
+.driverHomeVNext .glanceCard b{
+  margin-top:4px!important;
+  font-size:15px!important;
+  line-height:1.2;
+}
+
+.driverHomeVNext .glanceCard small{
+  margin-top:4px!important;
+  font-size:9px!important;
+  line-height:1.35;
+}
+
+
+/* Recent activity on Home */
+
+.driverHomeVNext .latestActivityCard{
+  margin-top:12px;
+}
+
+.driverHomeVNext .sectionHeader h2{
+  font-size:17px;
+  letter-spacing:-.02em;
+}
+
+.driverHomeVNext .cleanHistoryRow{
+  min-height:66px;
+}
+
+
+/* Bank setup */
+
+.driverHomeVNext .bankSetupPrompt{
+  display:grid;
+  grid-template-columns:42px minmax(0,1fr) auto;
+  gap:12px;
+  align-items:center;
+}
+
+.driverHomeVNext .bankSetupPrompt h3{
+  margin:3px 0;
+  font-size:15px;
+}
+
+.driverHomeVNext .bankSetupPrompt p{
+  margin:0;
+  font-size:10px;
+  line-height:1.4;
+}
+
+
+/* =========================================================
+   ACTIVITY V2
+   ========================================================= */
+
+.activityPageV2 .activitySummary{
+  display:grid!important;
+  grid-template-columns:1fr 1fr;
+  gap:10px!important;
+  margin-bottom:12px!important;
+}
+
+.activityPageV2 .activitySummary>div{
+  min-height:82px;
+  padding:14px!important;
+  border-radius:17px!important;
+}
+
+.activityPageV2 .activitySummary span{
+  display:block;
+  font-size:9px!important;
+  font-weight:850!important;
+  letter-spacing:.06em;
+  text-transform:uppercase;
+}
+
+.activityPageV2 .activitySummary b{
+  display:block;
+  margin-top:5px;
+  font-size:27px!important;
+  line-height:1;
+  letter-spacing:-.04em;
+}
+
+.activityPageV2 .activityCard{
+  margin-top:12px;
+  padding-top:16px!important;
+  padding-bottom:7px!important;
+}
+
+.activityPageV2 .activityCard .sectionHeader{
+  margin-bottom:0!important;
+}
+
+.activityPageV2 .sectionHeader h2{
+  margin-top:3px;
+  font-size:18px;
+  letter-spacing:-.025em;
+}
+
+.activityPageV2 .cleanHistoryRow{
+  display:grid;
+  grid-template-columns:42px minmax(0,1fr) auto;
+  align-items:center;
+  min-height:70px;
+  padding:13px 0!important;
+}
+
+.activityPageV2 .historyIcon{
+  width:40px!important;
+  height:40px!important;
+  flex-basis:40px!important;
+  border-radius:13px!important;
+}
+
+.activityPageV2 .historyMain{
+  min-width:0;
+}
+
+.activityPageV2 .historyMain>b{
+  font-size:13px;
+}
+
+.activityPageV2 .historyMain>span{
+  margin-top:3px;
+  font-size:10px;
+  line-height:1.35;
+}
+
+.activityPageV2 .historyMain>small{
+  margin-top:4px;
+  font-size:9px;
+  line-height:1.35;
+}
+
+.activityPageV2 .historyAmount{
+  text-align:right;
+}
+
+.activityPageV2 .historyAmount b{
+  font-size:13px;
+  white-space:nowrap;
+}
+
+.activityPageV2 .historyAmount small{
+  margin-top:3px;
+  font-size:9px;
+  text-transform:capitalize;
+}
+
+.activityPageV2 .inlineActions{
+  margin-top:7px;
+  display:flex;
+  gap:6px;
+}
+
+.activityPageV2 .inlineActions button{
+  padding:6px 9px;
+  border:1px solid var(--fp-line);
+  border-radius:9px;
+  background:var(--fp-card-2);
+  color:var(--fp-ink);
+  font-size:9px;
+  font-weight:850;
+}
+
+.activityPageV2 .emptyState{
+  padding:28px 10px!important;
+  color:var(--fp-muted);
+  font-size:11px;
+  text-align:center;
+}
+
+
+/* =========================================================
+   ACCOUNT V2
+   ========================================================= */
+
+.accountPageV2 .profileCard{
+  padding:17px!important;
+}
+
+.accountPageV2 .profileHero{
+  display:flex;
+  align-items:center;
+  gap:13px;
+  padding-bottom:16px;
+}
+
+.accountPageV2 .profileAvatar{
+  width:52px!important;
+  height:52px!important;
+  flex:0 0 52px;
+  border-radius:17px!important;
+  font-size:17px;
+  font-weight:900;
+}
+
+.accountPageV2 .profileHero b{
+  display:block;
+  font-size:17px;
+  letter-spacing:-.02em;
+}
+
+.accountPageV2 .profileHero span{
+  display:block;
+  margin-top:3px;
+  color:var(--fp-muted);
+  font-size:10px;
+}
+
+.accountPageV2 .profileRows{
+  border-top:1px solid var(--fp-line);
+}
+
+.accountPageV2 .profileRows>div,
+.accountPageV2 .feeRows>div{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:16px;
+  min-height:49px;
+  padding:11px 1px;
+  border-bottom:1px solid var(--fp-line);
+}
+
+.accountPageV2 .profileRows>div:last-child,
+.accountPageV2 .feeRows>div:last-child{
+  border-bottom:0;
+}
+
+.accountPageV2 .profileRows span,
+.accountPageV2 .feeRows span{
+  color:var(--fp-muted);
+  font-size:10px;
+}
+
+.accountPageV2 .profileRows b,
+.accountPageV2 .feeRows b{
+  min-width:0;
+  max-width:62%;
+  overflow-wrap:anywhere;
+  text-align:right;
+  font-size:11px;
+}
+
+
+/* Bank card */
+
+.accountPageV2 .bankAccountCard{
+  position:relative;
+  overflow:hidden;
+}
+
+.accountPageV2 .bankAccountCard:before{
+  content:"";
+  position:absolute;
+  left:0;
+  top:0;
+  bottom:0;
+  width:3px;
+  background:#3fa7d8;
+}
+
+.accountPageV2 .bankSecurityNote{
+  border-radius:13px!important;
+}
+
+.accountPageV2 .bankChangeButton,
+.accountPageV2 .actionButton{
+  min-height:45px;
+  border-radius:13px!important;
+}
+
+
+/* Account section headings */
+
+.accountPageV2 .sectionHeader .eyebrow{
+  font-size:9px;
+  letter-spacing:.13em;
+}
+
+.accountPageV2 .sectionHeader h2{
+  margin-top:3px;
+  font-size:17px;
+  letter-spacing:-.02em;
+}
+
+
+/* Notifications */
+
+.accountPageV2 .compactAction{
+  min-height:58px;
+  align-items:center;
+}
+
+.accountPageV2 .compactActionIcon{
+  width:40px!important;
+  height:40px!important;
+  border-radius:13px!important;
+}
+
+.accountPageV2 .compactAction b{
+  font-size:12px;
+}
+
+.accountPageV2 .compactAction span{
+  margin-top:3px;
+  font-size:9px;
+  line-height:1.35;
+}
+
+
+/* Appearance */
+
+.accountPageV2 .appearanceCard{
+  margin-top:12px;
+}
+
+.accountPageV2 .themeOptions{
+  margin-top:10px!important;
+}
+
+.accountPageV2 .themeOptions button{
+  min-height:68px!important;
+  border-radius:14px!important;
+}
+
+.accountPageV2 .textSizeControl{
+  margin-top:17px;
+  padding-top:16px;
+  border-top:1px solid var(--fp-line);
+}
+
+.accountPageV2 .accountSignOut{
+  width:100%;
+  min-height:48px;
+  margin-top:14px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  border:1px solid rgba(218,75,91,.25);
+  border-radius:15px;
+  background:rgba(218,75,91,.06);
+  color:#d84d5c;
+  font-size:11px;
+  font-weight:850;
+}
+
+.accountPageV2 .accountSignOut svg{
+  width:16px;
+}
+
+
+/* =========================================================
+   CONSISTENT DRIVER CARDS
+   ========================================================= */
+
+.driverVNext .driverCard{
+  border-radius:19px!important;
+}
+
+.driverVNext.theme-dark .driverCard{
+  background:#17243a!important;
+  border-color:rgba(255,255,255,.065)!important;
+  box-shadow:0 8px 22px rgba(0,0,0,.09)!important;
+}
+
+.driverVNext.theme-dark .activitySummary>div{
+  background:#17243a!important;
+}
+
+.driverVNext.theme-dark .profileRows,
+.driverVNext.theme-dark .feeRows,
+.driverVNext.theme-dark .textSizeControl{
+  border-color:rgba(255,255,255,.07)!important;
+}
+
+.driverVNext.theme-dark .profileRows>div,
+.driverVNext.theme-dark .feeRows>div{
+  border-color:rgba(255,255,255,.07)!important;
+}
+
+
+/* Light treatment */
+
+.driverVNext.theme-light .driverCard{
+  background:#fff!important;
+  border-color:#e4e9f0!important;
+  box-shadow:0 7px 22px rgba(24,42,66,.045)!important;
+}
+
+.driverVNext.theme-light .activitySummary>div{
+  background:#fff!important;
+  border:1px solid #e4e9f0!important;
+  box-shadow:0 5px 16px rgba(24,42,66,.035);
+}
+
+
+/* =========================================================
+   NAVIGATION FINAL POLISH
+   ========================================================= */
+
+.driverVNext .driverBottomNav{
+  min-height:73px!important;
+}
+
+.driverVNext .driverBottomNav button{
+  min-height:57px!important;
+  margin:0 3px;
+}
+
+.driverVNext .driverBottomNav button svg{
+  width:21px!important;
+  height:21px!important;
+}
+
+.driverVNext .driverBottomNav button span{
+  margin-top:1px;
+  font-size:9px!important;
+}
+
+
+/* =========================================================
+   SMALL IPHONE
+   ========================================================= */
+
+@media(max-width:430px){
+
+  .driverVNext .pageTitle{
+    margin-bottom:14px;
+  }
+
+  .driverVNext .pageTitle h1{
+    font-size:29px;
+  }
+
+  .driverHomeVNext .balanceMeaning strong{
+    font-size:38px!important;
+  }
+
+  .driverHomeVNext .glanceCard{
+    min-height:116px!important;
+    padding:14px!important;
+  }
+
+  .activityPageV2 .cleanHistoryRow{
+    grid-template-columns:39px minmax(0,1fr) auto;
+    gap:10px!important;
+  }
+
+  .accountPageV2 .profileRows b,
+  .accountPageV2 .feeRows b{
+    max-width:58%;
+  }
+}
+
+
+/* =========================================================
+   FAIVOPAY DRIVER UI V3
+   FINAL VISUAL SYSTEM
+   ========================================================= */
+
+.driverVNext{
+  --fp-navy-950:#081323;
+  --fp-navy-900:#0d1a2e;
+  --fp-navy-850:#112039;
+  --fp-navy-800:#172741;
+  --fp-navy-750:#1c2d49;
+
+  --fp-yellow:#f3b82f;
+  --fp-yellow-soft:#fff0c3;
+  --fp-cyan:#55c1ee;
+  --fp-green:#36bf79;
+  --fp-red:#ea5b68;
+  --fp-purple:#a98ae0;
+
+  --fp-text:#f7f9fc;
+  --fp-muted:#9ba9bc;
+  --fp-muted-2:#75849a;
+  --fp-line:rgba(255,255,255,.075);
+
+  background:
+    radial-gradient(circle at 50% -180px,rgba(44,111,189,.16),transparent 380px),
+    var(--fp-navy-950)!important;
+
+  color:var(--fp-text);
+}
+
+
+/* =========================================================
+   APP HEADER
+   ========================================================= */
+
+.driverVNextHeader{
+  position:sticky;
+  top:0;
+  z-index:120;
+
+  min-height:88px!important;
+
+  padding-top:max(10px,env(safe-area-inset-top))!important;
+  padding-left:max(18px,env(safe-area-inset-left))!important;
+  padding-right:max(18px,env(safe-area-inset-right))!important;
+  padding-bottom:13px!important;
+
+  background:rgba(11,25,46,.97)!important;
+  border-bottom:1px solid rgba(255,255,255,.06)!important;
+
+  backdrop-filter:blur(20px);
+  -webkit-backdrop-filter:blur(20px);
+}
+
+.driverVNextHeader .driverBrandMark{
+  width:46px!important;
+  height:46px!important;
+  flex:0 0 46px!important;
+
+  overflow:hidden;
+
+  border-radius:14px!important;
+  box-shadow:0 9px 24px rgba(24,113,210,.24);
+}
+
+.driverVNextHeader .driverBrandMark img{
+  display:block;
+  width:100%;
+  height:100%;
+  object-fit:cover;
+}
+
+.driverVNextHeader .driverIdentity{
+  min-width:0;
+  flex:1;
+  gap:11px!important;
+  margin:0!important;
+}
+
+.driverVNextHeader .driverAvatar{
+  width:42px!important;
+  height:42px!important;
+  flex:0 0 42px!important;
+
+  border:1px solid rgba(255,255,255,.16)!important;
+  border-radius:50%!important;
+
+  background:linear-gradient(145deg,#446083,#2f4565)!important;
+
+  color:#fff!important;
+  font-size:14px!important;
+  font-weight:900!important;
+}
+
+.driverVNextHeader .driverIdentity span{
+  display:block;
+
+  margin-bottom:2px;
+
+  color:#91a0b5!important;
+
+  font-size:9px!important;
+  font-weight:900!important;
+  letter-spacing:.16em!important;
+}
+
+.driverVNextHeader .driverIdentity b{
+  display:block;
+
+  overflow:hidden;
+
+  color:#fff!important;
+
+  font-size:18px!important;
+  line-height:1.08!important;
+  letter-spacing:-.025em!important;
+
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.driverVNextHeader .driverHeaderActions{
+  gap:8px!important;
+}
+
+.driverVNextHeader .headerRefresh,
+.driverVNextHeader .headerBell{
+  width:42px!important;
+  height:42px!important;
+
+  display:grid!important;
+  place-items:center!important;
+
+  padding:0!important;
+
+  border:1px solid rgba(255,255,255,.10)!important;
+  border-radius:50%!important;
+
+  background:rgba(255,255,255,.055)!important;
+  color:#75caf0!important;
+}
+
+.driverVNextHeader .headerRefresh svg,
+.driverVNextHeader .headerBell svg{
+  width:19px!important;
+  height:19px!important;
+}
+
+
+/* =========================================================
+   PAGE SHELL
+   ========================================================= */
+
+.driverVNext .modernDriverMain{
+  width:100%;
+  max-width:580px!important;
+
+  margin:0 auto!important;
+
+  padding-top:21px!important;
+  padding-left:max(16px,env(safe-area-inset-left))!important;
+  padding-right:max(16px,env(safe-area-inset-right))!important;
+  padding-bottom:116px!important;
+}
+
+.driverVNext .driverPageView{
+  width:100%;
+}
+
+.driverVNext .pageTitle{
+  margin:0 2px 18px!important;
+  padding:0!important;
+}
+
+.driverVNext .pageTitle>span{
+  display:block;
+
+  color:var(--fp-cyan)!important;
+
+  font-size:10px!important;
+  font-weight:950!important;
+  letter-spacing:.18em!important;
+}
+
+.driverVNext .pageTitle h1{
+  margin:7px 0 0!important;
+
+  color:#fff!important;
+
+  font-size:32px!important;
+  line-height:1.03!important;
+  letter-spacing:-.045em!important;
+}
+
+.driverVNext .pageTitle p{
+  margin:8px 0 0!important;
+
+  color:var(--fp-muted)!important;
+
+  font-size:12px!important;
+  line-height:1.45!important;
+}
+
+
+/* =========================================================
+   ALL CARDS
+   ========================================================= */
+
+.driverVNext .driverCard{
+  width:100%;
+
+  margin-top:12px!important;
+  padding:18px!important;
+
+  overflow:hidden;
+
+  border:1px solid var(--fp-line)!important;
+  border-radius:20px!important;
+
+  background:linear-gradient(145deg,#172741,#15243c)!important;
+
+  box-shadow:
+    0 12px 28px rgba(0,0,0,.12),
+    inset 0 1px rgba(255,255,255,.018)!important;
+}
+
+.driverVNext .eyebrow{
+  color:#9eabc0!important;
+
+  font-size:9px!important;
+  font-weight:950!important;
+  letter-spacing:.16em!important;
+}
+
+.driverVNext .sectionHeader{
+  display:flex!important;
+  align-items:flex-start!important;
+  justify-content:space-between!important;
+
+  gap:12px!important;
+
+  margin:0 0 5px!important;
+  padding:0 0 12px!important;
+}
+
+.driverVNext .sectionHeader h2,
+.driverVNext .cardTop h2{
+  margin:4px 0 0!important;
+
+  color:#fff!important;
+
+  font-size:18px!important;
+  line-height:1.15!important;
+  letter-spacing:-.025em!important;
+}
+
+.driverVNext .compactCopy{
+  color:var(--fp-muted)!important;
+
+  font-size:11px!important;
+  line-height:1.5!important;
+}
+
+
+/* =========================================================
+   BUTTONS
+   ========================================================= */
+
+.driverVNext .primary{
+  border:0!important;
+  border-radius:14px!important;
+
+  background:linear-gradient(135deg,#f5c142,#e8aa26)!important;
+  color:#322300!important;
+
+  box-shadow:0 9px 20px rgba(202,139,19,.18)!important;
+
+  font-weight:900!important;
+}
+
+.driverVNext .primary svg{
+  color:inherit!important;
+}
+
+.driverVNext .outline,
+.driverVNext .secondary{
+  border:1px solid rgba(255,255,255,.10)!important;
+  border-radius:13px!important;
+
+  background:rgba(255,255,255,.045)!important;
+  color:#e9eef6!important;
+
+  box-shadow:none!important;
+}
+
+.driverVNext .mini{
+  border-radius:10px!important;
+
+  background:rgba(255,255,255,.07)!important;
+  color:#eaf0f7!important;
+}
+
+
+/* =========================================================
+   STATUS PILLS
+   ========================================================= */
+
+.driverVNext .pill{
+  padding:6px 10px!important;
+
+  border:1px solid transparent!important;
+  border-radius:999px!important;
+
+  font-size:9px!important;
+  font-weight:900!important;
+}
+
+.driverVNext .pill.good{
+  border-color:rgba(54,191,121,.18)!important;
+  background:#dff8e9!important;
+  color:#267b4d!important;
+}
+
+.driverVNext .pill.warn{
+  border-color:rgba(243,184,47,.22)!important;
+  background:#fff0c8!important;
+  color:#986b09!important;
+}
+
+.driverVNext .pill.bad{
+  border-color:rgba(234,91,104,.20)!important;
+  background:#ffe3e6!important;
+  color:#aa3945!important;
+}
+
+
+/* =========================================================
+   HOME
+   ========================================================= */
+
+.driverHomeVNext .driverHeroBalance{
+  position:relative;
+
+  padding:21px!important;
+
+  overflow:hidden;
+
+  border:1px solid rgba(96,182,224,.24)!important;
+  border-radius:22px!important;
+
+  background:
+    radial-gradient(circle at 115% -5%,rgba(71,181,227,.18),transparent 42%),
+    linear-gradient(145deg,#163454,#17304d)!important;
+
+  box-shadow:0 14px 34px rgba(0,0,0,.14)!important;
+}
+
+.driverHomeVNext .balanceMeaningLabel{
+  color:#fff!important;
+
+  font-size:10px!important;
+  font-weight:950!important;
+  letter-spacing:.14em!important;
+}
+
+.driverHomeVNext .balanceMeaning strong{
+  display:block;
+
+  margin-top:10px!important;
+
+  color:#fff!important;
+
+  font-size:44px!important;
+  line-height:.95!important;
+  letter-spacing:-.06em!important;
+}
+
+.driverHomeVNext .balanceMeaning p{
+  margin:12px 0 0!important;
+
+  color:#e7edf5!important;
+
+  font-size:11px!important;
+  font-weight:750!important;
+}
+
+.driverHomeVNext .balanceStateStrip{
+  margin-top:20px!important;
+  padding:14px 15px!important;
+
+  border:1px solid rgba(255,255,255,.09)!important;
+  border-radius:15px!important;
+
+  background:rgba(4,17,31,.13)!important;
+}
+
+.driverHomeVNext .balanceStateStrip span{
+  color:#d6deea!important;
+
+  font-size:9px!important;
+  font-weight:850!important;
+}
+
+.driverHomeVNext .balanceStateStrip b{
+  color:#fff!important;
+
+  font-size:11px!important;
+}
+
+.driverHomeVNext .heroBalanceActions{
+  margin-top:14px!important;
+}
+
+.driverHomeVNext .heroBalanceActions button{
+  min-height:46px!important;
+
+  border:1px solid rgba(255,255,255,.06)!important;
+  border-radius:14px!important;
+
+  background:rgba(255,255,255,.08)!important;
+  color:#fff!important;
+
+  font-size:11px!important;
+  font-weight:900!important;
+}
+
+.driverHomeVNext .heroBalanceActions button svg{
+  color:var(--fp-cyan)!important;
+}
+
+.driverHomeVNext .heroBalanceFoot{
+  margin-top:17px!important;
+  padding-top:14px!important;
+
+  border-color:rgba(255,255,255,.08)!important;
+
+  color:#92a2b7!important;
+
+  font-size:9px!important;
+}
+
+
+/* At a glance */
+
+.driverHomeVNext .homeSectionTitle{
+  margin:24px 3px 10px!important;
+}
+
+.driverHomeVNext .homeSectionTitle span{
+  color:#8d9bb0!important;
+
+  font-size:9px!important;
+  font-weight:950!important;
+  letter-spacing:.17em!important;
+}
+
+.driverHomeVNext .glanceGrid{
+  display:grid!important;
+  grid-template-columns:1fr 1fr!important;
+
+  gap:10px!important;
+}
+
+.driverHomeVNext .glanceCard{
+  min-height:135px!important;
+
+  padding:16px!important;
+
+  border:1px solid rgba(255,255,255,.07)!important;
+  border-radius:19px!important;
+
+  box-shadow:none!important;
+
+  text-align:left!important;
+}
+
+.driverHomeVNext .glanceCard.payments{
+  background:linear-gradient(145deg,#285974,#28516b)!important;
+}
+
+.driverHomeVNext .glanceCard.payout{
+  background:linear-gradient(145deg,#684071,#573665)!important;
+}
+
+.driverHomeVNext .glanceCard.activity{
+  background:linear-gradient(145deg,#2d696d,#28595e)!important;
+}
+
+.driverHomeVNext .glanceCard.account{
+  background:linear-gradient(145deg,#4e5776,#444d6a)!important;
+}
+
+.driverHomeVNext .glanceCard svg{
+  width:23px!important;
+  height:23px!important;
+
+  margin-bottom:17px!important;
+
+  color:#6bd0f7!important;
+}
+
+.driverHomeVNext .glanceCard span{
+  color:#fff!important;
+
+  font-size:9px!important;
+  font-weight:900!important;
+}
+
+.driverHomeVNext .glanceCard b{
+  display:block;
+
+  margin-top:6px!important;
+
+  color:#fff!important;
+
+  font-size:15px!important;
+  line-height:1.2!important;
+}
+
+.driverHomeVNext .glanceCard small{
+  display:block;
+
+  margin-top:14px!important;
+
+  color:rgba(255,255,255,.55)!important;
+
+  font-size:9px!important;
+  line-height:1.35!important;
+}
+
+
+/* =========================================================
+   ACTIVITY
+   ========================================================= */
+
+.activityPageV2 .activitySummary{
+  display:grid!important;
+  grid-template-columns:1fr 1fr!important;
+
+  gap:10px!important;
+
+  margin-bottom:13px!important;
+}
+
+.activityPageV2 .activitySummary>div{
+  min-height:92px!important;
+
+  padding:15px!important;
+
+  border:1px solid var(--fp-line)!important;
+  border-radius:18px!important;
+
+  background:#172741!important;
+}
+
+.activityPageV2 .activitySummary span{
+  color:#9caabd!important;
+
+  font-size:9px!important;
+  font-weight:900!important;
+  letter-spacing:.10em!important;
+}
+
+.activityPageV2 .activitySummary b{
+  display:block;
+
+  margin-top:8px!important;
+
+  color:#fff!important;
+
+  font-size:30px!important;
+  line-height:1!important;
+  letter-spacing:-.04em!important;
+}
+
+.activityPageV2 .activityCard{
+  padding-bottom:7px!important;
+}
+
+.activityPageV2 .cleanHistoryRow{
+  display:grid!important;
+  grid-template-columns:42px minmax(0,1fr) auto!important;
+
+  gap:12px!important;
+
+  align-items:center!important;
+
+  min-height:74px!important;
+
+  padding:14px 0!important;
+
+  border-color:rgba(255,255,255,.07)!important;
+}
+
+.activityPageV2 .historyIcon{
+  width:42px!important;
+  height:42px!important;
+
+  border-radius:13px!important;
+
+  background:#1d3551!important;
+  color:#6dd0f5!important;
+}
+
+.activityPageV2 .historyMain>b{
+  color:#fff!important;
+
+  font-size:13px!important;
+}
+
+.activityPageV2 .historyMain>span{
+  display:block;
+
+  margin-top:3px!important;
+
+  color:#a5b0c0!important;
+
+  font-size:10px!important;
+}
+
+.activityPageV2 .historyMain>small{
+  display:block;
+
+  margin-top:4px!important;
+
+  color:#74849a!important;
+
+  font-size:9px!important;
+  line-height:1.4!important;
+}
+
+.activityPageV2 .historyAmount{
+  text-align:right!important;
+}
+
+.activityPageV2 .historyAmount b{
+  color:#fff!important;
+
+  font-size:13px!important;
+}
+
+
+/* =========================================================
+   PAYMENTS
+   ========================================================= */
+
+.paymentsPageV2 .liveJourneyCard{
+  border-radius:21px!important;
+}
+
+.liveJourneyCard.available{
+  border-color:rgba(243,184,47,.38)!important;
+
+  box-shadow:
+    0 12px 30px rgba(151,101,8,.10),
+    inset 0 1px rgba(255,255,255,.02)!important;
+}
+
+.liveJourneyKicker{
+  color:var(--fp-yellow)!important;
+}
+
+.liveJourneyHead h2{
+  color:#fff!important;
+}
+
+.liveJourneyStatus.attention{
+  background:#fff1c7!important;
+  color:#a57108!important;
+}
+
+.liveJourneyFare>div>span{
+  color:#9ba9bc!important;
+}
+
+.liveJourneyFare>div>strong{
+  color:#fff!important;
+}
+
+.livePaymentSummary{
+  border-color:rgba(255,255,255,.07)!important;
+
+  background:rgba(255,255,255,.035)!important;
+}
+
+.livePaymentSummary span{
+  color:#9eabbc!important;
+}
+
+.livePaymentSummary b{
+  color:#fff!important;
+}
+
+.livePaymentTotal{
+  border-color:rgba(255,255,255,.08)!important;
+}
+
+.livePaymentTotal span,
+.livePaymentTotal strong{
+  color:#fff!important;
+}
+
+.liveTakePaymentButton{
+  min-height:67px!important;
+
+  border-radius:16px!important;
+
+  background:linear-gradient(135deg,#f6c54b,#e7a91f)!important;
+  color:#322300!important;
+
+  box-shadow:0 10px 26px rgba(187,125,14,.20)!important;
+}
+
+.liveTakePaymentButton b{
+  font-size:14px!important;
+}
+
+.liveTakePaymentButton small{
+  color:#694900!important;
+}
+
+.liveReadyPanel{
+  border-color:rgba(85,193,238,.16)!important;
+
+  background:#132942!important;
+}
+
+.livePaidPanel{
+  border-color:rgba(54,191,121,.18)!important;
+
+  background:#112d25!important;
+}
+
+
+/* Manual payment */
+
+.manualPaymentLauncher{
+  min-height:72px!important;
+
+  border-color:rgba(255,255,255,.07)!important;
+  border-radius:17px!important;
+
+  background:#172741!important;
+  color:#fff!important;
+}
+
+.manualPaymentLauncherIcon{
+  background:#19344f!important;
+  color:#58c1ee!important;
+}
+
+.manualPaymentLauncher b{
+  color:#fff!important;
+}
+
+.manualPaymentLauncher span{
+  color:#92a1b5!important;
+}
+
+
+/* =========================================================
+   EARLY PAYOUT
+   ========================================================= */
+
+.driverVNext .availableRow{
+  margin-top:12px!important;
+
+  padding:15px!important;
+
+  border:1px solid rgba(255,255,255,.07)!important;
+  border-radius:15px!important;
+
+  background:rgba(255,255,255,.035)!important;
+}
+
+.driverVNext .availableRow span{
+  color:#9eabbc!important;
+}
+
+.driverVNext .availableRow strong{
+  color:#fff!important;
+}
+
+.driverVNext .cutoffNotice,
+.driverVNext .closed{
+  border-color:rgba(255,255,255,.07)!important;
+
+  background:rgba(255,255,255,.035)!important;
+  color:#9daabc!important;
+}
+
+
+/* =========================================================
+   ACCOUNT
+   ========================================================= */
+
+.accountPageV2 .profileCard{
+  padding:19px!important;
+}
+
+.accountPageV2 .profileHero{
+  padding-bottom:18px!important;
+}
+
+.accountPageV2 .profileAvatar{
+  width:56px!important;
+  height:56px!important;
+
+  border-radius:18px!important;
+
+  background:linear-gradient(145deg,#3877ff,#2999f0)!important;
+  color:#fff!important;
+
+  box-shadow:0 8px 22px rgba(37,122,236,.18);
+}
+
+.accountPageV2 .profileHero b{
+  color:#fff!important;
+
+  font-size:17px!important;
+}
+
+.accountPageV2 .profileHero span{
+  color:#98a7b9!important;
+
+  font-size:10px!important;
+}
+
+.accountPageV2 .profileRows{
+  border-color:rgba(255,255,255,.08)!important;
+}
+
+.accountPageV2 .profileRows>div,
+.accountPageV2 .feeRows>div{
+  border-color:rgba(255,255,255,.07)!important;
+}
+
+.accountPageV2 .profileRows span,
+.accountPageV2 .feeRows span{
+  color:#93a2b6!important;
+
+  font-size:10px!important;
+}
+
+.accountPageV2 .profileRows b,
+.accountPageV2 .feeRows b{
+  color:#fff!important;
+
+  font-size:11px!important;
+}
+
+
+/* Bank account */
+
+.accountPageV2 .bankAccountCard{
+  border-left:3px solid var(--fp-cyan)!important;
+}
+
+.accountPageV2 .bankAccountCard .iconBubble{
+  background:#1c3955!important;
+  color:#5cc3ee!important;
+}
+
+.accountPageV2 .bankSecurityNote{
+  border:0!important;
+
+  background:transparent!important;
+  color:#98a7ba!important;
+}
+
+.accountPageV2 .bankChangeButton{
+  min-height:48px!important;
+
+  background:#fff!important;
+  color:#172238!important;
+
+  font-size:12px!important;
+  font-weight:900!important;
+}
+
+
+/* Appearance */
+
+.accountPageV2 .themeOptions button{
+  border-color:rgba(255,255,255,.08)!important;
+
+  background:#14233b!important;
+  color:#fff!important;
+}
+
+.accountPageV2 .themeOptions button b{
+  color:#fff!important;
+}
+
+.accountPageV2 .themeOptions button small{
+  color:#8999ad!important;
+}
+
+.accountPageV2 .themeOptions button.active{
+  border-color:rgba(243,184,47,.50)!important;
+
+  box-shadow:0 0 0 3px rgba(243,184,47,.08)!important;
+}
+
+.accountPageV2 .themeOptions button.active>svg{
+  color:var(--fp-yellow)!important;
+}
+
+
+/* =========================================================
+   FORMS
+   ========================================================= */
+
+.driverVNext input,
+.driverVNext select,
+.driverVNext textarea,
+.driverVNext .modernInput,
+.driverVNext .modernMoneyInput{
+  border-color:rgba(255,255,255,.10)!important;
+
+  background:#112038!important;
+  color:#fff!important;
+}
+
+.driverVNext input::placeholder,
+.driverVNext textarea::placeholder{
+  color:#63758e!important;
+}
+
+.driverVNext input:focus,
+.driverVNext textarea:focus,
+.driverVNext select:focus,
+.driverVNext .modernMoneyInput:focus-within{
+  border-color:rgba(85,193,238,.70)!important;
+
+  box-shadow:0 0 0 3px rgba(85,193,238,.10)!important;
+}
+
+
+/* =========================================================
+   BOTTOM NAV
+   ========================================================= */
+
+.driverVNext .driverBottomNav{
+  position:fixed;
+
+  z-index:150;
+
+  left:0;
+  right:0;
+  bottom:0;
+
+  min-height:78px!important;
+
+  padding-top:7px!important;
+  padding-left:max(8px,env(safe-area-inset-left))!important;
+  padding-right:max(8px,env(safe-area-inset-right))!important;
+  padding-bottom:max(8px,env(safe-area-inset-bottom))!important;
+
+  border-top:1px solid rgba(255,255,255,.06)!important;
+
+  background:rgba(8,20,36,.97)!important;
+
+  box-shadow:0 -12px 34px rgba(0,0,0,.25)!important;
+
+  backdrop-filter:blur(20px);
+  -webkit-backdrop-filter:blur(20px);
+}
+
+.driverVNext .driverBottomNav button{
+  min-height:59px!important;
+
+  margin:0 3px!important;
+  padding:7px 4px!important;
+
+  border-radius:15px!important;
+
+  color:#75849b!important;
+}
+
+.driverVNext .driverBottomNav button.active{
+  background:#152c47!important;
+  color:var(--fp-yellow)!important;
+}
+
+.driverVNext .driverBottomNav button.active svg{
+  color:var(--fp-yellow)!important;
+}
+
+.driverVNext .driverBottomNav button span{
+  font-size:9px!important;
+  font-weight:850!important;
+}
+
+.driverVNext .driverBottomNav .livePayPulse{
+  background:var(--fp-yellow)!important;
+  border-color:#102238!important;
+}
+
+
+/* =========================================================
+   AUTH / LOGIN
+   ========================================================= */
+
+.driverAuthV2.theme-dark{
+  background:
+    radial-gradient(circle at 50% -100px,rgba(49,126,218,.24),transparent 370px),
+    linear-gradient(180deg,#091426,#0d1a2e)!important;
+}
+
+.driverAuthV2 .polishedAuthCard{
+  border:1px solid rgba(255,255,255,.075)!important;
+  border-radius:24px!important;
+
+  background:#14233b!important;
+
+  box-shadow:0 25px 70px rgba(0,0,0,.30)!important;
+}
+
+.driverAuthV2 .authIntro h1{
+  color:#fff!important;
+}
+
+.driverAuthV2 .authIntro p{
+  color:#97a6ba!important;
+}
+
+.driverAuthV2 .authKicker{
+  color:var(--fp-yellow)!important;
+}
+
+.driverAuthV2 .authPrimary{
+  background:linear-gradient(135deg,#f5c142,#e8aa26)!important;
+  color:#332400!important;
+}
+
+
+/* =========================================================
+   LIGHT MODE
+   Same structure — bright payment-link aesthetic
+   ========================================================= */
+
+.driverVNext.theme-light{
+  --fp-text:#162033;
+  --fp-muted:#758398;
+  --fp-muted-2:#8996a7;
+  --fp-line:#e3e8ef;
+
+  background:#f3f6fa!important;
+  color:#162033!important;
+}
+
+.driverVNext.theme-light .driverVNextHeader{
+  background:rgba(255,255,255,.97)!important;
+  border-color:#e5eaf0!important;
+}
+
+.driverVNext.theme-light .driverVNextHeader .driverIdentity b{
+  color:#162033!important;
+}
+
+.driverVNext.theme-light .driverVNextHeader .driverIdentity span{
+  color:#7e8ba0!important;
+}
+
+.driverVNext.theme-light .driverVNextHeader .driverAvatar{
+  background:linear-gradient(145deg,#dce9f8,#c9deef)!important;
+  color:#294f72!important;
+}
+
+.driverVNext.theme-light .headerRefresh,
+.driverVNext.theme-light .headerBell{
+  border-color:#e3e8ef!important;
+
+  background:#f3f6fa!important;
+  color:#258fc6!important;
+}
+
+.driverVNext.theme-light .pageTitle h1{
+  color:#162033!important;
+}
+
+.driverVNext.theme-light .pageTitle p{
+  color:#758398!important;
+}
+
+.driverVNext.theme-light .driverCard{
+  border-color:#e3e8ef!important;
+
+  background:#fff!important;
+
+  box-shadow:0 8px 24px rgba(22,40,64,.055)!important;
+}
+
+.driverVNext.theme-light .sectionHeader h2,
+.driverVNext.theme-light .cardTop h2{
+  color:#162033!important;
+}
+
+.driverVNext.theme-light .activitySummary>div{
+  border-color:#e3e8ef!important;
+
+  background:#fff!important;
+}
+
+.driverVNext.theme-light .activitySummary b{
+  color:#162033!important;
+}
+
+.driverVNext.theme-light .historyMain>b,
+.driverVNext.theme-light .historyAmount b{
+  color:#162033!important;
+}
+
+.driverVNext.theme-light .liveJourneyHead h2,
+.driverVNext.theme-light .liveJourneyFare strong,
+.driverVNext.theme-light .livePaymentSummary b,
+.driverVNext.theme-light .livePaymentTotal span,
+.driverVNext.theme-light .livePaymentTotal strong{
+  color:#162033!important;
+}
+
+.driverVNext.theme-light .livePaymentSummary{
+  border-color:#e7ebf0!important;
+
+  background:#f7f9fc!important;
+}
+
+.driverVNext.theme-light .manualPaymentLauncher{
+  border-color:#e4e9f0!important;
+
+  background:#fff!important;
+  color:#162033!important;
+}
+
+.driverVNext.theme-light .manualPaymentLauncher b{
+  color:#162033!important;
+}
+
+.driverVNext.theme-light .profileHero b,
+.driverVNext.theme-light .profileRows b,
+.driverVNext.theme-light .feeRows b{
+  color:#162033!important;
+}
+
+.driverVNext.theme-light .profileRows,
+.driverVNext.theme-light .profileRows>div,
+.driverVNext.theme-light .feeRows>div{
+  border-color:#e5e9ef!important;
+}
+
+.driverVNext.theme-light input,
+.driverVNext.theme-light select,
+.driverVNext.theme-light textarea,
+.driverVNext.theme-light .modernInput,
+.driverVNext.theme-light .modernMoneyInput{
+  border-color:#dfe5ec!important;
+
+  background:#f7f9fc!important;
+  color:#162033!important;
+}
+
+.driverVNext.theme-light .themeOptions button{
+  border-color:#e4e9ef!important;
+
+  background:#f7f9fc!important;
+  color:#162033!important;
+}
+
+.driverVNext.theme-light .themeOptions button b{
+  color:#162033!important;
+}
+
+.driverVNext.theme-light .driverBottomNav{
+  border-color:#e4e9ef!important;
+
+  background:rgba(255,255,255,.97)!important;
+
+  box-shadow:0 -10px 28px rgba(20,39,63,.08)!important;
+}
+
+.driverVNext.theme-light .driverBottomNav button{
+  color:#8793a4!important;
+}
+
+.driverVNext.theme-light .driverBottomNav button.active{
+  background:#fff4d5!important;
+  color:#b57a08!important;
+}
+
+.driverVNext.theme-light .driverBottomNav button.active svg{
+  color:#b57a08!important;
+}
+
+
+/* =========================================================
+   ACCESSIBILITY / RESPONSIVE
+   ========================================================= */
+
+@media(max-width:430px){
+
+  .driverVNext .modernDriverMain{
+    padding-left:max(12px,env(safe-area-inset-left))!important;
+    padding-right:max(12px,env(safe-area-inset-right))!important;
+  }
+
+  .driverVNext .pageTitle h1{
+    font-size:29px!important;
+  }
+
+  .driverHomeVNext .balanceMeaning strong{
+    font-size:39px!important;
+  }
+
+  .driverHomeVNext .glanceCard{
+    min-height:124px!important;
+    padding:14px!important;
+  }
+
+  .activityPageV2 .cleanHistoryRow{
+    grid-template-columns:39px minmax(0,1fr) auto!important;
+
+    gap:10px!important;
+  }
+
+}
+
+@media(prefers-reduced-motion:reduce){
+
+  .driverVNext *,
+  .driverVNext *:before,
+  .driverVNext *:after{
+    scroll-behavior:auto!important;
+
+    animation-duration:.001ms!important;
+    animation-iteration-count:1!important;
+
+    transition-duration:.001ms!important;
+  }
+
+}
+
+
+
+/* =========================================================
+   FAIVOPAY DRIVER · APPROVED MOCKUP UI
+   Final composition layer. Keeps legacy component styles below
+   the surface but makes the signed-in driver app match mockup.
+   ========================================================= */
+
+.mockDriverApp{
+  --mock-navy:#06172d;
+  --mock-navy-2:#09223f;
+  --mock-yellow:#ffbd2e;
+  --mock-ink:#0a1830;
+  --mock-muted:#66748b;
+  --mock-line:#e5e9f0;
+  --mock-white:#ffffff;
+  --mock-surface:#f7f8fb;
+  background:var(--mock-navy)!important;
+  color:var(--mock-ink)!important;
+}
+
+.mockAppHeader{
+  position:sticky;top:0;z-index:130;
+  padding:max(13px,env(safe-area-inset-top)) max(18px,env(safe-area-inset-right)) 11px max(18px,env(safe-area-inset-left));
+  background:linear-gradient(180deg,#06172d 0%,#08213e 100%);
+  color:white;
+}
+.mockHeaderTop,.mockHeaderTitle{display:flex;align-items:center;justify-content:space-between;gap:14px}
+.mockWordmark{font-size:calc(25px * var(--driver-text-scale));font-weight:950;letter-spacing:-.055em;color:white;line-height:1}
+.mockWordmark span{color:var(--mock-yellow)}
+.mockHeaderBell,.mockHeaderTitle button{position:relative;width:38px;height:38px;display:grid;place-items:center;border:0;background:transparent;color:#fff;border-radius:50%}
+.mockHeaderBell svg,.mockHeaderTitle button svg{width:20px;height:20px}
+.mockHeaderBell i{position:absolute;right:5px;top:4px;width:7px;height:7px;border-radius:50%;background:#ff5d73;border:2px solid #08213e}
+.mockHeaderTitle{margin-top:17px}
+.mockHeaderTitle h1{margin:0;font-size:calc(20px * var(--driver-text-scale));line-height:1.05;letter-spacing:-.035em}
+.mockHeaderTitle button{background:rgba(255,255,255,.08);width:31px;height:31px}
+.mockHeaderTitle button svg{width:15px}
+
+.mockDriverApp .mockDriverMain{
+  width:100%;max-width:560px;margin:0 auto!important;
+  padding:0 max(12px,env(safe-area-inset-right)) 104px max(12px,env(safe-area-inset-left))!important;
+  background:var(--mock-navy)!important;
+}
+.mockDriverApp .driverPageView{padding-top:0!important}
+.mockDriverApp button{-webkit-tap-highlight-color:transparent}
+
+.mockWhiteCard,.mockPaymentSurface,.mockAccountDisclosure,.mockSecondaryDisclosure{
+  background:var(--mock-white);border:1px solid rgba(8,31,58,.08);border-radius:16px;color:var(--mock-ink);
+  box-shadow:0 9px 24px rgba(2,17,35,.09);
+}
+.mockWhiteCard{padding:15px}
+
+/* Home */
+.mockHomePage{padding-top:13px!important}
+.mockWelcome{display:none}
+.mockJobStatus{width:100%;min-height:42px;margin:0 0 12px;padding:0 13px;display:flex;align-items:center;justify-content:space-between;border:0;border-radius:11px;background:#e8f9ed;color:#166c3c;font-weight:850}
+.mockJobStatus.clear{background:#eef2f7;color:#5f6c80}
+.mockJobStatus>span{display:flex;align-items:center;gap:9px}.mockJobStatus>span i{width:9px;height:9px;border-radius:50%;background:#25ad61;box-shadow:0 0 0 4px rgba(37,173,97,.13)}.mockJobStatus.clear>span i{background:#9aa7b7;box-shadow:none}.mockJobStatus svg{width:17px}
+.mockEarningsCard{padding:0!important;overflow:hidden}.mockCardTopLine{padding:16px;display:flex;align-items:center;justify-content:space-between;gap:10px}.mockCardTopLine>div span,.mockCardTopLine>div strong,.mockCardTopLine>div small{display:block}.mockCardTopLine span{font-size:calc(11px * var(--driver-text-scale));font-weight:850}.mockCardTopLine strong{margin-top:4px;font-size:calc(29px * var(--driver-text-scale));letter-spacing:-.045em}.mockCardTopLine small{margin-top:3px;color:var(--mock-muted);font-size:calc(9px * var(--driver-text-scale))}.mockCardTopLine button{width:34px;height:34px;border:0;border-radius:50%;background:#eef4fb;color:#2a5f99;display:grid;place-items:center}.mockCardTopLine button svg{width:17px}.mockDivider{height:1px;background:var(--mock-line)}
+.mockCurrentBooking{padding:14px 16px}.mockInlineHead{display:flex;align-items:center;justify-content:space-between;gap:8px}.mockInlineHead>b{font-size:calc(11px * var(--driver-text-scale))}.mockStatusTag{padding:5px 8px;border-radius:8px;font-size:calc(8px * var(--driver-text-scale));font-weight:900}.mockStatusTag.cash{background:#fff0c3;color:#9a6800}.mockFareLine{display:flex;justify-content:space-between;align-items:center;margin-top:12px;color:var(--mock-muted);font-size:calc(10px * var(--driver-text-scale))}.mockFareLine b{font-size:calc(14px * var(--driver-text-scale));color:var(--mock-ink)}
+.mockQuietState{display:flex;align-items:center;gap:10px;margin-top:12px;padding:12px;border-radius:11px;background:#f7f9fc}.mockQuietState>svg{width:20px;color:#7890ad}.mockQuietState b,.mockQuietState span{display:block}.mockQuietState b{font-size:calc(11px * var(--driver-text-scale))}.mockQuietState span{margin-top:2px;font-size:calc(9px * var(--driver-text-scale));color:var(--mock-muted);line-height:1.35}
+.mockBalanceRow{margin-top:10px;display:flex;align-items:center;justify-content:space-between;gap:12px}.mockBalanceRow span,.mockBalanceRow b,.mockBalanceRow small{display:block}.mockBalanceRow span{font-size:calc(9px * var(--driver-text-scale));font-weight:850;color:#5d6c80}.mockBalanceRow b{margin-top:3px;font-size:calc(20px * var(--driver-text-scale));letter-spacing:-.035em}.mockBalanceRow small{margin-top:3px;font-size:calc(8.5px * var(--driver-text-scale));color:var(--mock-muted)}.mockBalanceRow button{width:36px;height:36px;border:0;border-radius:50%;display:grid;place-items:center;background:#eef4fb;color:#2b669f}.mockBalanceRow button svg{width:16px}
+.mockActionRow{width:100%;margin-top:10px;display:grid;grid-template-columns:40px minmax(0,1fr) auto 18px;align-items:center;gap:10px;text-align:left}.mockActionRow>span:nth-child(2) b,.mockActionRow>span:nth-child(2) small{display:block}.mockActionRow>span:nth-child(2) b{font-size:calc(11px * var(--driver-text-scale))}.mockActionRow>span:nth-child(2) small{margin-top:3px;font-size:calc(9px * var(--driver-text-scale));color:var(--mock-muted)}.mockActionRow>strong{font-size:calc(15px * var(--driver-text-scale))}.mockActionRow>svg{width:17px;color:#61738a}
+.mockRoundIcon{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;flex:0 0 38px}.mockRoundIcon svg{width:18px}.mockRoundIcon.amber{background:#fff0c4;color:#b97700}.mockRoundIcon.blue{background:#eaf3ff;color:#167bd2}.mockRoundIcon.indigo{background:#e8edff;color:#284db1}.mockRoundIcon.slate{background:#eef1f6;color:#5d6e84}
+.mockRecentCard{margin-top:10px}.mockSectionHead{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:2px 0 8px}.mockSectionHead span{display:block;color:#7d899b;font-size:calc(8px * var(--driver-text-scale));font-weight:900;letter-spacing:.14em}.mockSectionHead h2{margin:3px 0 0;font-size:calc(17px * var(--driver-text-scale));letter-spacing:-.03em}.mockSectionHead button{border:0;background:transparent;color:#197bc7;font-weight:850;font-size:calc(10px * var(--driver-text-scale))}
+
+/* Shared transaction row */
+.mockTransactionRow{display:grid;grid-template-columns:40px minmax(0,1fr) auto auto;gap:10px;align-items:center;padding:12px 0;border-bottom:1px solid var(--mock-line)}.mockTransactionRow:last-child{border-bottom:0}.mockTransactionRow>div b,.mockTransactionRow>div span,.mockTransactionRow>div small{display:block}.mockTransactionRow>div b{font-size:calc(11px * var(--driver-text-scale))}.mockTransactionRow>div span{margin-top:3px;font-size:calc(9px * var(--driver-text-scale));color:#5f6f84}.mockTransactionRow>div small{margin-top:3px;font-size:calc(8px * var(--driver-text-scale));color:#8a96a6;line-height:1.35}.mockTransactionRow>strong{font-size:calc(12px * var(--driver-text-scale));white-space:nowrap}.mockInlineActions{display:flex;gap:5px;margin-top:6px}.mockInlineActions button{padding:5px 8px;border:1px solid #dde4ed;border-radius:8px;background:#fff;color:#33465f;font-size:calc(8px * var(--driver-text-scale));font-weight:850}.mockPos{color:#15834a!important}.mockNeg{color:#c83f50!important}
+
+/* Route */
+.mockRoute{margin:15px 0 13px;display:grid;gap:12px}.mockRoute>div{display:grid;grid-template-columns:14px minmax(0,1fr);gap:9px;position:relative}.mockRoute>div:first-child:after{content:"";position:absolute;left:5px;top:14px;width:1px;height:24px;border-left:1px dashed #aeb7c4}.mockRouteDot{width:11px;height:11px;margin-top:3px;border-radius:50%;background:#173f74;box-shadow:0 0 0 3px #edf3fb}.mockRouteDot.destination{background:#ff3f64;box-shadow:0 0 0 3px #fff0f3}.mockRoute b,.mockRoute span{display:block}.mockRoute b{font-size:calc(11px * var(--driver-text-scale))}.mockRoute span{margin-top:2px;color:#65748a;font-size:calc(9px * var(--driver-text-scale));line-height:1.35}
+
+/* Payments mockup */
+.mockPaymentsPage{padding-top:0!important}.mockPaymentSurface{min-height:390px;padding:16px;margin:0;box-shadow:0 12px 30px rgba(2,17,35,.13)}.mockPaymentStatusRow{display:flex;align-items:center;justify-content:space-between;gap:8px}.mockPaymentStatusRow small{color:#65748a;font-size:calc(8px * var(--driver-text-scale))}.mockBookingBadge{display:inline-flex;align-items:center;padding:7px 10px;border-radius:9px;font-size:calc(8px * var(--driver-text-scale));font-weight:900;letter-spacing:.01em}.mockBookingBadge.cash{background:#ffdda0;color:#6d4800}.mockBookingBadge.ready{background:#d8efff;color:#0566b6}.mockBookingBadge.paid{background:#b9edc5;color:#146a37}.mockBookingBadge.account{background:#e9e0ff;color:#4e3c83}.mockDriverFare{margin-top:17px}.mockDriverFare strong,.mockDriverFare span{display:block}.mockDriverFare strong{font-size:calc(30px * var(--driver-text-scale));letter-spacing:-.055em;line-height:1}.mockDriverFare span{margin-top:4px;color:#65748a;font-size:calc(10px * var(--driver-text-scale))}.mockCustomerTotal{margin-top:15px;padding:14px;border-radius:12px;background:#f3f6fb}.mockCustomerTotal span,.mockCustomerTotal strong,.mockCustomerTotal small{display:block}.mockCustomerTotal span{font-size:calc(10px * var(--driver-text-scale));font-weight:800}.mockCustomerTotal strong{margin-top:3px;font-size:calc(27px * var(--driver-text-scale));letter-spacing:-.04em}.mockCustomerTotal small{margin-top:4px;color:#53647b;font-size:calc(9px * var(--driver-text-scale))}.mockTakePayment,.mockPrimaryNavy,.mockOutlineAction{width:100%;min-height:48px;margin-top:12px;display:flex;align-items:center;justify-content:center;gap:9px;border-radius:11px;font-weight:900}.mockTakePayment{border:0;background:linear-gradient(135deg,#ffc743,#ffb51f);color:#172033;box-shadow:0 8px 18px rgba(222,150,10,.18)}.mockTakePayment svg,.mockPrimaryNavy svg,.mockOutlineAction svg{width:17px}.mockPrimaryNavy{border:0;background:#063d78;color:white}.mockOutlineAction{border:1px solid #bdc8d6;background:white;color:#172a45}.mockQrBox{margin-top:8px;display:grid;place-items:center;padding:3px;background:#f8f9fb;border-radius:12px}.mockQrBox svg{max-width:174px;width:62%;height:auto}.mockPaidPanel{margin-top:15px;padding:15px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;border-radius:12px;background:#edf9ec}.mockPaidPanel span,.mockPaidPanel strong,.mockPaidPanel small{display:block}.mockPaidPanel span{font-size:calc(10px * var(--driver-text-scale));font-weight:800}.mockPaidPanel strong{margin-top:3px;font-size:calc(28px * var(--driver-text-scale));color:#146d3b}.mockPaidPanel small{margin-top:4px;color:#4a6656;font-size:calc(9px * var(--driver-text-scale))}.mockPaidPanel small svg{width:11px;vertical-align:-2px;margin-right:4px}.mockPaidPanel>svg{width:31px;height:31px;color:#15954c}.mockAccountNotice{margin-top:17px;padding:16px;display:flex;align-items:flex-start;gap:11px;border-radius:12px;background:#f3f5fb}.mockAccountNotice>svg{width:24px;color:#315eb0}.mockAccountNotice b,.mockAccountNotice span{display:block}.mockAccountNotice b{font-size:calc(12px * var(--driver-text-scale))}.mockAccountNotice span{margin-top:4px;color:#5e6d82;font-size:calc(9px * var(--driver-text-scale));line-height:1.4}.mockEmptyBooking{min-height:350px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:35px 20px}.mockEmptyIcon{width:68px;height:68px;border-radius:50%;display:grid;place-items:center;background:#f1f5fb;color:#123d70}.mockEmptyIcon svg{width:31px}.mockEmptyBooking h2{margin:19px 0 0;font-size:calc(19px * var(--driver-text-scale))}.mockEmptyBooking p{max-width:255px;margin:12px auto 0;color:#65748a;font-size:calc(11px * var(--driver-text-scale));line-height:1.5}.mockTextAction{margin-top:16px;border:0;background:transparent;color:#176eb6;font-weight:850;font-size:calc(10px * var(--driver-text-scale));display:flex;align-items:center;gap:6px}.mockTextAction svg{width:14px}
+.mockSecondaryDisclosure,.mockAccountDisclosure{margin-top:10px;overflow:hidden}.mockSecondaryDisclosure>summary,.mockAccountDisclosure>summary{list-style:none;display:grid;align-items:center;cursor:pointer}.mockSecondaryDisclosure>summary::-webkit-details-marker,.mockAccountDisclosure>summary::-webkit-details-marker{display:none}.mockSecondaryDisclosure>summary{grid-template-columns:22px minmax(0,1fr) 17px;gap:11px;padding:14px}.mockSecondaryDisclosure>summary>svg{width:18px;color:#1b79c2}.mockSecondaryDisclosure>summary span b,.mockSecondaryDisclosure>summary span small{display:block}.mockSecondaryDisclosure>summary span b{font-size:calc(11px * var(--driver-text-scale))}.mockSecondaryDisclosure>summary span small{margin-top:3px;font-size:calc(9px * var(--driver-text-scale));color:var(--mock-muted)}.mockSecondaryDisclosure>summary>svg:last-child{color:#758499}.mockSecondaryDisclosure[open]>summary>svg:last-child{transform:rotate(90deg)}.mockDisclosureBody{padding:0 10px 10px}.mockSecondaryStack{margin-top:10px}
+
+/* Transactions */
+.mockTransactionsPage{padding-top:0!important}.mockSegmented{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin:0 0 10px;padding:4px;border-radius:11px;background:#eef2f7}.mockSegmented button{min-height:33px;border:0;border-radius:8px;background:transparent;color:#53647b;font-size:calc(9px * var(--driver-text-scale));font-weight:850}.mockSegmented button.active{background:#2f75ef;color:white;box-shadow:0 3px 8px rgba(47,117,239,.18)}.mockLedgerCard{margin-top:10px}.mockEmptyList{padding:28px 10px;text-align:center;color:var(--mock-muted);font-size:calc(10px * var(--driver-text-scale))}
+
+/* Account */
+.mockAccountPage{padding-top:0!important}.mockProfileSummary{display:grid;grid-template-columns:52px minmax(0,1fr) 18px;gap:12px;align-items:center}.mockProfileAvatar{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;background:#7688a3;color:white;font-weight:900}.mockProfileSummary>div:nth-child(2) b,.mockProfileSummary>div:nth-child(2) span{display:block}.mockProfileSummary>div:nth-child(2) b{font-size:calc(14px * var(--driver-text-scale))}.mockProfileSummary>div:nth-child(2) span{margin-top:3px;color:var(--mock-muted);font-size:calc(9px * var(--driver-text-scale))}.mockProfileSummary>svg{width:17px;color:#536a84}.mockAccountDisclosure{margin-top:9px}.mockAccountDisclosure>summary{grid-template-columns:40px minmax(0,1fr) 18px;gap:11px;padding:13px}.mockAccountDisclosure>summary>span:nth-child(2) b,.mockAccountDisclosure>summary>span:nth-child(2) small{display:block}.mockAccountDisclosure>summary>span:nth-child(2) b{font-size:calc(11px * var(--driver-text-scale))}.mockAccountDisclosure>summary>span:nth-child(2) small{margin-top:3px;color:#65748a;font-size:calc(8.5px * var(--driver-text-scale));line-height:1.35}.mockAccountDisclosure>summary>svg{width:17px;color:#566d88}.mockAccountDisclosure[open]>summary>svg{transform:rotate(90deg)}.mockDisclosureText{padding:0 15px 14px;color:#596a7f;font-size:calc(10px * var(--driver-text-scale));line-height:1.5}.mockDisclosureText p{margin:0}.mockDisclosureText small{display:block;margin-top:8px;color:#8794a5}.mockLogoutRow{width:100%;min-height:50px;margin-top:10px;display:flex;align-items:center;gap:10px;padding:0 15px;border:1px solid #f2d9dc;border-radius:13px;background:#fff8f8;color:#d63d50;font-weight:850;text-align:left}.mockLogoutRow svg{width:17px}
+
+/* Bottom nav */
+.mockDriverApp .mockBottomNav{position:fixed;z-index:150;left:0;right:0;bottom:0;display:grid;grid-template-columns:repeat(4,1fr);min-height:70px;padding:7px max(6px,env(safe-area-inset-right)) max(7px,env(safe-area-inset-bottom)) max(6px,env(safe-area-inset-left));border-top:1px solid rgba(255,255,255,.08)!important;background:rgba(5,21,40,.98)!important;box-shadow:0 -10px 25px rgba(0,0,0,.2)!important}.mockDriverApp .mockBottomNav button{position:relative;min-width:0;min-height:54px;margin:0!important;padding:5px 2px!important;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:0;border-radius:10px!important;background:transparent!important;color:#8391a5!important}.mockDriverApp .mockBottomNav button.active{color:#ffd043!important;background:transparent!important}.mockNavIcon{position:relative;display:grid;place-items:center;height:25px}.mockNavIcon>svg{width:20px!important;height:20px!important}.mockDriverApp .mockBottomNav button>span:last-child{font-size:calc(8px * var(--driver-text-scale))!important;font-weight:750}.mockDriverApp .mockBottomNav .livePayPulse{position:absolute!important;right:-6px!important;top:-4px!important;width:11px!important;min-width:11px!important;height:11px!important;padding:0!important;border:2px solid #06203c!important;border-radius:50%!important;background:#ffbd2e!important;box-shadow:0 0 0 0 rgba(255,189,46,.48);animation:faivoPayPulse 1.55s ease-out infinite}.mockNavCount{position:absolute;right:-8px;top:-5px;min-width:15px;height:15px;padding:0 4px;display:grid;place-items:center;border:2px solid #06203c;border-radius:999px;background:#ef5261;color:white;font-size:calc(7px * var(--driver-text-scale));font-style:normal;font-weight:900}
+
+/* Existing nested driver components inside disclosures */
+.mockDriverApp .mockDisclosureBody .driverCard,.mockDriverApp .mockSecondaryStack .driverCard{margin-top:10px!important;box-shadow:none!important}.mockDriverApp .mockDisclosureBody .driverCard:first-child{margin-top:0!important}.mockDriverApp .mockDisclosureBody .driverCard,.mockDriverApp .mockSecondaryStack .driverCard{border-radius:13px!important}
+
+/* Light / Dark retain the same mockup layout */
+.mockDriverApp.theme-light{background:var(--mock-navy)!important}.mockDriverApp.theme-light .mockDriverMain{background:var(--mock-navy)!important}.mockDriverApp.theme-dark{--mock-white:#14233a;--mock-surface:#182941;--mock-ink:#f5f7fb;--mock-muted:#9aa8ba;--mock-line:rgba(255,255,255,.08)}.mockDriverApp.theme-dark .mockWhiteCard,.mockDriverApp.theme-dark .mockPaymentSurface,.mockDriverApp.theme-dark .mockAccountDisclosure,.mockDriverApp.theme-dark .mockSecondaryDisclosure{background:#14233a;border-color:rgba(255,255,255,.08);color:#f5f7fb}.mockDriverApp.theme-dark .mockCardTopLine button,.mockDriverApp.theme-dark .mockQuietState,.mockDriverApp.theme-dark .mockCustomerTotal,.mockDriverApp.theme-dark .mockQrBox,.mockDriverApp.theme-dark .mockAccountNotice{background:#192d48}.mockDriverApp.theme-dark .mockRoute span,.mockDriverApp.theme-dark .mockDriverFare span,.mockDriverApp.theme-dark .mockCustomerTotal small,.mockDriverApp.theme-dark .mockTransactionRow>div span,.mockDriverApp.theme-dark .mockTransactionRow>div small,.mockDriverApp.theme-dark .mockProfileSummary>div:nth-child(2) span,.mockDriverApp.theme-dark .mockAccountDisclosure>summary>span:nth-child(2) small{color:#9aabc0}.mockDriverApp.theme-dark .mockTransactionRow{border-color:rgba(255,255,255,.08)}.mockDriverApp.theme-dark .mockOutlineAction,.mockDriverApp.theme-dark .mockInlineActions button{background:#14233a;border-color:rgba(255,255,255,.16);color:#f5f7fb}.mockDriverApp.theme-dark .mockPaidPanel{background:#123026}.mockDriverApp.theme-dark .mockSegmented{background:#102038}.mockDriverApp.theme-dark .mockSegmented button{color:#91a1b5}.mockDriverApp.theme-dark .mockSegmented button.active{color:white}.mockDriverApp.theme-dark .mockLogoutRow{background:#2b1820;border-color:#55313d}.mockDriverApp.theme-dark .mockRoundIcon.slate{background:#20334d;color:#9badc2}
+
+/* Make existing appearance/fees/bank forms readable inside dark mockup */
+.mockDriverApp.theme-dark .mockDisclosureBody .driverCard,.mockDriverApp.theme-dark .mockSecondaryStack .driverCard{background:#182941!important;border-color:rgba(255,255,255,.08)!important}.mockDriverApp.theme-light .mockDisclosureBody .driverCard,.mockDriverApp.theme-light .mockSecondaryStack .driverCard{background:#f8fafc!important;border-color:#e5e9f0!important}
+
+@media(max-width:430px){
+ .mockAppHeader{padding-left:max(14px,env(safe-area-inset-left));padding-right:max(14px,env(safe-area-inset-right))}.mockWordmark{font-size:calc(23px * var(--driver-text-scale))}.mockHeaderTitle h1{font-size:calc(19px * var(--driver-text-scale))}.mockDriverApp .mockDriverMain{padding-left:max(9px,env(safe-area-inset-left))!important;padding-right:max(9px,env(safe-area-inset-right))!important}.mockPaymentSurface{padding:14px}.mockTransactionRow{grid-template-columns:37px minmax(0,1fr) auto auto;gap:8px}.mockRoundIcon{width:36px;height:36px;flex-basis:36px}.mockActionRow{grid-template-columns:36px minmax(0,1fr) auto 16px}.mockCustomerTotal strong{font-size:calc(25px * var(--driver-text-scale))}
+}
+
+/* Driver posted account work */
+.mockTransactionsTabs{
+  grid-template-columns:1.25fr 1fr .8fr;
+}
+
+.mockTransactionsTabs button{
+  white-space:nowrap;
+  font-size:.82rem;
+}
+
+.mockAccountWorkSummary{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+  margin-bottom:14px;
+  padding:19px 20px;
+  border-radius:22px;
+  background:var(--mock-white);
+  color:var(--mock-ink);
+  border:1px solid rgba(8,31,58,.08);
+  box-shadow:0 10px 30px rgba(19,31,55,.07);
+}
+
+.mockAccountWorkSummary>div{
+  display:flex;
+  flex-direction:column;
+  min-width:0;
+}
+
+.mockAccountWorkSummary>div>span{
+  font-size:.7rem;
+  font-weight:800;
+  letter-spacing:.09em;
+  opacity:.58;
+}
+
+.mockAccountWorkSummary strong{
+  margin-top:3px;
+  font-size:2rem;
+  line-height:1.05;
+  letter-spacing:-.035em;
+}
+
+.mockAccountWorkSummary small{
+  margin-top:5px;
+  opacity:.62;
+}
+
+.mockAccountWorkCard{
+  overflow:hidden;
+}
+
+.mockAccountWorkCard .mockSectionHead>small{
+  align-self:center;
+  text-align:right;
+  opacity:.55;
+  font-size:.73rem;
+}
+
+.mockAccountWorkRow{
+  border-top:1px solid rgba(120,130,150,.14);
+}
+
+.mockAccountWorkRow:first-of-type{
+  border-top:0;
+}
+
+.mockAccountWorkRow summary{
+  list-style:none;
+  display:grid;
+  grid-template-columns:auto minmax(0,1fr) auto;
+  gap:12px;
+  align-items:center;
+  padding:15px 0;
+  cursor:pointer;
+}
+
+.mockAccountWorkRow summary::-webkit-details-marker{
+  display:none;
+}
+
+.mockAccountWorkMain{
+  display:flex;
+  flex-direction:column;
+  min-width:0;
+}
+
+.mockAccountWorkMain b{
+  font-size:.96rem;
+}
+
+.mockAccountWorkMain>span{
+  margin-top:2px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-size:.82rem;
+  opacity:.72;
+}
+
+.mockAccountWorkMain small{
+  margin-top:3px;
+  opacity:.5;
+}
+
+.mockAccountWorkAmount{
+  display:flex;
+  align-items:center;
+  gap:5px;
+}
+
+.mockAccountWorkAmount strong{
+  font-size:1rem;
+}
+
+.mockAccountWorkAmount svg{
+  width:17px;
+  height:17px;
+  opacity:.42;
+  transition:transform .18s ease;
+}
+
+.mockAccountWorkRow[open] .mockAccountWorkAmount svg{
+  transform:rotate(90deg);
+}
+
+.mockAccountWorkDetail{
+  padding:2px 0 18px 52px;
+}
+
+.mockJourney{
+  display:grid;
+  gap:9px;
+  padding:13px 14px;
+  border-radius:14px;
+  background:rgba(126,139,166,.07);
+}
+
+.mockJourney>div,
+.mockAccountWorkBreakdown>div,
+.mockAccountWorkMeta>div{
+  display:flex;
+  justify-content:space-between;
+  gap:14px;
+}
+
+.mockJourney span,
+.mockAccountWorkBreakdown span,
+.mockAccountWorkMeta span{
+  flex:0 0 auto;
+  font-size:.76rem;
+  opacity:.56;
+}
+
+.mockJourney b{
+  text-align:right;
+  font-size:.79rem;
+  font-weight:650;
+}
+
+.mockAccountWorkBreakdown{
+  display:grid;
+  gap:8px;
+  margin-top:12px;
+  padding:0 2px;
+}
+
+.mockAccountWorkBreakdown>div:first-child{
+  padding-bottom:8px;
+  margin-bottom:1px;
+  border-bottom:1px solid rgba(120,130,150,.14);
+}
+
+.mockAccountWorkBreakdown>div:first-child strong{
+  font-size:1.05rem;
+}
+
+.mockAccountWorkMeta{
+  display:grid;
+  gap:7px;
+  margin-top:13px;
+  padding-top:12px;
+  border-top:1px solid rgba(120,130,150,.14);
+}
+
+.mockAccountWorkMeta b{
+  text-align:right;
+  font-size:.76rem;
+  font-weight:650;
+}
+
+.mockAccountWorkNote{
+  display:flex;
+  gap:8px;
+  align-items:flex-start;
+  margin-top:13px;
+  padding:10px 11px;
+  border-radius:12px;
+  background:rgba(48,92,210,.06);
+  font-size:.72rem;
+  line-height:1.4;
+  opacity:.76;
+}
+
+.mockAccountWorkNote svg{
+  width:15px;
+  height:15px;
+  flex:0 0 auto;
+  margin-top:1px;
+}
+
+@media(max-width:390px){
+  .mockTransactionsTabs button{
+    padding-left:7px;
+    padding-right:7px;
+    font-size:.75rem;
+  }
+
+  .mockAccountWorkDetail{
+    padding-left:0;
+  }
+}

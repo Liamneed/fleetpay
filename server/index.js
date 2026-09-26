@@ -275,6 +275,53 @@ CREATE TABLE IF NOT EXISTS autocab_booking_webhooks (
 CREATE INDEX IF NOT EXISTS idx_autocab_booking_webhooks_booking
 ON autocab_booking_webhooks(booking_id, received_at DESC);
 
+CREATE TABLE IF NOT EXISTS posted_driver_dockets (
+ id TEXT PRIMARY KEY,
+ autocab_docket_id TEXT NOT NULL UNIQUE,
+ docket_number TEXT,
+ booking_id TEXT NOT NULL,
+ driver_id INTEGER NOT NULL,
+ driver_callsign TEXT,
+ driver_name TEXT,
+
+ completed_at TEXT,
+ posted_at TEXT,
+
+ account_id INTEGER,
+ account_code TEXT,
+ account_name TEXT,
+
+ pickup TEXT,
+ destination TEXT,
+
+ driver_cost REAL NOT NULL DEFAULT 0,
+ fare REAL NOT NULL DEFAULT 0,
+ account_price REAL NOT NULL DEFAULT 0,
+ waiting_time REAL NOT NULL DEFAULT 0,
+ waiting_time_cost REAL NOT NULL DEFAULT 0,
+ extra_cost REAL NOT NULL DEFAULT 0,
+
+ commissionable REAL NOT NULL DEFAULT 0,
+ non_commissionable REAL NOT NULL DEFAULT 0,
+
+ approved INTEGER NOT NULL DEFAULT 0,
+
+ raw_pricing_json TEXT,
+ raw_json TEXT NOT NULL,
+
+ first_seen_at TEXT NOT NULL,
+ last_seen_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_posted_driver_dockets_driver
+ON posted_driver_dockets(driver_id, posted_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_posted_driver_dockets_booking
+ON posted_driver_dockets(booking_id);
+
+CREATE INDEX IF NOT EXISTS idx_posted_driver_dockets_posted
+ON posted_driver_dockets(posted_at DESC);
+
 CREATE TABLE IF NOT EXISTS carried_charges (driver_id INTEGER PRIMARY KEY, amount REAL NOT NULL DEFAULT 0);
 
 CREATE TABLE IF NOT EXISTS driver_weekly_activity (
@@ -3152,13 +3199,262 @@ async function getActiveDrivers(){
  for(const d of groups.flat())byId.set(Number(d.id),d);
  return [...byId.values()];
 }
+async function syncPostedDriverDockets(){
+ const response=await postJson(
+  `${BASE_URL}/driver/v1/accounts/driveraccounts/dockets`,
+  {driverId:null,accountId:null}
+ );
+
+ const dockets=Array.isArray(response?.dockets)?response.dockets:[];
+ const now=new Date().toISOString();
+
+ const upsert=db.prepare(`
+  INSERT INTO posted_driver_dockets(
+   id,
+   autocab_docket_id,
+   docket_number,
+   booking_id,
+   driver_id,
+   driver_callsign,
+   driver_name,
+   completed_at,
+   posted_at,
+   account_id,
+   account_code,
+   account_name,
+   pickup,
+   destination,
+   driver_cost,
+   fare,
+   account_price,
+   waiting_time,
+   waiting_time_cost,
+   extra_cost,
+   commissionable,
+   non_commissionable,
+   approved,
+   raw_pricing_json,
+   raw_json,
+   first_seen_at,
+   last_seen_at
+  ) VALUES(
+   ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+  )
+  ON CONFLICT(autocab_docket_id) DO UPDATE SET
+   docket_number=excluded.docket_number,
+   booking_id=excluded.booking_id,
+   driver_id=excluded.driver_id,
+   driver_callsign=excluded.driver_callsign,
+   driver_name=excluded.driver_name,
+   completed_at=excluded.completed_at,
+   posted_at=excluded.posted_at,
+   account_id=excluded.account_id,
+   account_code=excluded.account_code,
+   account_name=excluded.account_name,
+   pickup=excluded.pickup,
+   destination=excluded.destination,
+   driver_cost=excluded.driver_cost,
+   fare=excluded.fare,
+   account_price=excluded.account_price,
+   waiting_time=excluded.waiting_time,
+   waiting_time_cost=excluded.waiting_time_cost,
+   extra_cost=excluded.extra_cost,
+   commissionable=excluded.commissionable,
+   non_commissionable=excluded.non_commissionable,
+   approved=excluded.approved,
+   raw_pricing_json=excluded.raw_pricing_json,
+   raw_json=excluded.raw_json,
+   last_seen_at=excluded.last_seen_at
+ `);
+
+ let stored=0;
+ let skipped=0;
+
+ for(const docket of dockets){
+  const postedEvents=Array.isArray(docket?.changeHistory)
+   ? docket.changeHistory.filter(
+      x=>String(x?.changeType||'').toLowerCase()==='posted'
+     )
+   : [];
+
+  const postedEvent=postedEvents.at(-1);
+
+  const driverId=Number(docket?.driver?.id||0);
+  const autocabDocketId=String(docket?.id||'').trim();
+  const bookingId=String(
+   docket?.bookingId ??
+   docket?.originalAutoID ??
+   ''
+  ).trim();
+
+  const isAccount=
+   String(docket?.paymentType||'').toLowerCase()==='account';
+
+  if(
+   !postedEvent ||
+   !isAccount ||
+   !driverId ||
+   !autocabDocketId ||
+   !bookingId
+  ){
+   skipped++;
+   continue;
+  }
+
+  const pricing=
+   docket?.pricing && typeof docket.pricing==='object'
+    ? docket.pricing
+    : {};
+
+  const pickup=String(
+   docket?.pickup?.address?.text ??
+   docket?.pickup?.address ??
+   ''
+  ).trim();
+
+  const destination=String(
+   docket?.destination?.address?.text ??
+   docket?.destination?.address ??
+   ''
+  ).trim();
+
+  upsert.run(
+   `posteddocket_${autocabDocketId}`,
+   autocabDocketId,
+   docket?.docketNumber!=null ? String(docket.docketNumber) : null,
+   bookingId,
+   driverId,
+   String(docket?.driver?.callsign||''),
+   String(docket?.driver?.fullName||''),
+   docket?.completedAtTime||null,
+   postedEvent?.time||null,
+   Number.isFinite(Number(docket?.customerId))
+    ? Number(docket.customerId)
+    : null,
+   String(docket?.accountCode||''),
+   String(docket?.customerDisplayName||''),
+   pickup,
+   destination,
+   Number(pricing?.cost||0),
+   Number(pricing?.fare||0),
+   Number(pricing?.price ?? docket?.price ?? 0),
+   Number(pricing?.waitingTime||0),
+   Number(pricing?.waitingTimeCost||0),
+   Number(pricing?.extraCost||0),
+   Number(docket?.commissionable||0),
+   Number(docket?.nonCommissionable||0),
+   docket?.approved ? 1 : 0,
+   JSON.stringify(pricing||{}),
+   JSON.stringify(docket),
+   now,
+   now
+  );
+
+  stored++;
+ }
+
+ return {
+  fetched:dockets.length,
+  stored,
+  skipped,
+  syncedAt:now
+ };
+}
+
 async function getDriverAccounts(){return postJson(`${BASE_URL}/accounts/v1/DriversAccounts?pageno=1&pagesize=1000`,{companyId:null,driverId:null})}
 function mergeDrivers(drivers,accountsResponse){const accounts=accountsResponse?.summaries||[];const byId=new Map(accounts.map(a=>[Number(a.driverId),a]));return (drivers||[]).map(d=>{const a=byId.get(Number(d.id));return {driverId:d.id,callsign:d.callsign,forename:d.forename,surname:d.surname,fullName:d.fullName||`${d.forename||''} ${d.surname||''}`.trim(),mobile:d.mobile||d.telephone||'',email:d.email||'',active:Boolean(d.active),suspended:Boolean(d.suspended),previousBalance:a?.previousBalance??null,currentBalance:a?.currentBalance??null,lastProcessed:a?.lastProcessed??null,lastProcessedBy:a?.lastProcessedBy??null,notes:a?.notes??'',totals:a?{allJobsTotal:a.allJobsTotal??0,cashJobsTotal:a.cashJobsTotal??0,accountJobsTotal:a.accountJobsTotal??0,cardJobsTotal:a.cardJobsTotal??0,driverTransactionsTotal:a.driverTransactionsTotal??0,groupTransactionsTotal:a.groupTransactionsTotal??0,pendingTransactionsTotal:a.pendingTransactionsTotal??0,paidInTotal:a.paidInTotal??0,paidOutTotal:a.paidOutTotal??0,vatAmount:a.vatAmount??0,allJobsCommission:a.allJobsCommission??0}:null}})}
 async function getMergedDrivers(){const [d,a]=await Promise.all([getActiveDrivers(),getDriverAccounts()]);return mergeDrivers(d,a)}
 function cacheRows(){return db.prepare('SELECT * FROM driver_cache ORDER BY CAST(callsign AS INTEGER), callsign').all().map(r=>({driverId:r.driver_id,callsign:r.callsign,forename:r.forename,surname:r.surname,fullName:r.full_name,mobile:r.mobile,email:r.email,active:Boolean(r.active),suspended:Boolean(r.suspended),previousBalance:r.previous_balance,currentBalance:r.current_balance,lastProcessed:r.last_processed,lastProcessedBy:r.last_processed_by,notes:r.notes,totals:r.totals_json?JSON.parse(r.totals_json):null,syncedAt:r.synced_at,payoutExcluded:Boolean(r.payout_excluded),payoutExclusionReason:r.payout_exclusion_reason||''}))}
 function cachedDriver(driverId){const r=db.prepare('SELECT * FROM driver_cache WHERE driver_id=?').get(driverId);if(!r)return null;return {driverId:r.driver_id,callsign:r.callsign,forename:r.forename,surname:r.surname,fullName:r.full_name,mobile:r.mobile,email:r.email,active:Boolean(r.active),suspended:Boolean(r.suspended),previousBalance:r.previous_balance,currentBalance:r.current_balance,lastProcessed:r.last_processed,lastProcessedBy:r.last_processed_by,notes:r.notes,totals:r.totals_json?JSON.parse(r.totals_json):null,syncedAt:r.synced_at,payoutExcluded:Boolean(r.payout_excluded),payoutExclusionReason:r.payout_exclusion_reason||''}}
 let syncInFlight=null;
-async function syncAutocab(){if(syncInFlight)return syncInFlight;syncInFlight=(async()=>{const drivers=await getMergedDrivers(),now=new Date().toISOString(),weekStart=mondayWeekStart();const st=db.prepare(`INSERT INTO driver_cache(driver_id,callsign,forename,surname,full_name,mobile,email,active,suspended,previous_balance,current_balance,last_processed,last_processed_by,notes,totals_json,synced_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(driver_id) DO UPDATE SET callsign=excluded.callsign,forename=excluded.forename,surname=excluded.surname,full_name=excluded.full_name,mobile=excluded.mobile,email=excluded.email,active=excluded.active,suspended=excluded.suspended,previous_balance=excluded.previous_balance,current_balance=excluded.current_balance,last_processed=excluded.last_processed,last_processed_by=excluded.last_processed_by,notes=excluded.notes,totals_json=excluded.totals_json,synced_at=excluded.synced_at`);const activity=db.prepare(`INSERT INTO driver_weekly_activity(driver_id,week_start,worked,first_seen_at,last_seen_at,max_all_jobs_total) VALUES(?,?,?,?,?,?) ON CONFLICT(driver_id,week_start) DO UPDATE SET worked=1,last_seen_at=excluded.last_seen_at,max_all_jobs_total=MAX(driver_weekly_activity.max_all_jobs_total,excluded.max_all_jobs_total)`);for(const d of drivers){st.run(d.driverId,d.callsign,d.forename,d.surname,d.fullName,d.mobile,d.email,d.active?1:0,d.suspended?1:0,d.previousBalance,d.currentBalance,d.lastProcessed,d.lastProcessedBy,d.notes,JSON.stringify(d.totals||null),now);const jobs=Number(d.totals?.allJobsTotal||0);if(jobs>0)activity.run(d.driverId,weekStart,1,now,now,jobs)}return {drivers,syncedAt:now}})();try{return await syncInFlight}finally{syncInFlight=null}}
+async function syncAutocab(){
+ if(syncInFlight)return syncInFlight;
+
+ syncInFlight=(async()=>{
+  const drivers=await getMergedDrivers();
+  const now=new Date().toISOString();
+  const weekStart=mondayWeekStart();
+
+  const st=db.prepare(`
+   INSERT INTO driver_cache(
+    driver_id,callsign,forename,surname,full_name,mobile,email,
+    active,suspended,previous_balance,current_balance,last_processed,
+    last_processed_by,notes,totals_json,synced_at
+   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+   ON CONFLICT(driver_id) DO UPDATE SET
+    callsign=excluded.callsign,
+    forename=excluded.forename,
+    surname=excluded.surname,
+    full_name=excluded.full_name,
+    mobile=excluded.mobile,
+    email=excluded.email,
+    active=excluded.active,
+    suspended=excluded.suspended,
+    previous_balance=excluded.previous_balance,
+    current_balance=excluded.current_balance,
+    last_processed=excluded.last_processed,
+    last_processed_by=excluded.last_processed_by,
+    notes=excluded.notes,
+    totals_json=excluded.totals_json,
+    synced_at=excluded.synced_at
+  `);
+
+  const activity=db.prepare(`
+   INSERT INTO driver_weekly_activity(
+    driver_id,week_start,worked,first_seen_at,last_seen_at,max_all_jobs_total
+   ) VALUES(?,?,?,?,?,?)
+   ON CONFLICT(driver_id,week_start) DO UPDATE SET
+    worked=1,
+    last_seen_at=excluded.last_seen_at,
+    max_all_jobs_total=MAX(
+     driver_weekly_activity.max_all_jobs_total,
+     excluded.max_all_jobs_total
+    )
+  `);
+
+  for(const d of drivers){
+   st.run(
+    d.driverId,d.callsign,d.forename,d.surname,d.fullName,
+    d.mobile,d.email,d.active?1:0,d.suspended?1:0,
+    d.previousBalance,d.currentBalance,d.lastProcessed,
+    d.lastProcessedBy,d.notes,JSON.stringify(d.totals||null),now
+   );
+
+   const jobs=Number(d.totals?.allJobsTotal||0);
+
+   if(jobs>0){
+    activity.run(
+     d.driverId,
+     weekStart,
+     1,
+     now,
+     now,
+     jobs
+    );
+   }
+  }
+
+  let postedDockets=null;
+
+  try{
+   postedDockets=await syncPostedDriverDockets();
+  }catch(e){
+   console.error('Posted driver docket sync failed:',e.message);
+  }
+
+  return {
+   drivers,
+   postedDockets,
+   syncedAt:now
+  };
+ })();
+
+ try{
+  return await syncInFlight;
+ }finally{
+  syncInFlight=null;
+ }
+}
 function notify(driverId,title,message,type='info',referenceId=null){db.prepare('INSERT INTO driver_notifications(id,driver_id,title,message,type,reference_id,created_at) VALUES(?,?,?,?,?,?,?)').run(id('note'),driverId,title,message,type,referenceId,new Date().toISOString());sendPush(driverId,title,message).catch(()=>{})}
 
 async function postAutocabAdjustment({driverId,callsign,amount,isCredit,description,adjustmentReason,eventKey,force=false}){
@@ -12761,6 +13057,113 @@ app.put('/api/driver/bank-account',driverAuth,async(req,res)=>{
   if(email){sendEmail(email,existing?'FaivoPay payout bank details changed':'FaivoPay payout bank details added',`<p>Your FaivoPay payout bank details ${existing?'were changed':'have been added'}.</p><p>Account ending <strong>${accountNumber.slice(-4)}</strong> · Sort code ending <strong>${sortCode.slice(-2)}</strong>.</p><p>If you did not make this change, contact the FaivoPay office immediately.</p>`).catch(()=>{});}
   res.json({ok:true,bankAccount:maskedBankAccount(req.auth.driverId)});
  }catch(e){res.status(500).json({error:e.message})}
+});
+
+app.get('/api/driver/account-work',driverAuth,(req,res)=>{
+ try{
+  const driverId=Number(req.auth.driverId);
+
+  const now=new Date();
+  const monday=new Date(now);
+  const day=monday.getDay();
+  const diff=(day===0 ? -6 : 1-day);
+  monday.setDate(monday.getDate()+diff);
+  monday.setHours(0,0,0,0);
+
+  const defaultFrom=monday.toISOString();
+  const defaultTo=new Date(
+   now.getFullYear(),
+   now.getMonth(),
+   now.getDate()+1,
+   0,0,0,0
+  ).toISOString();
+
+  const from=String(req.query.from||defaultFrom).trim();
+  const to=String(req.query.to||defaultTo).trim();
+
+  if(Number.isNaN(Date.parse(from))){
+   return res.status(400).json({error:'Invalid from date'});
+  }
+
+  if(Number.isNaN(Date.parse(to))){
+   return res.status(400).json({error:'Invalid to date'});
+  }
+
+  if(Date.parse(to)<=Date.parse(from)){
+   return res.status(400).json({error:'to must be later than from'});
+  }
+
+  const rows=db.prepare(`
+   SELECT
+    autocab_docket_id autocabDocketId,
+    docket_number docketNumber,
+    booking_id bookingId,
+    driver_id driverId,
+    driver_callsign driverCallsign,
+    driver_name driverName,
+    completed_at completedAt,
+    posted_at postedAt,
+    account_id accountId,
+    account_code accountCode,
+    account_name accountName,
+    pickup,
+    destination,
+    driver_cost driverCost,
+    fare,
+    account_price accountPrice,
+    waiting_time waitingTime,
+    waiting_time_cost waitingTimeCost,
+    extra_cost extraCost,
+    commissionable,
+    non_commissionable nonCommissionable,
+    approved
+   FROM posted_driver_dockets
+   WHERE driver_id=?
+     AND datetime(posted_at)>=datetime(?)
+     AND datetime(posted_at)<datetime(?)
+   ORDER BY datetime(posted_at) DESC
+  `).all(driverId,from,to);
+
+  const jobs=rows.map(r=>({
+   ...r,
+   driverCost:Number(r.driverCost||0),
+   fare:Number(r.fare||0),
+   accountPrice:Number(r.accountPrice||0),
+   waitingTime:Number(r.waitingTime||0),
+   waitingTimeCost:Number(r.waitingTimeCost||0),
+   extraCost:Number(r.extraCost||0),
+   commissionable:Number(r.commissionable||0),
+   nonCommissionable:Number(r.nonCommissionable||0),
+   approved:Boolean(r.approved)
+  }));
+
+  const totalDriverCost=Math.round(
+   jobs.reduce((sum,x)=>sum+Number(x.driverCost||0),0)*100
+  )/100;
+
+  const totalWaitingCost=Math.round(
+   jobs.reduce((sum,x)=>sum+Number(x.waitingTimeCost||0),0)*100
+  )/100;
+
+  const totalExtraCost=Math.round(
+   jobs.reduce((sum,x)=>sum+Number(x.extraCost||0),0)*100
+  )/100;
+
+  res.json({
+   driverId,
+   from,
+   to,
+   summary:{
+    jobs:jobs.length,
+    totalDriverCost,
+    totalWaitingCost,
+    totalExtraCost
+   },
+   jobs
+  });
+ }catch(e){
+  res.status(500).json({error:e.message});
+ }
 });
 
 app.get('/api/driver/me',driverAuth,(req,res)=>{

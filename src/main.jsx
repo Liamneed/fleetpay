@@ -6298,6 +6298,15 @@ function DriverApp(){
  const[customerPaymentBusy,setCustomerPaymentBusy]=useState(false);
  const[livePaymentPreview,setLivePaymentPreview]=useState(null);
  const[livePaymentPreviewBusy,setLivePaymentPreviewBusy]=useState(false);
+ const[showManualPayment,setShowManualPayment]=useState(false);
+ const[activityFilter,setActivityFilter]=useState('account-work');
+ const[accountWork,setAccountWork]=useState({
+  summary:{jobs:0,totalDriverCost:0,totalWaitingCost:0,totalExtraCost:0},
+  jobs:[]
+ });
+ const[accountWorkError,setAccountWorkError]=useState('');
+ const[lastLivePreview,setLastLivePreview]=useState(null);
+ const[lastLivePaid,setLastLivePaid]=useState(null);
  const[driverTab,setDriverTab]=useState('home');
  const[theme,setTheme]=useState(()=>localStorage.getItem('fleetpay_theme')||((window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches)?'light':'dark'));
  const[textScale,setTextScale]=useState(()=>{const saved=Number(localStorage.getItem('fleetpay_text_scale'));return Number.isFinite(saved)&&saved>=0.9&&saved<=1.5?saved:1});
@@ -6384,6 +6393,7 @@ function DriverApp(){
   if(!customerPayment || !me?.customerPayments?.length) return;
   const matched=me.customerPayments.find(x=>x.id===customerPayment.id);
   if(matched?.status==='paid'){
+   setLastLivePaid({payment:matched,preview:lastLivePreview||livePaymentPreview});
    setNotice(`Customer payment of ${money(matched.totalAmount)} received successfully.`);
    setCustomerPayment(null);
    setCustomerFare('');
@@ -6399,6 +6409,14 @@ function DriverApp(){
    const next=await api('/api/driver/me');
    setMe(next);
    lastLoadAt.current=Date.now();
+
+   try{
+    const work=await api('/api/driver/account-work');
+    setAccountWork(work);
+    setAccountWorkError('');
+   }catch(x){
+    setAccountWorkError(x.message||'Account work is temporarily unavailable.');
+   }
   }catch{
    localStorage.removeItem('fleetpay_driver');setToken('');setMe(null);
   }finally{loadingDriver.current=false}
@@ -6450,24 +6468,80 @@ function DriverApp(){
  async function createExtraPlanPayment(plan,maxExtra){setErr('');setNotice('');if(currentExtraPlanPayment)return payRequest(currentExtraPlanPayment);const raw=prompt(`How much extra would you like to pay?\n\nMaximum extra payment: ${money(maxExtra)}\nYour current instalment remains due separately.`,'');if(raw===null)return;const amount=Number(raw);if(!Number.isFinite(amount)||amount<=0){setErr('Enter a valid extra payment amount.');return}if(amount>maxExtra+0.00001){setErr(`Extra payment cannot exceed ${money(maxExtra)}.`);return}setPaymentBusy(true);try{const j=await api(`/api/driver/payment-plans/${plan.id}/extra-payment`,{method:'POST',body:JSON.stringify({amount})});await payRequest(j.paymentRequest)}catch(e){setErr(e.message);setPaymentBusy(false)}}
 
 
- async function testLivePaymentPreview(){
-  setLivePaymentPreviewBusy(true);
-  setLivePaymentPreview(null);
-  setErr('');
+ async function testLivePaymentPreview({silent=false}={}){
+  if(!silent){
+   setLivePaymentPreviewBusy(true);
+   setErr('');
+  }
+
+  const previousBookingId=
+   livePaymentPreview?.ok
+    ?String(livePaymentPreview.bookingId||'')
+    :String(livePaymentPreview?.previousBookingId||'');
 
   try{
    const j=await api('/api/driver/customer-payment/preview');
+
+   const nextBookingId=String(j?.bookingId||'');
+
+   if(
+    previousBookingId &&
+    nextBookingId &&
+    previousBookingId!==nextBookingId
+   ){
+    setCustomerPayment(current=>{
+     if(
+      current &&
+      String(current.bookingId||'')===previousBookingId
+     ){
+      return null;
+     }
+     return current;
+    });
+   }
+
    setLivePaymentPreview(j);
+   if(j?.ok){
+    setLastLivePreview(j);
+    if(lastLivePaid && String(lastLivePaid?.payment?.bookingId||'')!==String(j.bookingId||'')){
+     setLastLivePaid(null);
+    }
+   }
   }catch(e){
+   const message=String(e?.message||'Unable to check the current booking.');
+
    setLivePaymentPreview({
     ok:false,
-    error:e.message
+    error:message,
+    previousBookingId:previousBookingId||null
    });
+
+   /*
+    * If the current booking is no longer eligible, never leave
+    * an old live-payment QR/action visible in the app.
+    */
+   if(
+    /account|no longer cash|not cash|only available for cash bookings|payment method|no active booking|no active|no longer assigned|assigned to/i.test(
+     message
+    )
+   ){
+    setCustomerPayment(current=>{
+     if(
+      current &&
+      previousBookingId &&
+      String(current.bookingId||'')===previousBookingId
+     ){
+      return null;
+     }
+     return current;
+    });
+   }
   }finally{
-   setLivePaymentPreviewBusy(false);
+   if(!silent){
+    setLivePaymentPreviewBusy(false);
+   }
   }
  }
-
 
  async function createLiveCustomerPayment(){
   if(!livePaymentPreview?.ok)return;
@@ -6540,6 +6614,51 @@ function DriverApp(){
   }catch{}
  }
 
+ useEffect(()=>{
+  if(!token || !['home','pay'].includes(driverTab))return;
+
+  let stopped=false;
+  let appListener=null;
+
+  const refresh=()=>{
+   if(stopped)return;
+   testLivePaymentPreview({silent:true});
+  };
+
+  testLivePaymentPreview({silent:driverTab==='home'});
+
+  const timer=setInterval(refresh,driverTab==='pay'?10000:30000);
+
+  if(Capacitor.isNativePlatform()){
+   App.addListener(
+    'appStateChange',
+    ({isActive})=>{
+     if(isActive)refresh();
+    }
+   ).then(handle=>{
+    appListener=handle;
+   });
+  }else{
+   const onVisibility=()=>{
+    if(document.visibilityState==='visible')refresh();
+   };
+
+   document.addEventListener('visibilitychange',onVisibility);
+
+   return()=>{
+    stopped=true;
+    clearInterval(timer);
+    document.removeEventListener('visibilitychange',onVisibility);
+   };
+  }
+
+  return()=>{
+   stopped=true;
+   clearInterval(timer);
+   appListener?.remove();
+  };
+ },[token,driverTab]);
+
  if(!token)return <div className={`driverAuthPage driverAuthV2 theme-${theme}`} style={{'--driver-text-scale':textScale}}>
   <button className="authThemeToggle" type="button" onClick={()=>setTheme(theme==='dark'?'light':'dark')} aria-label="Change appearance">{theme==='dark'?<Sun/>:<Moon/>}</button>
   <div className="driverAuthShell">
@@ -6596,6 +6715,45 @@ function DriverApp(){
  const customerPayments=me.customerPayments||[];
  const paidCustomerPayments=customerPayments.filter(x=>x.status==='paid');
  const openCustomerPayments=customerPayments.filter(x=>x.status==='open');
+
+ const matchingLivePayment=
+  livePaymentPreview?.ok
+   ?(
+     customerPayment &&
+     String(customerPayment.bookingId||'')===String(livePaymentPreview.bookingId||'')
+      ?customerPayment
+      :customerPayments.find(
+        x=>String(x.bookingId||'')===String(livePaymentPreview.bookingId||'')
+       )||null
+    )
+   :null;
+
+ const livePaymentAvailable=Boolean(
+  livePaymentPreview?.ok &&
+  !matchingLivePayment
+ );
+
+ const livePaymentReady=Boolean(
+  livePaymentPreview?.ok &&
+  matchingLivePayment?.status==='open'
+ );
+
+ const livePaymentPaid=Boolean(
+  livePaymentPreview?.ok &&
+  matchingLivePayment?.status==='paid'
+ );
+
+ const livePaymentPreviewError=String(livePaymentPreview?.error||'');
+
+ const livePaymentAccountBooking=Boolean(
+  livePaymentPreview &&
+  !livePaymentPreview.ok &&
+  /account|no longer cash|not cash|only available for cash bookings/i.test(livePaymentPreviewError)
+ );
+
+ const livePaymentPreviousBookingId=
+  livePaymentPreview?.previousBookingId||null;
+
  const feeType=me.settings?.customerPaymentFeeType||'fixed';
  const feeValue=Number(me.settings?.customerPaymentFeeValue||0);
  const fareValue=Number(customerFare||0);
@@ -6614,8 +6772,8 @@ function DriverApp(){
 
  const navItems=[
   ['home',Home,'Home'],
-  ['activity',Activity,'Activity'],
   ['pay',CreditCard,'Payments'],
+  ['activity',Activity,'Transactions'],
   ['account',UserCheck,'Account']
  ];
 
@@ -6901,155 +7059,377 @@ function DriverApp(){
 
  const EarlyPayoutCard=()=> <section className="driverCard"><div className="cardTop"><div><span className="eyebrow">EARLY PAYOUT</span><h2>Request payout</h2></div><div className="iconBubble"><ArrowUpRight/></div></div><div className="availableRow"><span>Available now</span><strong>{money(me.availableForEarlyPayout)}</strong></div>{!bankAccount.configured&&<div className="bankRequiredNotice"><Banknote/><div><b>Bank account required</b><span>Add your payout bank account before requesting money.</span></div><button type="button" className="mini" onClick={()=>changeTab('account')}>Add account</button></div>}{me.reservedForEarlyPayout>0&&<div className="reservedLine"><span>Already reserved</span><b>{money(me.reservedForEarlyPayout)}</b></div>}{me.earlyPayoutAllowed&&<div className={`cutoffNotice ${me.earlyPayoutTiming?.afterCutoff?'afterCutoff':''}`}><Clock3/><span>{me.earlyPayoutWindowMessage}</span></div>}{bankAccount.configured&&me.earlyPayoutAllowed&&me.availableForEarlyPayout>me.settings.earlyPayoutFee?<><div className="moneyInput modernMoneyInput"><span>£</span><input type="number" inputMode="decimal" step="0.01" placeholder="0.00" value={amt} onChange={e=>setAmt(e.target.value)}/></div>{amt&&Number(amt)>0&&<div className="compactPreview"><span>You receive</span><b>{money(Math.max(0,Number(amt)-me.settings.earlyPayoutFee))}</b><small>Includes {money(me.settings.earlyPayoutFee)} fee</small></div>}<button className="primary full actionButton" onClick={payout}>Request payout</button></>:!me.earlyPayoutAllowed?<div className="closed"><Clock3/><span>{me.earlyPayoutWindowMessage}</span></div>:null}</section>;
 
- const HomePage=()=> <div className="driverPageView driverHomeVNext">
-  {activePaymentPlan
-   ? PaymentPlanCard({compact:true})
-   : standardPaymentRequests.length>0
-    ? PaymentDueCard({hero:true})
-    : <section className={`driverHeroBalance balanceState-${balanceState}`}>
-      <div className="balanceMeaning"><span className="balanceMeaningLabel">{balanceTitle}</span><strong>{balanceDisplay}</strong><p>{balanceHint}</p></div>
-      <button className="balanceRefresh" type="button" onClick={()=>load(true)} aria-label="Refresh balance"><RefreshCw/></button>
-      <div className="balanceStateStrip"><span>{balance>0?'Money due to you':balance<0?'Money you need to pay':'Account clear'}</span><b>{balance>0?`${money(me.availableForEarlyPayout)} available now`:balance<0?'Will carry forward unless requested':'Up to date'}</b></div>
-      <div className="heroBalanceActions"><button type="button" onClick={()=>changeTab('pay')}><CreditCard/>Take payment</button>{balance>0&&<button type="button" onClick={()=>changeTab('pay')}><ArrowUpRight/>Early payout</button>}</div>
-      <div className="heroBalanceFoot"><span>Updated {dt(d.syncedAt)}</span><span>Callsign {d.callsign}</span></div>
-     </section>}
-  {paymentRequests.length===0&&!activePaymentPlan&&!bankAccount.configured&&<section className="driverCard bankSetupPrompt"><div className="bankSetupIcon"><Banknote/></div><div><span className="eyebrow">PAYOUT SETUP</span><h3>Add your bank account</h3><p>FaivoPay needs your bank details before we can send you a payout.</p></div><button type="button" className="primary" onClick={()=>changeTab('account')}>Set up</button></section>}
-  <div className="homeSectionTitle"><span>AT A GLANCE</span></div>
-  <div className="glanceGrid">
-   <button className="glanceCard payments" onClick={()=>changeTab('pay')}><CreditCard/><span>Take payment</span><b>QR or secure link</b><small>{openCustomerPayments.length?`${openCustomerPayments.length} link${openCustomerPayments.length===1?'':'s'} open`:'Ready when you are'}</small></button>
-   {paymentRequests.length===0&&!activePaymentPlan&&<button className="glanceCard payout" onClick={()=>changeTab('pay')}><ArrowUpRight/><span>Early payout</span><b>{money(me.availableForEarlyPayout)}</b><small>{me.earlyPayoutAllowed?'Available now':'Check payout window'}</small></button>}
-   <button className="glanceCard activity" onClick={()=>changeTab('activity')}><Activity/><span>Activity</span><b>{paidCustomerPayments.length}</b><small>Customer payments received</small></button>
-   <button className="glanceCard account" onClick={()=>changeTab('account')}><UserCheck/><span>Account</span><b>Callsign {d.callsign}</b><small>Profile, fees & alerts</small></button>
+ const routeLine=(preview)=>{
+  const pickup=String(preview?.pickup||'').trim();
+  const destination=String(preview?.destination||'').trim();
+  return {pickup,destination};
+ };
+
+ const bookingSnapshot=livePaymentPreview?.ok?livePaymentPreview:lastLivePreview;
+ const bookingRoute=routeLine(bookingSnapshot);
+ const noActiveBooking=Boolean(
+  livePaymentPreview &&
+  !livePaymentPreview.ok &&
+  /no active booking|do not currently have an active booking/i.test(livePaymentPreviewError)
+ );
+ const paidLiveView=Boolean(
+  lastLivePaid?.payment &&
+  bookingSnapshot &&
+  String(lastLivePaid.payment.bookingId||'')===String(bookingSnapshot.bookingId||'')
+ );
+ const todayKey=new Date().toISOString().slice(0,10);
+ const todaysPaidPayments=paidCustomerPayments.filter(x=>String(x.paidAt||x.createdAt||'').slice(0,10)===todayKey);
+ const todaysPaidTotal=todaysPaidPayments.reduce((sum,x)=>sum+Number(x.fareAmount||0),0);
+
+ const MockRoute=({preview})=>{
+  const {pickup,destination}=routeLine(preview);
+  if(!pickup&&!destination)return null;
+  return <div className="mockRoute">
+   {pickup&&<div><i className="mockRouteDot pickup"/><div><b>{pickup.split(',')[0]}</b><span>{pickup}</span></div></div>}
+   {destination&&<div><i className="mockRouteDot destination"/><div><b>{destination.split(',')[0]}</b><span>{destination}</span></div></div>}
+  </div>;
+ };
+
+ const HomePage=()=> <div className="driverPageView mockHomePage">
+  <div className="mockWelcome">
+   <div>
+    <h1>Good {greeting.toLowerCase()},<br/>{firstName}</h1>
+    <p>Let's keep things moving.</p>
+   </div>
   </div>
-  {pushAvailable&&!pushReady&&<section className="driverCard compactCard"><div className="compactAction"><div className="compactActionIcon"><Smartphone/></div><div><b>Turn on payment alerts</b><span>Get notified when money moves.</span></div><button className="mini" onClick={enablePush}>Enable</button></div></section>}
-  {customerPayments.length>0&&<section className="driverCard latestActivityCard"><div className="sectionHeader"><div><span className="eyebrow">LATEST</span><h2>Recent payments</h2></div><button className="linkButton" onClick={()=>changeTab('activity')}>See all</button></div>{customerPayments.slice(0,3).map(x=><div className="cleanHistoryRow" key={x.id}><div className="historyIcon"><CreditCard/></div><div className="historyMain"><b>{money(x.totalAmount)}</b><span>{x.bookingId?`Booking ${x.bookingId}`:'Customer payment'} · {dt(x.createdAt)}</span></div><Pill tone={x.status==='paid'?'good':'warn'}>{x.status}</Pill></div>)}</section>}
-  {me.notifications?.length>0&&<section className="driverCard latestActivityCard"><div className="sectionHeader"><div><span className="eyebrow">UPDATES</span><h2>Notifications</h2></div></div>{me.notifications.slice(0,2).map(n=><div className="cleanNotice" key={n.id}><div className="historyIcon"><Bell/></div><div><b>{n.title}</b><span>{n.message}</span><small>{dt(n.createdAt)}</small></div></div>)}</section>}
+
+  <button className={`mockJobStatus ${livePaymentPreview?.ok?'live':'clear'}`} type="button" onClick={()=>changeTab('pay')}>
+   <span><i/>{livePaymentPreview?.ok?'On a job':'Clear'}</span><ChevronRight/>
+  </button>
+
+  {activePaymentPlan
+   ?PaymentPlanCard({compact:true})
+   :standardPaymentRequests.length>0
+    ?PaymentDueCard({hero:true})
+    :<section className="mockWhiteCard mockEarningsCard">
+      <div className="mockCardTopLine">
+       <div><span>Today's FaivoPay payments</span><strong>{money(todaysPaidTotal)}</strong><small>{todaysPaidPayments.length} payment{todaysPaidPayments.length===1?'':'s'} received today</small></div>
+       <button type="button" onClick={()=>changeTab('activity')} aria-label="View transactions"><ChevronRight/></button>
+      </div>
+
+      <div className="mockDivider"/>
+
+      <div className="mockCurrentBooking">
+       <div className="mockInlineHead"><b>Current booking</b>{livePaymentPreview?.ok&&<span className="mockStatusTag cash">LIVE ON JOB</span>}</div>
+       {bookingSnapshot&&livePaymentPreview?.ok
+        ?<><MockRoute preview={bookingSnapshot}/><div className="mockFareLine"><span>Driver fare</span><b>{money(bookingSnapshot.fareAmount)}</b></div></>
+        :<div className="mockQuietState"><CreditCard/><div><b>No active cash booking</b><span>Payments will appear here when a cash job is available.</span></div></div>}
+      </div>
+     </section>}
+
+  {!activePaymentPlan&&standardPaymentRequests.length===0&&<section className="mockWhiteCard mockBalanceRow">
+   <div><span>{balanceTitle}</span><b>{balanceDisplay}</b><small>{balanceHint}</small></div>
+   <button type="button" onClick={()=>load(true)} aria-label="Refresh balance"><RefreshCw/></button>
+  </section>}
+
+  {paymentRequests.length===0&&!activePaymentPlan&&
+   <button className="mockWhiteCard mockActionRow" type="button" onClick={()=>changeTab('pay')}>
+    <span className="mockRoundIcon amber"><ArrowUpRight/></span>
+    <span><b>Early payout</b><small>{me.earlyPayoutAllowed?'Available now':'Check payout window'}</small></span>
+    <strong>{money(me.availableForEarlyPayout)}</strong>
+    <ChevronRight/>
+   </button>}
+
+  {!bankAccount.configured&&
+   <button className="mockWhiteCard mockActionRow" type="button" onClick={()=>changeTab('account')}>
+    <span className="mockRoundIcon blue"><Banknote/></span>
+    <span><b>Add payout bank account</b><small>Required before FaivoPay can send payouts.</small></span>
+    <ChevronRight/>
+   </button>}
+
+  {customerPayments.length>0&&<section className="mockWhiteCard mockRecentCard">
+   <div className="mockSectionHead"><div><span>RECENT</span><h2>Recent payments</h2></div><button onClick={()=>changeTab('activity')}>See all</button></div>
+   {customerPayments.slice(0,3).map(x=><div className="mockTransactionRow" key={x.id}>
+    <span className="mockRoundIcon blue"><CreditCard/></span>
+    <div><b>{x.bookingId?`Booking ${x.bookingId}`:'Customer payment'}</b><small>{dt(x.createdAt)}</small></div>
+    <strong>{money(x.totalAmount)}</strong>
+    <Pill tone={x.status==='paid'?'good':'warn'}>{x.status}</Pill>
+   </div>)}
+  </section>}
  </div>;
 
- const PayPage=()=> <div className="driverPageView">
-  <div className="pageTitle">
-   <span>PAYMENTS</span>
-   <h1>Move money</h1>
-   <p>{
-    activePaymentPlan
-     ?'View your payment plan, make the current instalment or take a passenger payment.'
-     :standardPaymentRequests.length>0
-      ?'Pay your outstanding FaivoPay balance or take a passenger payment.'
-      :'Take passenger payments or request an early payout.'
-   }</p>
-  </div>
+ const PayPage=()=>{
+  const display=bookingSnapshot;
+  const accountState=livePaymentAccountBooking&&!paidLiveView;
+  const readyPayment=livePaymentReady?matchingLivePayment:null;
+  const state=paidLiveView?'paid':readyPayment?'ready':livePaymentAvailable?'cash':accountState?'account':'empty';
 
-  {PaymentPlanCard()}
-  {PaymentDueCard({})}
+  return <div className="driverPageView mockPaymentsPage">
+   <section className={`mockPaymentSurface state-${state}`}>
+    {state==='empty'&&<div className="mockEmptyBooking">
+     <div className="mockEmptyIcon"><CreditCard/></div>
+     <h2>No active booking</h2>
+     <p>When you're on a cash booking, you'll be able to take a customer payment here.</p>
+     <button className="mockTextAction" type="button" onClick={()=>testLivePaymentPreview()}><RefreshCw/>Refresh</button>
+    </div>}
 
-  <section className="driverCard">
-   <div className="cardTop">
-    <div>
-     <span className="eyebrow">LIVE BOOKING TEST</span>
-     <h2>Payment preview</h2>
-    </div>
+    {state!=='empty'&&<>
+     <div className="mockPaymentStatusRow">
+      <span className={`mockBookingBadge ${state}`}>
+       {state==='cash'?'⚡ LIVE CASH BOOKING':state==='ready'?'🔗 PAYMENT READY':state==='paid'?'✓ PAYMENT RECEIVED':'▣ ACCOUNT BOOKING'}
+      </span>
+      <small>Booking #{display?.bookingId||livePaymentPreviousBookingId||'—'}</small>
+     </div>
+
+     {display&&<>
+      <div className="mockDriverFare">
+       <strong>{money(display?.fareAmount||lastLivePaid?.payment?.fareAmount||0)}</strong>
+       <span>Driver fare (from meter)</span>
+      </div>
+      <MockRoute preview={display}/>
+     </>}
+
+     {state==='cash'&&<>
+      <div className="mockCustomerTotal"><span>Customer pays</span><strong>{money(display?.totalAmount)}</strong><small>{money(display?.fareAmount)} journey + {money(display?.feeAmount)} FaivoPay fee</small></div>
+      <button type="button" className="mockTakePayment" disabled={customerPaymentBusy} onClick={createLiveCustomerPayment}><CreditCard/><b>{customerPaymentBusy?'Creating payment…':'Take payment'}</b></button>
+     </>}
+
+     {state==='ready'&&readyPayment&&<>
+      <div className="mockCustomerTotal"><span>Customer pays</span><strong>{money(readyPayment.totalAmount)}</strong><small>{money(readyPayment.fareAmount)} journey + {money(readyPayment.feeAmount)} FaivoPay fee</small></div>
+      <div className="mockQrBox"><QRCodeSVG value={readyPayment.paymentUrl} size={174} level="M" includeMargin/></div>
+      <button className="mockPrimaryNavy" type="button" onClick={()=>sharePayment(readyPayment)}><Send/>Share payment link</button>
+      <button className="mockOutlineAction" type="button" onClick={async()=>{try{await navigator.clipboard.writeText(readyPayment.paymentUrl);setNotice('Payment link copied.')}catch{}}}><Hash/>Copy link</button>
+     </>}
+
+     {state==='paid'&&<>
+      <div className="mockPaidPanel"><div><span>Customer paid</span><strong>{money(lastLivePaid.payment.totalAmount)}</strong><small>{money(lastLivePaid.payment.fareAmount)} journey + {money(lastLivePaid.payment.feeAmount)} FaivoPay fee</small>{lastLivePaid.payment.paidAt&&<small><Clock3/> Paid {dt(lastLivePaid.payment.paidAt)}</small>}</div><CheckCircle2/></div>
+      <button className="mockOutlineAction" type="button" onClick={()=>changeTab('activity')}><FileClock/>View transaction</button>
+      {lastLivePaid.payment.paymentUrl&&<button className="mockOutlineAction" type="button" onClick={()=>sharePayment(lastLivePaid.payment)}><Send/>Share again</button>}
+     </>}
+
+     {state==='account'&&<div className="mockAccountNotice"><Banknote/><div><b>This booking is already on account.</b><span>No customer payment required for this job.</span></div></div>}
+    </>}
+   </section>
+
+   <details className="mockSecondaryDisclosure" open={showManualPayment} onToggle={e=>setShowManualPayment(e.currentTarget.open)}>
+    <summary><CreditCard/><span><b>Manual payment</b><small>Enter a fare manually when needed.</small></span><ChevronRight/></summary>
+    <div className="mockDisclosureBody">{CustomerPaymentForm()}</div>
+   </details>
+
+   {(activePaymentPlan||standardPaymentRequests.length>0)&&<div className="mockSecondaryStack">
+    {PaymentPlanCard()}
+    {PaymentDueCard({})}
+   </div>}
+
+   {standardPaymentRequests.length===0&&!activePaymentPlan&&<div className="mockSecondaryStack">{EarlyPayoutCard()}</div>}
+  </div>;
+ };
+
+ const ActivityPage=()=>{
+  const jobs=accountWork?.jobs||[];
+  const summary=accountWork?.summary||{};
+  const showAccountWork=activityFilter==='account-work';
+  const showLedger=activityFilter==='ledger';
+  const showPayouts=activityFilter==='payouts';
+
+  return <div className="driverPageView mockTransactionsPage">
+   <div className="mockSegmented mockTransactionsTabs" role="tablist">
+    {[
+     ['account-work','Account Work'],
+     ['ledger','Office Ledger'],
+     ['payouts','Payouts']
+    ].map(([key,label])=>
+     <button
+      type="button"
+      key={key}
+      className={activityFilter===key?'active':''}
+      onClick={()=>setActivityFilter(key)}
+     >
+      {label}
+     </button>
+    )}
    </div>
 
-   <p className="compactCopy">
-    Temporary test for the current Autocab cash booking.
-   </p>
+   {showAccountWork&&<>
+    <section className="mockAccountWorkSummary">
+     <div>
+      <span>POSTED THIS WEEK</span>
+      <strong>{money(summary.totalDriverCost||0)}</strong>
+      <small>
+       {Number(summary.jobs||0)} posted {Number(summary.jobs||0)===1?'job':'jobs'}
+      </small>
+     </div>
+     <span className="mockRoundIcon indigo"><WalletCards/></span>
+    </section>
 
-   <button
-    type="button"
-    className="primary"
-    disabled={livePaymentPreviewBusy}
-    onClick={testLivePaymentPreview}
-   >
-    {livePaymentPreviewBusy
-     ?'Checking current booking...'
-     :'Test live payment preview'}
-   </button>
+    <section className="mockWhiteCard mockLedgerCard mockAccountWorkCard">
+     <div className="mockSectionHead">
+      <div>
+       <span>ACCOUNT WORK</span>
+       <h2>Posted jobs</h2>
+      </div>
+      <small>Final office-posted amounts</small>
+     </div>
 
-   {livePaymentPreview&&
-    <div style={{marginTop:16}}>
-     {livePaymentPreview.ok
-      ?<>
-        <div><b>Booking:</b> {livePaymentPreview.bookingId}</div>
-        <div><b>Status:</b> {livePaymentPreview.vehicleStatus}</div>
-        <div><b>Payment:</b> {livePaymentPreview.paymentType}</div>
-        <div><b>Driver amount:</b> {money(livePaymentPreview.fareAmount)}</div>
-        <div><b>FaivoPay fee:</b> {money(livePaymentPreview.feeAmount)}</div>
-        <div><b>Customer total:</b> {money(livePaymentPreview.totalAmount)}</div>
-       </>
-      :<div className="inlineError">
-        <AlertTriangle/>
-        {livePaymentPreview.error||'Preview failed'}
-       </div>
+     {accountWorkError&&
+      <div className="mockEmptyList">{accountWorkError}</div>
      }
 
-     {livePaymentPreview.ok&&
-      customerPayment?.paymentUrl &&
-      String(customerPayment.bookingId||'')===String(livePaymentPreview.bookingId||'')
-      ?<div className="activePaymentSheet" style={{marginTop:16}}>
-        <div className="activePaymentTop">
+     {!accountWorkError&&jobs.length===0&&
+      <div className="mockEmptyList">
+       No account work has been posted this week.
+      </div>
+     }
+
+     {!accountWorkError&&jobs.map(x=>
+      <details className="mockAccountWorkRow" key={`aw-${x.autocabDocketId}`}>
+       <summary>
+        <span className="mockRoundIcon blue"><Banknote/></span>
+
+        <span className="mockAccountWorkMain">
+         <b>Booking {x.bookingId}</b>
+         <span>{x.accountName||x.accountCode||'Account job'}</span>
+         <small>{dt(x.completedAt||x.postedAt)}</small>
+        </span>
+
+        <span className="mockAccountWorkAmount">
+         <strong>{money(x.driverCost)}</strong>
+         <ChevronRight/>
+        </span>
+       </summary>
+
+       <div className="mockAccountWorkDetail">
+        <div className="mockJourney">
          <div>
-          <span>PAYMENT READY</span>
-          <strong>{money(customerPayment.totalAmount)}</strong>
-          <small>Booking {customerPayment.bookingId}</small>
+          <span>Pickup</span>
+          <b>{x.pickup||'Not recorded'}</b>
          </div>
-         <Pill tone="warn">Awaiting</Pill>
+         <div>
+          <span>Destination</span>
+          <b>{x.destination||'Not recorded'}</b>
+         </div>
         </div>
 
-        <div className="qrPanel">
-         <QRCodeSVG
-          value={customerPayment.paymentUrl}
-          size={210}
-          level="M"
-          includeMargin
-         />
-         <b>Scan to pay</b>
-         <span>Secure FaivoPay payment</span>
+        <div className="mockAccountWorkBreakdown">
+         <div>
+          <span>Paid to you</span>
+          <strong>{money(x.driverCost)}</strong>
+         </div>
+
+         {Number(x.fare||0)>0&&
+          <div>
+           <span>Fare</span>
+           <b>{money(x.fare)}</b>
+          </div>
+         }
+
+         {Number(x.waitingTimeCost||0)>0&&
+          <div>
+           <span>Waiting</span>
+           <b>{money(x.waitingTimeCost)}</b>
+          </div>
+         }
+
+         {Number(x.extraCost||0)>0&&
+          <div>
+           <span>Extras</span>
+           <b>{money(x.extraCost)}</b>
+          </div>
+         }
         </div>
 
-        <div className="paymentActions">
-         <button
-          className="primary"
-          type="button"
-          onClick={()=>window.open(customerPayment.paymentUrl,'_blank')}
-         >
-          Open payment link
-         </button>
+        <div className="mockAccountWorkMeta">
+         <div>
+          <span>Docket</span>
+          <b>{x.docketNumber||'—'}</b>
+         </div>
+         <div>
+          <span>Posted</span>
+          <b>{dt(x.postedAt)}</b>
+         </div>
+         {x.accountCode&&
+          <div>
+           <span>Account code</span>
+           <b>{x.accountCode}</b>
+          </div>
+         }
+        </div>
 
-         <button
-          className="outline"
-          type="button"
-          onClick={()=>sharePayment(customerPayment)}
-         >
-          Share link
-         </button>
+        <div className="mockAccountWorkNote">
+         <ShieldCheck/>
+         <span>
+          This is the final amount posted by the office. Waiting and extras shown above
+          are included for information and are not added again.
+         </span>
         </div>
        </div>
-      :livePaymentPreview.ok&&
-       <button
-        type="button"
-        className="primary full actionButton"
-        style={{marginTop:16}}
-        disabled={customerPaymentBusy}
-        onClick={createLiveCustomerPayment}
-       >
-        {customerPaymentBusy
-         ?'Creating payment...'
-         :'Create live payment'}
-       </button>
+      </details>
+     )}
+    </section>
+   </>}
+
+   {showLedger&&
+    <section className="mockWhiteCard mockLedgerCard">
+     <div className="mockSectionHead">
+      <div>
+       <span>FAIVOPAY</span>
+       <h2>Office ledger</h2>
+      </div>
+     </div>
+
+     {(me.ledger||[]).length===0
+      ?<div className="mockEmptyList">No office account activity recorded yet.</div>
+      :(me.ledger||[]).slice(0,30).map(x=>
+       <div className="mockTransactionRow" key={`lg-${x.id}`}>
+        <span className="mockRoundIcon slate"><WalletCards/></span>
+        <div>
+         <b>{x.description}</b>
+         <small>
+          {dt(x.createdAt)}
+          {x.feeAmount>0?` · Fee ${money(x.feeAmount)}`:''}
+         </small>
+        </div>
+        <strong className={x.direction==='credit'?'mockPos':'mockNeg'}>
+         {x.direction==='credit'?'+':'-'}{money(x.amount)}
+        </strong>
+       </div>
+      )
      }
-    </div>
+    </section>
    }
-  </section>
 
-  {CustomerPaymentForm()}
+   {showPayouts&&
+    <section className="mockWhiteCard mockLedgerCard">
+     <div className="mockSectionHead">
+      <div>
+       <span>PAYOUTS</span>
+       <h2>Payout history</h2>
+      </div>
+     </div>
 
-  {standardPaymentRequests.length===0&&
-   !activePaymentPlan&&
-   EarlyPayoutCard()
-  }
- </div>;
-
- const ActivityPage=()=> <div className="driverPageView"><div className="pageTitle"><span>ACTIVITY</span><h1>Your history</h1><p>Customer payments, FaivoPay fees and payout requests.</p></div><section className="activitySummary"><div><span>Customer payments</span><b>{paidCustomerPayments.length}</b></div><div><span>Open links</span><b>{openCustomerPayments.length}</b></div></section><section className="driverCard activityCard"><div className="sectionHeader"><div><span className="eyebrow">CUSTOMER PAYMENTS</span><h2>Payment history</h2></div></div>{customerPayments.length===0?<div className="emptyState">No customer payments yet.</div>:customerPayments.map(x=><div className="cleanHistoryRow" key={x.id}><div className="historyIcon"><CreditCard/></div><div className="historyMain"><b>{money(x.totalAmount)}</b><span>{money(x.fareAmount)} fare{Number(x.feeAmount)>0?` + ${money(x.feeAmount)} fee`:''}</span><small>{x.bookingId?`Booking ${x.bookingId} · `:''}{dt(x.createdAt)}</small>{x.status==='open'&&x.paymentUrl&&<div className="inlineActions"><button onClick={()=>window.open(x.paymentUrl,'_blank')}>Open</button><button onClick={()=>sharePayment(x)}>Share</button></div>}</div><Pill tone={x.status==='paid'?'good':'warn'}>{x.status}</Pill></div>)}</section><section className="driverCard activityCard"><div className="sectionHeader"><div><span className="eyebrow">FAIVOPAY</span><h2>Payments & fees</h2></div></div>{me.ledger?.length===0?<div className="emptyState">No account activity recorded yet.</div>:me.ledger?.slice(0,20).map(x=><div className="cleanHistoryRow" key={x.id}><div className="historyIcon"><WalletCards/></div><div className="historyMain"><b>{x.description}</b><span>{dt(x.createdAt)}{x.feeAmount>0?` · Fee ${money(x.feeAmount)}`:''}</span></div><div className={`historyAmount ${x.direction==='credit'?'pos':'neg'}`}><b>{x.direction==='credit'?'+':'-'}{money(x.amount)}</b><small>{x.status}</small></div></div>)}</section>{me.earlyPayoutRequests?.length>0&&<section className="driverCard activityCard"><div className="sectionHeader"><div><span className="eyebrow">PAYOUTS</span><h2>Request history</h2></div></div>{me.earlyPayoutRequests.slice(0,15).map(x=><div className="cleanHistoryRow" key={x.id}><div className="historyIcon"><ArrowUpRight/></div><div className="historyMain"><b>{money(x.netAmount)}</b><span>{dt(x.createdAt)}{x.declineReason?` · ${x.declineReason}`:''}</span></div><Pill tone={x.status==='approved'||x.status==='paid'?'good':x.status==='declined'?'warn':'neutral'}>{x.status}</Pill></div>)}</section>}</div>;
+     {(me.earlyPayoutRequests||[]).length===0
+      ?<div className="mockEmptyList">No payout requests yet.</div>
+      :(me.earlyPayoutRequests||[]).slice(0,20).map(x=>
+       <div className="mockTransactionRow" key={`po-${x.id}`}>
+        <span className="mockRoundIcon amber"><ArrowUpRight/></span>
+        <div>
+         <b>{money(x.netAmount)}</b>
+         <small>
+          {dt(x.createdAt)}
+          {x.declineReason?` · ${x.declineReason}`:''}
+         </small>
+        </div>
+        <Pill tone={
+         x.status==='approved'||x.status==='paid'
+          ?'good'
+          :x.status==='declined'
+           ?'bad'
+           :'neutral'
+        }>
+         {x.status}
+        </Pill>
+       </div>
+      )
+     }
+    </section>
+   }
+  </div>;
+ };
 
  const BankAccountCard=()=> <section className={`driverCard bankAccountCard ${bankAccount.configured?'configured':'missing'}`}>
   <div className="sectionHeader bankSectionHeader"><div><span className="eyebrow">PAYOUT BANK ACCOUNT</span><h2>{bankAccount.configured?'Bank account saved':'Add payout account'}</h2></div><div className="iconBubble"><Banknote/></div></div>
@@ -7059,9 +7439,68 @@ function DriverApp(){
   {bankAccount.configured&&<small className="bankUpdated">Last changed {dt(bankAccount.updatedAt)}</small>}
  </section>;
 
- const AccountPage=()=> <div className="driverPageView"><div className="pageTitle"><span>ACCOUNT</span><h1>{d.fullName}</h1><p>Callsign {d.callsign}</p></div><section className="driverCard profileCard"><div className="profileHero"><div className="profileAvatar">{firstName[0]}{(d.surname||'')[0]||''}</div><div><b>{d.fullName}</b><span>Driver · Callsign {d.callsign}</span></div></div><div className="profileRows"><div><span>Email</span><b>{d.email||f.email||'Not available'}</b></div><div><span>Mobile</span><b>{d.mobile||'Not available'}</b></div><div><span>Last FaivoPay sync</span><b>{dt(d.syncedAt)}</b></div></div></section>{BankAccountCard()}<section className="driverCard"><div className="sectionHeader"><div><span className="eyebrow">FEES</span><h2>Your FaivoPay fees</h2></div></div><div className="feeRows"><div><span>Weekly app fee</span><b>{money(me.settings.weeklyAppFee)}</b></div><div><span>Early payout fee</span><b>{money(me.settings.earlyPayoutFee)}</b></div><div><span>Customer service fee</span><b>{feeType==='percentage'?`${feeValue}%`:money(feeValue)}</b></div></div></section>{pushAvailable&&<section className="driverCard"><div className="compactAction"><div className="compactActionIcon"><Smartphone/></div><div><b>Payment alerts</b><span>{pushReady?'Notifications are enabled.':'Get updates about payments and payouts.'}</span></div>{!pushReady&&<button className="mini" onClick={enablePush}>Enable</button>}{pushReady&&<Pill tone="good">On</Pill>}</div></section>}<section className="driverCard appearanceCard"><div className="sectionHeader"><div><span className="eyebrow">APPEARANCE</span><h2>Display</h2></div></div><div className="themeOptions"><button className={theme==='light'?'active':''} onClick={()=>setTheme('light')}><Sun/><span><b>Light</b><small>Bright and clean</small></span></button><button className={theme==='dark'?'active':''} onClick={()=>setTheme('dark')}><Moon/><span><b>Dark</b><small>Low-light friendly</small></span></button></div><div className="textSizeControl"><div className="textSizeHead"><div><b>Text size</b><span>Adjusts app text without changing the layout.</span></div><strong>{Math.round(textScale*100)}%</strong></div><div className="textSizeSliderRow"><span className="textSizeSmall">A</span><input aria-label="Text size" type="range" min="0.9" max="1.5" step="0.05" value={textScale} onChange={e=>setTextScale(Number(e.target.value))}/><span className="textSizeLarge">A</span></div><div className="textSizePresets" aria-label="Text size presets"><button type="button" className={textScale===0.9?'active':''} onClick={()=>setTextScale(0.9)}>Small</button><button type="button" className={textScale===1?'active':''} onClick={()=>setTextScale(1)}>Standard</button><button type="button" className={textScale===1.2?'active':''} onClick={()=>setTextScale(1.2)}>Large</button><button type="button" className={textScale===1.35?'active':''} onClick={()=>setTextScale(1.35)}>Extra Large</button><button type="button" className={textScale===1.5?'active':''} onClick={()=>setTextScale(1.5)}>Accessibility</button></div><button type="button" className="textSizeReset" onClick={()=>setTextScale(1)}>Reset to standard</button></div></section><button className="accountSignOut" onClick={logout}><LogOut/>Sign out</button><div className="driverFooter">FaivoPay · Secure driver payments</div></div>;
+ const AccountPage=()=> <div className="driverPageView mockAccountPage">
+  <section className="mockWhiteCard mockProfileSummary">
+   <div className="mockProfileAvatar">{firstName[0]}{(d.surname||'')[0]||''}</div>
+   <div><b>{d.fullName}</b><span>Driver ID: {d.callsign}</span></div>
+   <ChevronRight/>
+  </section>
 
- return <div className={`driverApp modernDriverApp driverVNext theme-${theme}`} style={{'--driver-text-scale':textScale}}><header className="driverHeader modernDriverHeader driverVNextHeader"><div className="driverBrandMark"><img src={faivopayMark} alt=""/></div><div className="driverIdentity"><div className="driverAvatar">{firstName[0]}{(d.surname||'')[0]||''}</div><div><span>FAIVOPAY · {d.callsign}</span><b>{driverTab==='home'?`${greeting}, ${firstName}`:driverTab==='activity'?'Activity':driverTab==='pay'?'Payments':'Account'}</b></div></div><div className="driverHeaderActions"><button className="headerRefresh" type="button" onClick={()=>load(true)} aria-label="Refresh"><RefreshCw/></button><button className="headerBell" type="button" onClick={()=>changeTab('activity')} aria-label="Notifications"><Bell/>{me.notifications?.length>0&&<i/>}</button></div></header><main className="modernDriverMain">{notice&&<div className="driverNotice floatingNotice"><CheckCircle2/><span>{notice}</span><button onClick={()=>setNotice('')}><X/></button></div>}{err&&<div className="inlineError driverGlobalError"><AlertTriangle/>{err}</div>}{driverTab==='home'&&HomePage()}{driverTab==='pay'&&PayPage()}{driverTab==='activity'&&ActivityPage()}{driverTab==='account'&&AccountPage()}</main><nav className="driverBottomNav" aria-label="Driver navigation">{navItems.map(([key,Icon,label])=><button key={key} className={driverTab===key?'active':''} onClick={()=>changeTab(key)}><Icon/><span>{label}</span>{key==='pay'&&(openCustomerPayments.length+paymentRequests.length)>0&&<i>{openCustomerPayments.length+paymentRequests.length}</i>}</button>)}</nav></div>;
+  <details className="mockAccountDisclosure">
+   <summary><span className="mockRoundIcon indigo"><Banknote/></span><span><b>Bank account & payouts</b><small>Manage your bank details and early payouts</small></span><ChevronRight/></summary>
+   <div className="mockDisclosureBody">{BankAccountCard()}<div className="mockAccountInner">{EarlyPayoutCard()}</div></div>
+  </details>
+
+  <details className="mockAccountDisclosure">
+   <summary><span className="mockRoundIcon blue"><Settings/></span><span><b>App preferences</b><small>Notifications, appearance and app settings</small></span><ChevronRight/></summary>
+   <div className="mockDisclosureBody">
+    {pushAvailable&&<section className="driverCard"><div className="compactAction"><div className="compactActionIcon"><Smartphone/></div><div><b>Payment alerts</b><span>{pushReady?'Notifications are enabled.':'Get updates about payments and payouts.'}</span></div>{!pushReady&&<button className="mini" onClick={enablePush}>Enable</button>}{pushReady&&<Pill tone="good">On</Pill>}</div></section>}
+    <section className="driverCard appearanceCard"><div className="sectionHeader"><div><span className="eyebrow">APPEARANCE</span><h2>Display</h2></div></div><div className="themeOptions"><button className={theme==='light'?'active':''} onClick={()=>setTheme('light')}><Sun/><span><b>Light</b><small>Bright and clean</small></span></button><button className={theme==='dark'?'active':''} onClick={()=>setTheme('dark')}><Moon/><span><b>Dark</b><small>Low-light friendly</small></span></button></div><div className="textSizeControl"><div className="textSizeHead"><div><b>Text size</b><span>Adjusts app text without changing the layout.</span></div><strong>{Math.round(textScale*100)}%</strong></div><div className="textSizeSliderRow"><span className="textSizeSmall">A</span><input aria-label="Text size" type="range" min="0.9" max="1.5" step="0.05" value={textScale} onChange={e=>setTextScale(Number(e.target.value))}/><span className="textSizeLarge">A</span></div><div className="textSizePresets" aria-label="Text size presets"><button type="button" className={textScale===0.9?'active':''} onClick={()=>setTextScale(0.9)}>Small</button><button type="button" className={textScale===1?'active':''} onClick={()=>setTextScale(1)}>Standard</button><button type="button" className={textScale===1.2?'active':''} onClick={()=>setTextScale(1.2)}>Large</button><button type="button" className={textScale===1.35?'active':''} onClick={()=>setTextScale(1.35)}>Extra Large</button><button type="button" className={textScale===1.5?'active':''} onClick={()=>setTextScale(1.5)}>Accessibility</button></div><button type="button" className="textSizeReset" onClick={()=>setTextScale(1)}>Reset to standard</button></div></section>
+    <section className="driverCard"><div className="sectionHeader"><div><span className="eyebrow">FEES</span><h2>Your FaivoPay fees</h2></div></div><div className="feeRows"><div><span>Weekly app fee</span><b>{money(me.settings.weeklyAppFee)}</b></div><div><span>Early payout fee</span><b>{money(me.settings.earlyPayoutFee)}</b></div><div><span>Customer service fee</span><b>{feeType==='percentage'?`${feeValue}%`:money(feeValue)}</b></div></div></section>
+   </div>
+  </details>
+
+  <details className="mockAccountDisclosure">
+   <summary><span className="mockRoundIcon blue"><Info/></span><span><b>Help & support</b><small>FAQs, support and driver information</small></span><ChevronRight/></summary>
+   <div className="mockDisclosureText"><p>For help with your FaivoPay driver account, payments, payouts or payment plan, contact your operator support team.</p></div>
+  </details>
+
+  <details className="mockAccountDisclosure">
+   <summary><span className="mockRoundIcon blue"><Info/></span><span><b>About FaivoPay</b><small>Secure driver and customer payments</small></span><ChevronRight/></summary>
+   <div className="mockDisclosureText"><p>FaivoPay securely manages driver balances, customer card payments, payouts and payment-plan activity.</p><small>Last sync {dt(d.syncedAt)}</small></div>
+  </details>
+
+  <button className="mockLogoutRow" type="button" onClick={logout}><LogOut/><span>Log out</span></button>
+ </div>;
+
+ return <div className={`driverApp modernDriverApp driverVNext mockDriverApp theme-${theme}`} style={{'--driver-text-scale':textScale}}>
+  <header className="mockAppHeader">
+   <div className="mockHeaderTop">
+    <div className="mockWordmark">Faivo<span>Pay</span></div>
+    <button className="mockHeaderBell" type="button" onClick={()=>changeTab('activity')} aria-label="Notifications"><Bell/>{me.notifications?.length>0&&<i/>}</button>
+   </div>
+   <div className="mockHeaderTitle">
+    <h1>{driverTab==='home'?`${greeting}, ${firstName}`:driverTab==='activity'?'Transactions':driverTab==='pay'?'Payments':'Account'}</h1>
+    {driverTab!=='home'&&<button type="button" onClick={()=>load(true)} aria-label="Refresh"><RefreshCw/></button>}
+   </div>
+  </header>
+
+  <main className="modernDriverMain mockDriverMain">
+   {notice&&<div className="driverNotice floatingNotice"><CheckCircle2/><span>{notice}</span><button onClick={()=>setNotice('')}><X/></button></div>}
+   {err&&<div className="inlineError driverGlobalError"><AlertTriangle/>{err}</div>}
+   {driverTab==='home'&&HomePage()}
+   {driverTab==='pay'&&PayPage()}
+   {driverTab==='activity'&&ActivityPage()}
+   {driverTab==='account'&&AccountPage()}
+  </main>
+
+  <nav className="driverBottomNav mockBottomNav" aria-label="Driver navigation">
+   {navItems.map(([key,Icon,label])=><button key={key} className={driverTab===key?'active':''} onClick={()=>changeTab(key)}>
+    <span className="mockNavIcon"><Icon/>{key==='pay'&&livePaymentAvailable&&<i className="livePayPulse" aria-label="Customer payment available"/>}{key==='pay'&&!livePaymentAvailable&&paymentRequests.length>0&&<i className="mockNavCount">{paymentRequests.length}</i>}</span>
+    <span>{label}</span>
+   </button>)}
+  </nav>
+ </div>;
 }
 
 
