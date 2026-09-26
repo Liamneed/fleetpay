@@ -3480,6 +3480,7 @@ app.get('/api/admin/twilio/balance',adminAuth,async(req,res)=>{
 
 app.get('/api/health',(_q,res)=>res.json({ok:true,configured:Boolean(getAutocabApiKey()),database:'sqlite',databasePath:'data/fleetpay.sqlite'}));
 ensureBootstrapAdmin();
+ensureDefaultCompany();
 
 app.post('/api/admin/login',(req,res)=>{
  const email=safeEmail(req.body.email),pass=String(req.body.password||''),u=db.prepare('SELECT * FROM staff_users WHERE email=?').get(email);
