@@ -19,6 +19,7 @@ const COMPANY_IDS = String(process.env.AUTOCAB_COMPANY_IDS || process.env.AUTOCA
   .filter(Number.isFinite);
 const BASE_URL = 'https://autocab-api.azure-api.net';
 const TOKEN_SECRET = process.env.PORTAL_TOKEN_SECRET || 'change-me-in-production';
+const SETTINGS_ENCRYPTION_SECRET = process.env.SETTINGS_ENCRYPTION_KEY || TOKEN_SECRET;
 const ADMIN_EMAIL = String(process.env.ADMIN_EMAIL || 'admin@fleetpay.local').toLowerCase();
 const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || 'ChangeMe123!');
 const APP_ENV_LABEL = String(process.env.APP_ENV_LABEL || 'LOCAL').trim().toUpperCase();
@@ -358,7 +359,50 @@ CREATE TABLE IF NOT EXISTS staff_users (
  last_login_at TEXT
 );
 
+
 CREATE INDEX IF NOT EXISTS idx_staff_email ON staff_users(email);
+
+CREATE TABLE IF NOT EXISTS platform_admins (
+ staff_id TEXT PRIMARY KEY,
+ granted_at TEXT NOT NULL,
+ granted_by TEXT NOT NULL DEFAULT 'bootstrap',
+ FOREIGN KEY(staff_id) REFERENCES staff_users(id)
+);
+
+CREATE TABLE IF NOT EXISTS companies (
+ id TEXT PRIMARY KEY,
+ name TEXT NOT NULL,
+ slug TEXT NOT NULL UNIQUE,
+ status TEXT NOT NULL DEFAULT 'draft',
+ primary_domain TEXT,
+ support_email TEXT,
+ support_phone TEXT,
+ timezone TEXT NOT NULL DEFAULT 'Europe/London',
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS company_settings (
+ company_id TEXT NOT NULL,
+ key TEXT NOT NULL,
+ value TEXT NOT NULL,
+ updated_at TEXT NOT NULL,
+ PRIMARY KEY(company_id,key),
+ FOREIGN KEY(company_id) REFERENCES companies(id)
+);
+
+CREATE TABLE IF NOT EXISTS company_secure_settings (
+ company_id TEXT NOT NULL,
+ key TEXT NOT NULL,
+ value_enc TEXT NOT NULL,
+ updated_at TEXT NOT NULL,
+ PRIMARY KEY(company_id,key),
+ FOREIGN KEY(company_id) REFERENCES companies(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_companies_status ON companies(status);
+CREATE INDEX IF NOT EXISTS idx_company_settings_company ON company_settings(company_id);
+
 
 CREATE TABLE IF NOT EXISTS secure_settings (
  key TEXT PRIMARY KEY,
@@ -2261,20 +2305,36 @@ function setSettings(obj){
 }
 function id(prefix){return `${prefix}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`}
 
-const SECURE_KEY=crypto.createHash('sha256').update(String(TOKEN_SECRET)).digest();
-function encryptSecret(value){
- const iv=crypto.randomBytes(12),cipher=crypto.createCipheriv('aes-256-gcm',SECURE_KEY,iv);
+const SECURE_KEY=crypto.createHash('sha256').update(String(SETTINGS_ENCRYPTION_SECRET)).digest();
+const LEGACY_SECURE_KEY=crypto.createHash('sha256').update(String(TOKEN_SECRET)).digest();
+
+function encryptSecretWithKey(value,key){
+ const iv=crypto.randomBytes(12),cipher=crypto.createCipheriv('aes-256-gcm',key,iv);
  const encrypted=Buffer.concat([cipher.update(String(value||''),'utf8'),cipher.final()]),tag=cipher.getAuthTag();
  return `${iv.toString('base64url')}.${tag.toString('base64url')}.${encrypted.toString('base64url')}`;
 }
+function decryptSecretWithKey(value,key){
+ try{
+  const [a,b,c]=String(value||'').split('.');
+  if(!a||!b||!c)return '';
+  const decipher=crypto.createDecipheriv('aes-256-gcm',key,Buffer.from(a,'base64url'));
+  decipher.setAuthTag(Buffer.from(b,'base64url'));
+  return Buffer.concat([decipher.update(Buffer.from(c,'base64url')),decipher.final()]).toString('utf8');
+ }catch{return ''}
+}
+function encryptSecret(value){return encryptSecretWithKey(value,SECURE_KEY)}
 function decryptSecret(value){
- try{const [a,b,c]=String(value||'').split('.');if(!a||!b||!c)return '';const decipher=crypto.createDecipheriv('aes-256-gcm',SECURE_KEY,Buffer.from(a,'base64url'));decipher.setAuthTag(Buffer.from(b,'base64url'));return Buffer.concat([decipher.update(Buffer.from(c,'base64url')),decipher.final()]).toString('utf8')}catch{return ''}
+ const current=decryptSecretWithKey(value,SECURE_KEY);
+ if(current)return current;
+ if(!SECURE_KEY.equals(LEGACY_SECURE_KEY))return decryptSecretWithKey(value,LEGACY_SECURE_KEY);
+ return '';
 }
 function setSecureSetting(key,value){
  if(value===undefined||value===null||value==='')return;
  db.prepare('INSERT INTO secure_settings(key,value_enc,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value_enc=excluded.value_enc,updated_at=excluded.updated_at').run(key,encryptSecret(value),new Date().toISOString());
 }
 function getSecureSetting(key){const r=db.prepare('SELECT value_enc FROM secure_settings WHERE key=?').get(key);return r?decryptSecret(r.value_enc):''}
+
 function templateText(input,vars={}){return String(input||'').replace(/\{([a-zA-Z0-9_]+)\}/g,(_,k)=>vars[k]??'')}
 function dateTimeVars(extra={}){const now=new Date();return {date:new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/London',day:'2-digit',month:'2-digit',year:'numeric'}).format(now),time:new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/London',hour:'2-digit',minute:'2-digit',hour12:false}).format(now),...extra}}
 function feeSplitPercent(type,settings=getSettings()){
@@ -2309,7 +2369,16 @@ function totpCode(secret,time=Date.now(),stepOffset=0){
 }
 function verifyTotp(secret,code){const c=String(code||'').replace(/\D/g,'');if(c.length!==6)return false;return [-1,0,1].some(o=>{const expected=totpCode(secret,Date.now(),o);return crypto.timingSafeEqual(Buffer.from(expected),Buffer.from(c))})}
 function newMfaSecret(){return base32Encode(crypto.randomBytes(20))}
-function staffSafe(u){return {id:u.id,email:u.email,name:u.name,role:u.role,mfaEnabled:Boolean(u.mfa_enabled),active:Boolean(u.active),createdAt:u.created_at,updatedAt:u.updated_at,lastLoginAt:u.last_login_at}}
+function isPlatformAdmin(staffId){
+ if(!staffId)return false;
+ return Boolean(db.prepare('SELECT 1 FROM platform_admins WHERE staff_id=?').get(staffId));
+}
+function ensurePlatformAdminGrant(staffId,grantedBy='bootstrap'){
+ if(!staffId)return;
+ db.prepare('INSERT OR IGNORE INTO platform_admins(staff_id,granted_at,granted_by) VALUES(?,?,?)')
+  .run(staffId,new Date().toISOString(),grantedBy);
+}
+function staffSafe(u){return {id:u.id,email:u.email,name:u.name,role:u.role,platformAdmin:isPlatformAdmin(u.id),mfaEnabled:Boolean(u.mfa_enabled),active:Boolean(u.active),createdAt:u.created_at,updatedAt:u.updated_at,lastLoginAt:u.last_login_at}}
 function makeOtpAuth(email,secret){
  const issuer=`FaivoPay ${APP_ENV_LABEL}`;
  const label=`${issuer}:${email}`;
@@ -2317,9 +2386,15 @@ function makeOtpAuth(email,secret){
 }
 function ensureBootstrapAdmin(){
  const email=safeEmail(ADMIN_EMAIL);if(!email||!ADMIN_PASSWORD)return;
- const existing=db.prepare('SELECT id FROM staff_users WHERE email=?').get(email);if(existing)return;
- const hp=hashPassword(ADMIN_PASSWORD),now=new Date().toISOString();
- db.prepare('INSERT INTO staff_users(id,email,name,role,password_hash,password_salt,mfa_enabled,active,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id('staff'),email,'FaivoPay Administrator','administrator',hp.hash,hp.salt,0,1,now,now);
+ const existing=db.prepare('SELECT id FROM staff_users WHERE email=?').get(email);
+ if(existing){
+  ensurePlatformAdminGrant(existing.id,'bootstrap');
+  return;
+ }
+ const hp=hashPassword(ADMIN_PASSWORD),now=new Date().toISOString(),staffId=id('staff');
+ db.prepare('INSERT INTO staff_users(id,email,name,role,password_hash,password_salt,mfa_enabled,active,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)')
+  .run(staffId,email,'FaivoPay Administrator','administrator',hp.hash,hp.salt,0,1,now,now);
+ ensurePlatformAdminGrant(staffId,'bootstrap');
 }
 
 function signToken(payload,hours=24*30){const body=Buffer.from(JSON.stringify({...payload,exp:Date.now()+hours*3600000})).toString('base64url');const sig=crypto.createHmac('sha256',TOKEN_SECRET).update(body).digest('base64url');return `${body}.${sig}`}
@@ -2328,6 +2403,82 @@ function bearer(req){return String(req.headers.authorization||'').replace(/^Bear
 function adminAuth(req,res,next){const p=verifyToken(bearer(req));if(p?.role!=='admin'||p?.mfa!==true)return res.status(401).json({error:'Office authentication required'});req.auth=p;next()}
 const staffRoleRank={readonly:1,office:2,finance:3,administrator:4};
 function requireStaffRole(...roles){return (req,res,next)=>{if(!roles.includes(req.auth?.staffRole))return res.status(403).json({error:'You do not have permission for this action'});next()}}
+
+function requirePlatformAdmin(req,res,next){
+ const u=req.auth?.staffId?db.prepare('SELECT id,active,role FROM staff_users WHERE id=?').get(req.auth.staffId):null;
+ if(!u||!u.active||u.role!=='administrator'||!isPlatformAdmin(u.id)){
+  return res.status(403).json({error:'Platform Administrator access is required'});
+ }
+ next();
+}
+
+function companySlug(value){
+ return String(value||'company').toLowerCase().trim()
+  .replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,80)||'company';
+}
+function companyPublic(row){
+ if(!row)return null;
+ return {
+  id:row.id,
+  name:row.name,
+  slug:row.slug,
+  status:row.status,
+  primaryDomain:row.primary_domain||'',
+  supportEmail:row.support_email||'',
+  supportPhone:row.support_phone||'',
+  timezone:row.timezone||'Europe/London',
+  createdAt:row.created_at,
+  updatedAt:row.updated_at
+ };
+}
+function getCompanySetting(companyId,key,fallback=''){
+ const r=db.prepare('SELECT value FROM company_settings WHERE company_id=? AND key=?').get(companyId,key);
+ if(!r)return fallback;
+ try{return JSON.parse(r.value)}catch{return r.value}
+}
+function setCompanySetting(companyId,key,value){
+ db.prepare(`INSERT INTO company_settings(company_id,key,value,updated_at)
+ VALUES(?,?,?,?)
+ ON CONFLICT(company_id,key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`)
+  .run(companyId,key,JSON.stringify(value),new Date().toISOString());
+}
+function getCompanySecureSetting(companyId,key){
+ const r=db.prepare('SELECT value_enc FROM company_secure_settings WHERE company_id=? AND key=?').get(companyId,key);
+ return r?decryptSecret(r.value_enc):'';
+}
+function setCompanySecureSetting(companyId,key,value){
+ if(value===undefined||value===null||String(value)==='')return;
+ db.prepare(`INSERT INTO company_secure_settings(company_id,key,value_enc,updated_at)
+ VALUES(?,?,?,?)
+ ON CONFLICT(company_id,key) DO UPDATE SET value_enc=excluded.value_enc,updated_at=excluded.updated_at`)
+  .run(companyId,key,encryptSecret(value),new Date().toISOString());
+}
+function companySecretConfigured(companyId,key){
+ return Boolean(db.prepare('SELECT 1 FROM company_secure_settings WHERE company_id=? AND key=?').get(companyId,key));
+}
+function ensureDefaultCompany(){
+ const count=Number(db.prepare('SELECT COUNT(*) count FROM companies').get()?.count||0);
+ if(count)return;
+ const settings=getSettings(),now=new Date().toISOString();
+ let domain='';
+ try{domain=new URL(PUBLIC_BASE_URL).hostname}catch{}
+ const name=String(settings.companyName||'Need-A-Cab').trim()||'Need-A-Cab';
+ db.prepare(`INSERT INTO companies(
+  id,name,slug,status,primary_domain,support_email,support_phone,timezone,created_at,updated_at
+ ) VALUES(?,?,?,?,?,?,?,?,?,?)`).run(
+  'company_primary',
+  name,
+  companySlug(name),
+  'active',
+  domain,
+  safeEmail(settings.officeNotificationEmail||ADMIN_EMAIL),
+  '',
+  'Europe/London',
+  now,
+  now
+ );
+}
+
 function driverAuth(req,res,next){const p=verifyToken(bearer(req));if(!p?.driverId)return res.status(401).json({error:'Authentication required'});req.auth=p;next()}
 function audit(req,actorType,actorId,action,entityType=null,entityId=null,details={}){let displayActor=String(actorId||'');if(actorType==='driver'){const d=cachedDriver(Number(actorId));if(d?.callsign)displayActor=d.callsign}db.prepare('INSERT INTO audit_logs(created_at,actor_type,actor_id,action,entity_type,entity_id,details_json,ip) VALUES(?,?,?,?,?,?,?,?)').run(new Date().toISOString(),actorType,displayActor,action,entityType,entityId?String(entityId):null,JSON.stringify(details||{}),req?.ip||'')}
 
@@ -3285,6 +3436,56 @@ app.post('/api/admin/mfa/recovery/complete',(req,res)=>{
  db.prepare('DELETE FROM auth_challenges WHERE id=?').run(c.id);
  audit(req,'staff',u.email,'office_mfa_recovery_completed','staff_user',u.id);
  res.json({mfaSetupRequired:true,setupToken:signToken({role:'admin_mfa_setup',staffId:u.id,email:u.email},0.17),secret,otpauthUri:makeOtpAuth(u.email,secret),staff:staffSafe({...u,mfa_secret:secret,mfa_enabled:0})});
+});
+
+
+app.get('/api/admin/platform/companies',adminAuth,requirePlatformAdmin,(req,res)=>{
+ ensureDefaultCompany();
+ const companies=db.prepare('SELECT * FROM companies ORDER BY created_at,name').all().map(companyPublic);
+ res.json({companies});
+});
+
+app.get('/api/admin/platform/companies/:id',adminAuth,requirePlatformAdmin,(req,res)=>{
+ ensureDefaultCompany();
+ const row=db.prepare('SELECT * FROM companies WHERE id=?').get(req.params.id);
+ if(!row)return res.status(404).json({error:'Company not found'});
+ res.json({
+  company:companyPublic(row),
+  integrations:{
+   autocab:{apiKeyConfigured:companySecretConfigured(row.id,'autocabApiKey')},
+   stripe:{
+    secretKeyConfigured:companySecretConfigured(row.id,'stripeSecretKey'),
+    webhookSecretConfigured:companySecretConfigured(row.id,'stripeWebhookSecret')
+   },
+   sendgrid:{apiKeyConfigured:companySecretConfigured(row.id,'sendgridApiKey')},
+   twilio:{authTokenConfigured:companySecretConfigured(row.id,'twilioAuthToken')}
+  }
+ });
+});
+
+app.post('/api/admin/platform/companies',adminAuth,requirePlatformAdmin,(req,res)=>{
+ const name=String(req.body?.name||'').trim();
+ if(!name)return res.status(400).json({error:'Company name is required'});
+ let slug=companySlug(req.body?.slug||name);
+ const exists=db.prepare('SELECT id FROM companies WHERE slug=?').get(slug);
+ if(exists)return res.status(409).json({error:'A company with this name/slug already exists'});
+ const now=new Date().toISOString(),companyId=id('company');
+ db.prepare(`INSERT INTO companies(
+  id,name,slug,status,primary_domain,support_email,support_phone,timezone,created_at,updated_at
+ ) VALUES(?,?,?,?,?,?,?,?,?,?)`).run(
+  companyId,
+  name,
+  slug,
+  'draft',
+  String(req.body?.primaryDomain||'').trim().toLowerCase(),
+  safeEmail(req.body?.supportEmail),
+  String(req.body?.supportPhone||'').trim(),
+  String(req.body?.timezone||'Europe/London'),
+  now,
+  now
+ );
+ audit(req,'staff',req.auth.email,'platform_company_created','company',companyId,{name,slug,status:'draft'});
+ res.status(201).json({company:companyPublic(db.prepare('SELECT * FROM companies WHERE id=?').get(companyId))});
 });
 
 app.get('/api/admin/me',adminAuth,(req,res)=>{const u=db.prepare('SELECT * FROM staff_users WHERE id=?').get(req.auth.staffId);if(!u)return res.status(404).json({error:'Office user not found'});res.json(staffSafe(u))});
