@@ -2298,6 +2298,129 @@ app.post(
  }
 );
 
+
+/*
+ * Temporary Autocab Vehicle Data / Vehicle Tracks webhook capture.
+ *
+ * Capture only. These routes deliberately do not update bookings,
+ * payments, driver state, balances or settlements.
+ */
+db.exec(`
+ CREATE TABLE IF NOT EXISTS autocab_vehicle_webhooks(
+  id TEXT PRIMARY KEY,
+  event_type TEXT NOT NULL,
+  driver_id TEXT,
+  vehicle_id TEXT,
+  booking_id TEXT,
+  raw_json TEXT NOT NULL,
+  received_at TEXT NOT NULL
+ )
+`);
+
+function captureAutocabVehicleWebhook(eventType,raw){
+ const payload=
+  raw?.Vehicle ??
+  raw?.vehicle ??
+  raw?.Track ??
+  raw?.track ??
+  raw?.Data ??
+  raw?.data ??
+  raw ??
+  {};
+
+ const driver=
+  payload?.Driver ??
+  payload?.driver ??
+  payload?.DriverDetails?.Driver ??
+  payload?.driverDetails?.driver ??
+  {};
+
+ const driverId=String(
+  driver?.Id ??
+  driver?.id ??
+  driver?.DriverId ??
+  driver?.driverId ??
+  payload?.DriverId ??
+  payload?.driverId ??
+  raw?.DriverId ??
+  raw?.driverId ??
+  ''
+ ).trim();
+
+ const vehicleId=String(
+  payload?.VehicleId ??
+  payload?.vehicleId ??
+  payload?.Id ??
+  payload?.id ??
+  raw?.VehicleId ??
+  raw?.vehicleId ??
+  ''
+ ).trim();
+
+ const bookingId=String(
+  payload?.BookingId ??
+  payload?.bookingId ??
+  payload?.CurrentBookingId ??
+  payload?.currentBookingId ??
+  raw?.BookingId ??
+  raw?.bookingId ??
+  ''
+ ).trim();
+
+ const webhookId=id('vehiclewh');
+ const receivedAt=new Date().toISOString();
+
+ db.prepare(`
+  INSERT INTO autocab_vehicle_webhooks(
+   id,event_type,driver_id,vehicle_id,booking_id,raw_json,received_at
+  )
+  VALUES(?,?,?,?,?,?,?)
+ `).run(
+  webhookId,
+  eventType,
+  driverId||null,
+  vehicleId||null,
+  bookingId||null,
+  JSON.stringify(raw),
+  receivedAt
+ );
+
+ console.log(`[FaivoPay] Autocab ${eventType} received`,{
+  webhookId,
+  driverId:driverId||null,
+  vehicleId:vehicleId||null,
+  bookingId:bookingId||null
+ });
+
+ return {webhookId,driverId,vehicleId,bookingId};
+}
+
+app.post(
+ ['/api/webhooks/autocab/vehicle-data','/data'],
+ (req,res)=>{
+  try{
+   const x=captureAutocabVehicleWebhook('VehicleDataChanged',req.body||{});
+   res.status(200).json({ok:true,received:true,eventType:'VehicleDataChanged',webhookId:x.webhookId});
+  }catch(e){
+   console.error('[FaivoPay] VehicleDataChanged capture error',e);
+   res.status(500).json({ok:false,error:'Vehicle data webhook could not be captured'});
+  }
+ }
+);
+
+app.post(
+ ['/api/webhooks/autocab/vehicle-tracks','/track'],
+ (req,res)=>{
+  try{
+   const x=captureAutocabVehicleWebhook('VehicleTracksChanged',req.body||{});
+   res.status(200).json({ok:true,received:true,eventType:'VehicleTracksChanged',webhookId:x.webhookId});
+  }catch(e){
+   console.error('[FaivoPay] VehicleTracksChanged capture error',e);
+   res.status(500).json({ok:false,error:'Vehicle tracks webhook could not be captured'});
+  }
+ }
+);
+
 function getSettings(){
  const rows=db.prepare('SELECT key,value FROM settings').all(); const out={...defaultSettings};
  for(const r of rows){ try{out[r.key]=JSON.parse(r.value)}catch{out[r.key]=r.value} } return out;
