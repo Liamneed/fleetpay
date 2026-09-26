@@ -10642,3 +10642,765 @@ body {
   background:rgba(227,91,91,.15);
   color:#ef8a8a;
 }
+
+
+/* =========================================================
+   FAIVOPAY DRIVER · FINAL GLOBAL POLISH
+   ========================================================= */
+
+/* Header / safe-area breathing */
+.driverVNextHeader{
+  min-height:92px!important;
+  padding-top:max(16px,calc(env(safe-area-inset-top) + 6px))!important;
+  padding-left:max(20px,env(safe-area-inset-left))!important;
+  padding-right:max(20px,env(safe-area-inset-right))!important;
+  padding-bottom:14px!important;
+}
+
+.driverVNextHeader .driverBrandMark{
+  width:48px!important;
+  height:48px!important;
+  flex:0 0 48px!important;
+}
+
+.driverVNextHeader .driverHeaderActions{
+  align-self:center;
+}
+
+/* Text-size control */
+.textSizeControl{
+  overflow:hidden;
+}
+
+.textSizeHead{
+  gap:14px;
+}
+
+.textSizeHead>div{
+  min-width:0;
+}
+
+.textSizeHead>div span{
+  line-height:1.4;
+}
+
+.textSizeHead>strong{
+  flex:0 0 auto;
+  white-space:nowrap;
+}
+
+.textSizeSliderRow{
+  gap:12px;
+}
+
+.textSizeSliderRow input[type="range"]{
+  min-width:0;
+  width:100%;
+}
+
+.textSizeSmall,
+.textSizeLarge{
+  flex:0 0 auto;
+}
+
+/* Stable preset layout even at large accessibility text */
+.textSizePresets{
+  display:grid!important;
+  grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  gap:10px!important;
+}
+
+.textSizePresets button{
+  min-height:48px!important;
+  padding:10px 8px!important;
+  line-height:1.15!important;
+  white-space:normal!important;
+  overflow-wrap:normal!important;
+  word-break:normal!important;
+  text-align:center;
+}
+
+.textSizePresets button:last-child{
+  grid-column:1 / -1;
+}
+
+.textSizeReset{
+  margin-top:14px!important;
+}
+
+/* At larger text settings, preserve layout hierarchy */
+.driverVNext[style*="1.35"] .themeOptions,
+.driverVNext[style*="1.5"] .themeOptions{
+  grid-template-columns:1fr!important;
+}
+
+.driverVNext[style*="1.35"] .themeOptions button,
+.driverVNext[style*="1.5"] .themeOptions button{
+  min-height:64px;
+}
+
+.driverVNext[style*="1.35"] .textSizePresets,
+.driverVNext[style*="1.5"] .textSizePresets{
+  grid-template-columns:1fr 1fr!important;
+}
+
+/* Account-work status meanings */
+.mockAccountWorkStatus.completed{
+  background:rgba(39,174,96,.14)!important;
+  color:#239154!important;
+}
+
+.mockAccountWorkStatus.nofare{
+  background:rgba(214,69,69,.14)!important;
+  color:#c84f4f!important;
+}
+
+.mockAccountWorkStatus.cancelled{
+  background:rgba(230,160,20,.16)!important;
+  color:#b37a08!important;
+}
+
+.mockDriverApp.theme-dark .mockAccountWorkStatus.completed{
+  background:rgba(53,196,111,.16)!important;
+  color:#66d993!important;
+}
+
+.mockDriverApp.theme-dark .mockAccountWorkStatus.nofare{
+  background:rgba(227,91,91,.16)!important;
+  color:#ef8a8a!important;
+}
+
+.mockDriverApp.theme-dark .mockAccountWorkStatus.cancelled{
+  background:rgba(245,184,55,.16)!important;
+  color:#f1c35f!important;
+}
+
+@media(max-width:430px){
+  .driverVNextHeader{
+    padding-left:max(18px,env(safe-area-inset-left))!important;
+    padding-right:max(18px,env(safe-area-inset-right))!important;
+  }
+}
+
+
+/* =========================================================
+   FAIVOPAY DRIVER · FINANCE-FIRST FINAL PASS
+   ========================================================= */
+
+/* Actual current app header */
+.mockAppHeader{
+  padding-top:max(18px,calc(env(safe-area-inset-top) + 8px))!important;
+}
+
+.mockHeaderTop{
+  margin-bottom:15px!important;
+}
+
+.mockWordmark{
+  letter-spacing:-.045em!important;
+}
+
+.mockHeaderBell{
+  flex:0 0 auto;
+}
+
+/* Home */
+.financeWelcome{
+  margin-bottom:12px!important;
+}
+
+.financeWelcome p{
+  margin-top:5px!important;
+}
+
+.financeHero{
+  margin-bottom:14px;
+  padding:20px;
+  border:1px solid rgba(255,255,255,.07);
+  border-radius:24px;
+  background:linear-gradient(145deg,#172a47,#12233d);
+  box-shadow:0 14px 34px rgba(0,0,0,.12);
+}
+
+.financeHeroTop{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:14px;
+}
+
+.financeEyebrow{
+  display:block;
+  margin-bottom:6px;
+  color:#95a6bc;
+  font-size:.68rem;
+  font-weight:900;
+  letter-spacing:.13em;
+}
+
+.financeHeroTop strong{
+  display:block;
+  color:#fff;
+  font-size:2.7rem;
+  line-height:1;
+  letter-spacing:-.055em;
+}
+
+.financeHeroTop p{
+  max-width:340px;
+  margin:8px 0 0;
+  color:#a9b5c6;
+  font-size:.82rem;
+  line-height:1.45;
+}
+
+.financeHeroRefresh{
+  width:42px;
+  height:42px;
+  flex:0 0 42px;
+  display:grid;
+  place-items:center;
+  padding:0;
+  border:1px solid rgba(255,255,255,.09);
+  border-radius:13px;
+  background:rgba(255,255,255,.06);
+  color:#66bff0;
+}
+
+.financeHeroRefresh svg{
+  width:19px;
+}
+
+.financeSettlementState{
+  display:flex;
+  flex-direction:column;
+  gap:3px;
+  margin-top:18px;
+  padding:13px 14px;
+  border-radius:15px;
+  background:rgba(68,158,255,.09);
+}
+
+.financeSettlementState>span{
+  color:#8fa2bb;
+  font-size:.62rem;
+  font-weight:900;
+  letter-spacing:.1em;
+}
+
+.financeSettlementState>b{
+  color:#fff;
+  font-size:.92rem;
+}
+
+.financeSettlementState>small{
+  color:#a7b3c4;
+  font-size:.72rem;
+}
+
+.financeSettlementState.paid{
+  background:rgba(54,190,112,.10);
+}
+
+.financeSettlementState.due{
+  background:rgba(220,83,83,.10);
+}
+
+.financeDeductionRow{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-top:10px;
+  padding:11px 13px;
+  border-radius:13px;
+  background:rgba(246,188,67,.08);
+  color:#d7dfeb;
+  font-size:.78rem;
+}
+
+.financeDeductionRow b{
+  color:#f4c35e;
+}
+
+.financeEarlyPayout{
+  width:100%;
+  display:grid;
+  grid-template-columns:1fr auto auto;
+  align-items:center;
+  gap:12px;
+  margin-top:17px;
+  padding:14px;
+  border:1px solid rgba(255,255,255,.07);
+  border-radius:15px;
+  background:rgba(255,255,255,.045);
+  color:#fff;
+  text-align:left;
+}
+
+.financeEarlyPayout b,
+.financeEarlyPayout small{
+  display:block;
+}
+
+.financeEarlyPayout small{
+  margin-top:3px;
+  color:#9eadc0;
+  font-size:.68rem;
+  line-height:1.35;
+}
+
+.financeEarlyPayout strong{
+  font-size:1rem;
+  white-space:nowrap;
+}
+
+.financeEarlyPayout svg{
+  width:17px;
+  color:#72849d;
+}
+
+.financePrimaryAction{
+  width:100%;
+  min-height:46px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  margin-top:14px;
+  border:0;
+  border-radius:14px;
+  background:#2f7df0;
+  color:#fff;
+  font-weight:850;
+}
+
+.financeAccountWorkSummary{
+  width:100%;
+  display:grid!important;
+  grid-template-columns:auto 1fr auto auto;
+  align-items:center;
+  gap:12px;
+  text-align:left;
+}
+
+.financeAccountWorkSummary>span:nth-child(2) b,
+.financeAccountWorkSummary>span:nth-child(2) small{
+  display:block;
+}
+
+.financeAccountWorkSummary>span:nth-child(2) small{
+  margin-top:3px;
+}
+
+.financeAccountWorkSummary>strong{
+  white-space:nowrap;
+}
+
+.financeRecentActivity .mockTransactionRow strong{
+  white-space:nowrap;
+}
+
+/* Payments */
+.financePaymentsIntro{
+  margin-bottom:16px;
+}
+
+.financePaymentsIntro>span,
+.financeSectionHeading span{
+  display:block;
+  color:#55bce9;
+  font-size:.63rem;
+  font-weight:900;
+  letter-spacing:.14em;
+}
+
+.financePaymentsIntro h2{
+  margin:5px 0 4px;
+  color:var(--mock-ink);
+  font-size:1.8rem;
+}
+
+.financePaymentsIntro p{
+  margin:0;
+  color:var(--mock-muted);
+  font-size:.8rem;
+}
+
+.financePaymentsPriority{
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+  margin-bottom:14px;
+}
+
+.financeEarlySection{
+  margin-bottom:14px;
+}
+
+.financeCustomerPaymentSection{
+  margin-top:16px;
+}
+
+.financeSectionHeading{
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:10px;
+}
+
+.financeSectionHeading h3{
+  margin:4px 0 0;
+  color:var(--mock-ink);
+  font-size:1rem;
+}
+
+.financeSectionHeading>small{
+  color:var(--mock-muted);
+  font-size:.69rem;
+}
+
+.financeNoCustomerPayment{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  margin-top:15px;
+  padding:14px;
+  border:1px solid rgba(130,145,165,.15);
+  border-radius:16px;
+  color:var(--mock-muted);
+}
+
+.financeNoCustomerPayment>svg{
+  width:22px;
+  flex:0 0 22px;
+}
+
+.financeNoCustomerPayment b,
+.financeNoCustomerPayment span{
+  display:block;
+}
+
+.financeNoCustomerPayment b{
+  color:var(--mock-ink);
+  font-size:.82rem;
+}
+
+.financeNoCustomerPayment span{
+  margin-top:3px;
+  font-size:.7rem;
+  line-height:1.4;
+}
+
+/* Notification centre */
+.driverNotificationLayer{
+  position:fixed;
+  inset:0;
+  z-index:500;
+  display:flex;
+  align-items:flex-start;
+  justify-content:center;
+  padding-top:max(82px,calc(env(safe-area-inset-top) + 68px));
+  padding-right:max(12px,env(safe-area-inset-right));
+  padding-left:max(12px,env(safe-area-inset-left));
+  background:rgba(3,10,20,.42);
+  backdrop-filter:blur(4px);
+  -webkit-backdrop-filter:blur(4px);
+}
+
+.driverNotificationSheet{
+  width:min(430px,100%);
+  max-height:72vh;
+  overflow:hidden;
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:22px;
+  background:#13243d;
+  box-shadow:0 24px 70px rgba(0,0,0,.38);
+}
+
+.driverNotificationHead{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:17px;
+  border-bottom:1px solid rgba(255,255,255,.07);
+}
+
+.driverNotificationHead span{
+  display:block;
+  color:#55bce9;
+  font-size:.61rem;
+  font-weight:900;
+  letter-spacing:.14em;
+}
+
+.driverNotificationHead h2{
+  margin:4px 0 0;
+  color:#fff;
+  font-size:1.05rem;
+}
+
+.driverNotificationHead button{
+  width:36px;
+  height:36px;
+  display:grid;
+  place-items:center;
+  padding:0;
+  border:0;
+  border-radius:50%;
+  background:rgba(255,255,255,.07);
+  color:#fff;
+}
+
+.driverNotificationList{
+  max-height:calc(72vh - 72px);
+  overflow-y:auto;
+  -webkit-overflow-scrolling:touch;
+}
+
+.driverNotificationItem{
+  display:grid;
+  grid-template-columns:auto 1fr;
+  gap:11px;
+  padding:14px 16px;
+  border-bottom:1px solid rgba(255,255,255,.055);
+}
+
+.driverNotificationItem.unread{
+  background:rgba(64,137,238,.07);
+}
+
+.driverNotificationIcon{
+  width:34px;
+  height:34px;
+  display:grid;
+  place-items:center;
+  border-radius:50%;
+  background:rgba(82,184,235,.10);
+  color:#58bdea;
+}
+
+.driverNotificationIcon svg{
+  width:16px;
+}
+
+.driverNotificationItem b,
+.driverNotificationItem div>span,
+.driverNotificationItem small{
+  display:block;
+}
+
+.driverNotificationItem b{
+  color:#fff;
+  font-size:.8rem;
+}
+
+.driverNotificationItem div>span{
+  margin-top:4px;
+  color:#a9b5c6;
+  font-size:.7rem;
+  line-height:1.4;
+}
+
+.driverNotificationItem small{
+  margin-top:6px;
+  color:#718198;
+  font-size:.62rem;
+}
+
+.driverNotificationEmpty{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:6px;
+  padding:38px 20px;
+  color:#91a1b6;
+  text-align:center;
+}
+
+.driverNotificationEmpty svg{
+  width:25px;
+}
+
+.driverNotificationEmpty b{
+  color:#fff;
+}
+
+.driverNotificationEmpty span{
+  font-size:.72rem;
+}
+
+.driverVNext.theme-light .driverNotificationSheet{
+  border-color:rgba(14,35,61,.10);
+  background:#fff;
+}
+
+.driverVNext.theme-light .driverNotificationHead{
+  border-color:rgba(14,35,61,.08);
+}
+
+.driverVNext.theme-light .driverNotificationHead h2,
+.driverVNext.theme-light .driverNotificationItem b,
+.driverVNext.theme-light .driverNotificationEmpty b{
+  color:#10233d;
+}
+
+.driverVNext.theme-light .driverNotificationHead button{
+  background:#edf3fa;
+  color:#18304e;
+}
+
+.driverVNext.theme-light .driverNotificationItem{
+  border-color:rgba(14,35,61,.07);
+}
+
+.driverVNext.theme-light .driverNotificationItem div>span{
+  color:#64748b;
+}
+
+@media(max-width:430px){
+  .financeHero{
+    padding:17px;
+  }
+
+  .financeHeroTop strong{
+    font-size:2.35rem;
+  }
+
+  .financeAccountWorkSummary{
+    gap:9px;
+  }
+}
+
+
+/* =========================================================
+   FAIVOPAY DRIVER · FINAL HYBRID PAYMENTS PASS
+   ========================================================= */
+
+.mockAppHeader{
+  padding-top:max(16px,calc(env(safe-area-inset-top) + 6px))!important;
+  padding-bottom:12px!important;
+}
+
+.mockHeaderTop{
+  margin-bottom:12px!important;
+}
+
+.mockWordmark{
+  font-size:2rem!important;
+  line-height:1!important;
+}
+
+.mockHeaderTitle h1{
+  font-size:1.9rem!important;
+  line-height:1.02!important;
+  letter-spacing:-.035em!important;
+}
+
+.financePaymentsIntro.compact{
+  margin-bottom:12px;
+}
+
+.financePaymentsIntro.compact h2{
+  font-size:1.55rem;
+}
+
+.financeBookingStatus{
+  width:100%;
+  display:grid;
+  grid-template-columns:auto 1fr auto auto;
+  align-items:center;
+  gap:11px;
+  margin-bottom:14px;
+  padding:13px 14px;
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:16px;
+  background:#142641;
+  color:#fff;
+  text-align:left;
+}
+
+.financeBookingStatus>svg{
+  width:17px;
+  color:#62bde9;
+}
+
+.financeBookingDot{
+  width:11px;
+  height:11px;
+  border-radius:50%;
+  background:#77879b;
+  box-shadow:0 0 0 5px rgba(119,135,155,.10);
+}
+
+.financeBookingDot.cash,
+.financeBookingDot.ready{
+  background:#31c57b;
+  box-shadow:0 0 0 5px rgba(49,197,123,.12);
+}
+
+.financeBookingDot.account{
+  background:#6aa7ff;
+  box-shadow:0 0 0 5px rgba(106,167,255,.12);
+}
+
+.financeBookingDot.paid{
+  background:#31c57b;
+  box-shadow:0 0 0 5px rgba(49,197,123,.12);
+}
+
+.financeBookingCopy b,
+.financeBookingCopy small{
+  display:block;
+}
+
+.financeBookingCopy b{
+  font-size:.82rem;
+}
+
+.financeBookingCopy small{
+  margin-top:2px;
+  color:#9dacbf;
+  font-size:.68rem;
+  line-height:1.35;
+}
+
+.financeBookingRef{
+  color:#8193aa;
+  font-size:.68rem;
+  white-space:nowrap;
+}
+
+.driverVNext.theme-light .financeBookingStatus{
+  border-color:rgba(18,47,82,.10);
+  background:#fff;
+  color:#10233d;
+}
+
+.driverVNext.theme-light .financeBookingCopy small{
+  color:#64748b;
+}
+
+.mockAccountWorkBreakdown>div:last-of-type{
+  font-weight:800;
+}
+
+@media(max-width:430px){
+  .mockWordmark{
+    font-size:1.85rem!important;
+  }
+
+  .mockHeaderTitle h1{
+    font-size:1.72rem!important;
+  }
+
+  .financeBookingStatus{
+    grid-template-columns:auto 1fr auto;
+  }
+
+  .financeBookingRef{
+    display:none;
+  }
+}

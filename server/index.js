@@ -13122,7 +13122,8 @@ app.get('/api/driver/account-work',driverAuth,(req,res)=>{
     commissionable,
     non_commissionable nonCommissionable,
     approved,
-    source
+    source,
+    raw_json rawJson
    FROM posted_driver_dockets
    WHERE driver_id=?
      AND datetime(posted_at)>=datetime(?)
@@ -13130,18 +13131,39 @@ app.get('/api/driver/account-work',driverAuth,(req,res)=>{
    ORDER BY datetime(posted_at) DESC
   `).all(driverId,from,to);
 
-  const jobs=rows.map(r=>({
-   ...r,
-   driverCost:Number(r.driverCost||0),
-   fare:Number(r.fare||0),
-   accountPrice:Number(r.accountPrice||0),
-   waitingTime:Number(r.waitingTime||0),
-   waitingTimeCost:Number(r.waitingTimeCost||0),
-   extraCost:Number(r.extraCost||0),
-   commissionable:Number(r.commissionable||0),
-   nonCommissionable:Number(r.nonCommissionable||0),
-   approved:Boolean(r.approved)
-  }));
+  const jobs=rows.map(r=>{
+   let raw={};
+
+   try{
+    raw=JSON.parse(r.rawJson||'{}');
+   }catch{}
+
+   const vias=Array.isArray(raw?.vias)
+    ?raw.vias
+      .map(v=>String(
+       v?.address?.text ??
+       v?.address ??
+       ''
+      ).trim())
+      .filter(Boolean)
+    :[];
+
+   const {rawJson,...clean}=r;
+
+   return {
+    ...clean,
+    vias,
+    driverCost:Number(r.driverCost||0),
+    fare:Number(r.fare||0),
+    accountPrice:Number(r.accountPrice||0),
+    waitingTime:Number(r.waitingTime||0),
+    waitingTimeCost:Number(r.waitingTimeCost||0),
+    extraCost:Number(r.extraCost||0),
+    commissionable:Number(r.commissionable||0),
+    nonCommissionable:Number(r.nonCommissionable||0),
+    approved:Boolean(r.approved)
+   };
+  });
 
   const totalDriverCost=Math.round(
    jobs.reduce((sum,x)=>sum+Number(x.driverCost||0),0)*100
@@ -13245,6 +13267,71 @@ app.get('/api/driver/me',driverAuth,(req,res)=>{
       "SELECT id,gross_amount grossAmount,fee,net_amount netAmount,status,decline_reason declineReason,decision_at decisionAt,eligible_run_date eligibleRunDate,submitted_after_cutoff submittedAfterCutoff,created_at createdAt FROM payouts WHERE driver_id=? AND type='early' ORDER BY created_at DESC"
     ).all(d.driverId);
 
+    const weeklyPayouts=db.prepare(`
+      SELECT
+       id,
+       run_id runId,
+       gross_balance previousBalance,
+       weekly_fee weeklyFee,
+       carried_charges carriedCharges,
+       gross_amount grossAmount,
+       fee,
+       net_amount netAmount,
+       amount,
+       status,
+       created_at createdAt,
+       updated_at updatedAt,
+       paid_at paidAt
+      FROM payouts
+      WHERE driver_id=?
+        AND type='weekly'
+      ORDER BY created_at DESC
+      LIMIT 12
+    `).all(d.driverId);
+
+    const weeklyPaymentRequests=db.prepare(`
+      SELECT
+       id,
+       run_id runId,
+       balance previousBalance,
+       weekly_fee weeklyFee,
+       carried_charges carriedCharges,
+       amount,
+       status,
+       provider,
+       due_at dueAt,
+       created_at createdAt,
+       updated_at updatedAt,
+       paid_at paidAt,
+       request_type requestType
+      FROM payment_requests
+      WHERE driver_id=?
+        AND (
+         request_type IS NULL
+         OR request_type='standard'
+        )
+      ORDER BY created_at DESC
+      LIMIT 12
+    `).all(d.driverId);
+
+    const planSettlementAllocations=db.prepare(`
+      SELECT
+       id,
+       run_id runId,
+       payout_id payoutId,
+       plan_id planId,
+       instalment_id instalmentId,
+       scheduled_amount scheduledAmount,
+       allocated_amount allocatedAmount,
+       status,
+       created_at createdAt,
+       applied_at appliedAt
+      FROM payment_plan_settlement_allocations
+      WHERE driver_id=?
+      ORDER BY created_at DESC
+      LIMIT 24
+    `).all(d.driverId);
+
     const reserved=early
       .filter(x=>['requested','approved','batched'].includes(x.status))
       .reduce((s,x)=>s+Number(x.grossAmount||0),0);
@@ -13288,6 +13375,7 @@ app.get('/api/driver/me',driverAuth,(req,res)=>{
         weeklyAppFee:settings.weeklyAppFee,
         earlyPayoutFee:settings.earlyPayoutFee,
         earlyPayoutCutoffTime:cutoffParts(settings).label,
+        outstandingDueTime:settings.outstandingDueTime||'17:00',
         customerPaymentFeeType:settings.customerPaymentFeeType,
         customerPaymentFeeValue:settings.customerPaymentFeeValue
       },
@@ -13296,6 +13384,9 @@ app.get('/api/driver/me',driverAuth,(req,res)=>{
     paymentPlans,
       customerPayments,
       earlyPayoutRequests:early,
+      weeklyPayouts,
+      weeklyPaymentRequests,
+      planSettlementAllocations,
       ledger:ledgerRows,
       notifications,
       stripeConfigured:Boolean(getStripeClient()),
