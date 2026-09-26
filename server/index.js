@@ -979,7 +979,9 @@ app.post('/api/stripe/webhook', express.raw({type:'application/json'}), async (r
 
         if(
           releaseItem &&
-          releaseItem.source==='autocab_booking_created' &&
+          ['autocab_booking_created','driver_live_booking'].includes(
+           String(releaseItem.source||'')
+          ) &&
           releaseItem.payment_status==='paid' &&
           releaseItem.job_status==='release_pending'
         ){
@@ -2890,7 +2892,10 @@ async function releaseFleetPayBooking(paymentId){
  const item=db.prepare('SELECT * FROM customer_payments WHERE id=?').get(paymentId);
  if(!item)throw new Error(`Customer payment ${paymentId} not found`);
 
- if(item.source!=='autocab_booking_created'){
+ if(
+  !['autocab_booking_created','driver_live_booking']
+   .includes(String(item.source||''))
+ ){
   return {ok:true,skipped:true,reason:'not_autocab'};
  }
 
@@ -2934,6 +2939,150 @@ async function releaseFleetPayBooking(paymentId){
 
  if(!booking.pricing || typeof booking.pricing!=='object'){
   throw new Error(`Autocab booking ${bookingId} has no pricing object`);
+ }
+
+ /*
+  * Live-driver payments use a deliberately minimal Autocab update.
+  *
+  * Controlled testing confirmed that changing ONLY customerId on the
+  * fresh booking allows Autocab to convert Cash -> Account itself while
+  * preserving the dispatched driver/vehicle and recalculating the
+  * payment split/tariff correctly.
+  *
+  * Do not manually rewrite paymentType, paymentMethod, pricing or
+  * driver/vehicle fields in this branch.
+  */
+ if(item.source==='driver_live_booking'){
+  const expectedDriverId=Number(item.driver_id||0);
+  const beforeDriverId=Number(booking.driver?.id||0);
+  const beforeVehicleId=Number(booking.vehicle?.id||0);
+
+  const currentCustomerId=Number(booking.customerId||0);
+  const currentPaymentType=String(booking.paymentType||'').toLowerCase();
+  const currentPaymentMethod=String(booking.paymentMethod||'').toLowerCase();
+
+  const alreadyOnFaivoPay=
+   currentCustomerId===Number(AUTOCAB_FLEETPAY_CUSTOMER_ID) &&
+   currentPaymentType==='account';
+
+  if(!alreadyOnFaivoPay){
+   if(expectedDriverId>0 && beforeDriverId!==expectedDriverId){
+    throw new Error(
+     `Autocab booking ${bookingId} is no longer assigned to driver ${expectedDriverId}`
+    );
+   }
+
+   if(currentPaymentType && currentPaymentType!=='cash'){
+    throw new Error(
+     `Autocab booking ${bookingId} is no longer Cash (${booking.paymentType})`
+    );
+   }
+
+   if(currentPaymentMethod && currentPaymentMethod!=='cash'){
+    throw new Error(
+     `Autocab booking ${bookingId} has unexpected payment method ${booking.paymentMethod}`
+    );
+   }
+
+   /*
+    * Critical: change ONE FIELD ONLY.
+    * Autocab performs the Cash -> Account conversion and pricing split.
+    */
+   booking.customerId=AUTOCAB_FLEETPAY_CUSTOMER_ID;
+
+   await postJson(url,booking);
+  }
+
+  const after=await getJson(url);
+
+  if(!after || typeof after!=='object'){
+   throw new Error(
+    `Autocab booking ${bookingId} could not be verified after live payment release`
+   );
+  }
+
+  const afterDriverId=Number(after.driver?.id||0);
+  const afterVehicleId=Number(after.vehicle?.id||0);
+  const afterCustomerId=Number(after.customerId||0);
+  const afterPaymentType=String(after.paymentType||'').toLowerCase();
+
+  const afterCost=Math.round(Number(after.pricing?.cost||0)*100)/100;
+  const afterAccountAmount=
+   Math.round(Number(after.pricing?.accountAmount||0)*100)/100;
+  const afterCashAmount=
+   Math.round(Number(after.pricing?.cashAmount||0)*100)/100;
+
+  if(afterCustomerId!==Number(AUTOCAB_FLEETPAY_CUSTOMER_ID)){
+   throw new Error(
+    `Autocab booking ${bookingId} did not move to the FaivoPay customer`
+   );
+  }
+
+  if(afterPaymentType!=='account'){
+   throw new Error(
+    `Autocab booking ${bookingId} did not change to Account payment`
+   );
+  }
+
+  if(expectedDriverId>0 && afterDriverId!==expectedDriverId){
+   throw new Error(
+    `Autocab booking ${bookingId} lost driver assignment during payment release`
+   );
+  }
+
+  if(beforeVehicleId>0 && afterVehicleId!==beforeVehicleId){
+   throw new Error(
+    `Autocab booking ${bookingId} lost vehicle assignment during payment release`
+   );
+  }
+
+  if(Math.abs(afterCost-fareAmount)>0.00001){
+   throw new Error(
+    `Autocab booking ${bookingId} cost changed unexpectedly from £${fareAmount.toFixed(2)} to £${afterCost.toFixed(2)}`
+   );
+  }
+
+  if(Math.abs(afterAccountAmount-fareAmount)>0.00001){
+   throw new Error(
+    `Autocab booking ${bookingId} account amount is £${afterAccountAmount.toFixed(2)} instead of £${fareAmount.toFixed(2)}`
+   );
+  }
+
+  if(Math.abs(afterCashAmount)>0.00001){
+   throw new Error(
+    `Autocab booking ${bookingId} still has £${afterCashAmount.toFixed(2)} assigned to Cash`
+   );
+  }
+
+  const now=new Date().toISOString();
+
+  const result=db.prepare(`
+   UPDATE customer_payments
+   SET job_status='ready',
+       autocab_release_status='completed',
+       autocab_release_error=NULL,
+       autocab_released_at=?,
+       updated_at=?
+   WHERE id=?
+     AND payment_status='paid'
+     AND job_status='release_pending'
+  `).run(now,now,item.id);
+
+  return {
+   ok:true,
+   bookingId,
+   fareAmount,
+   source:item.source,
+   customerId:afterCustomerId,
+   paymentType:after.paymentType||null,
+   accountCode:after.accountCode||null,
+   driverId:afterDriverId||null,
+   vehicleId:afterVehicleId||null,
+   cost:afterCost,
+   accountAmount:afterAccountAmount,
+   cashAmount:afterCashAmount,
+   markedReady:Number(result.changes||0)>0
+  };
  }
 
  /*
