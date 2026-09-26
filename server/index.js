@@ -11945,12 +11945,12 @@ app.get('/api/driver/customer-payment/preview',driverAuth,async(req,res)=>{
    });
   }
 
-  if(!freshness.driverStateFresh){
-   return res.status(409).json({
-    error:'Your current Autocab driver state is too old to use safely. Please try again.'
-   });
-  }
-
+  /*
+   * VehicleTracksChanged is a change feed, not a per-driver heartbeat.
+   * A driver may legitimately remain unchanged on the same booking for
+   * well over 15 minutes. The fresh Autocab booking GET below is the
+   * authority for assignment, payment type and current Cost.
+   */
   const bookingId=Number(live.booking_id||0);
 
   if(!Number.isFinite(bookingId) || bookingId<=0){
@@ -12127,12 +12127,12 @@ app.post('/api/driver/customer-payment/live',driverAuth,async(req,res)=>{
    });
   }
 
-  if(!freshness.driverStateFresh){
-   return res.status(409).json({
-    error:'Your current Autocab driver state is too old to use safely. Please try again.'
-   });
-  }
-
+  /*
+   * VehicleTracksChanged is a change feed, not a per-driver heartbeat.
+   * A driver may legitimately remain unchanged on the same booking for
+   * well over 15 minutes. The fresh Autocab booking GET below is the
+   * authority for assignment, payment type and current Cost.
+   */
   const bookingId=Number(live.booking_id||0);
 
   if(!Number.isFinite(bookingId) || bookingId<=0){
