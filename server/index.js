@@ -11816,6 +11816,182 @@ app.get('/api/driver/live-state',driverAuth,(req,res)=>{
  }
 });
 
+
+app.get('/api/driver/customer-payment/preview',driverAuth,async(req,res)=>{
+ try{
+  if(!getStripeClient()){
+   return res.status(400).json({
+    error:'Customer card payments are not currently available.'
+   });
+  }
+
+  const driverId=Number(req.auth.driverId);
+  const driver=cachedDriver(driverId);
+
+  if(!driver){
+   return res.status(404).json({
+    error:'Driver not found in FaivoPay cache'
+   });
+  }
+
+  const live=db.prepare(`
+   SELECT
+    driver_id,
+    driver_callsign,
+    vehicle_status,
+    booking_id,
+    track_timestamp,
+    updated_at
+   FROM driver_live_state
+   WHERE driver_id=?
+   LIMIT 1
+  `).get(driverId);
+
+  if(!live){
+   return res.status(409).json({
+    error:'No current Autocab driver state is available.'
+   });
+  }
+
+  const ageMs=Date.now()-new Date(live.updated_at).getTime();
+
+  if(!Number.isFinite(ageMs) || ageMs>30000){
+   return res.status(409).json({
+    error:'Your live Autocab status is out of date. Please try again.'
+   });
+  }
+
+  const bookingId=Number(live.booking_id||0);
+
+  if(!Number.isFinite(bookingId) || bookingId<=0){
+   return res.status(409).json({
+    error:'You do not currently have an active booking.'
+   });
+  }
+
+  /*
+   * The webhook cache identifies the likely current booking.
+   * Autocab remains authoritative at payment time.
+   * This is the only Autocab API request required for the preview.
+   */
+  const booking=await getJson(
+   `${BASE_URL}/booking/v1/booking/${encodeURIComponent(bookingId)}`
+  );
+
+  if(!booking || typeof booking!=='object'){
+   return res.status(502).json({
+    error:'Autocab did not return the current booking.'
+   });
+  }
+
+  const assignedDriver=
+   booking.driver ??
+   booking.Driver ??
+   booking.driverDetails?.driver ??
+   booking.DriverDetails?.Driver ??
+   booking.assignedDriver ??
+   booking.AssignedDriver ??
+   {};
+
+  const assignedDriverId=Number(
+   assignedDriver.id ??
+   assignedDriver.Id ??
+   assignedDriver.driverId ??
+   assignedDriver.DriverId ??
+   booking.driverId ??
+   booking.DriverId ??
+   0
+  );
+
+  if(
+   !Number.isFinite(assignedDriverId) ||
+   assignedDriverId<=0 ||
+   assignedDriverId!==driverId
+  ){
+   return res.status(409).json({
+    error:'This booking is no longer assigned to you.'
+   });
+  }
+
+  const paymentValues=[
+   booking.paymentType ?? booking.PaymentType,
+   booking.paymentMethod ?? booking.PaymentMethod
+  ]
+   .filter(v=>v!==null && v!==undefined && String(v).trim()!=='')
+   .map(v=>String(v).trim().toLowerCase());
+
+  const isCash=
+   paymentValues.length>0 &&
+   paymentValues.every(v=>v==='cash');
+
+  if(!isCash){
+   return res.status(409).json({
+    error:'FaivoPay customer payment is only available for cash bookings.'
+   });
+  }
+
+  const pricing=booking.pricing ?? booking.Pricing ?? {};
+
+  const fareAmount=Math.round(
+   Number(pricing.cost ?? pricing.Cost ?? 0)*100
+  )/100;
+
+  if(!Number.isFinite(fareAmount) || fareAmount<=0){
+   return res.status(409).json({
+    error:'The current Autocab driver cost is not available yet.'
+   });
+  }
+
+  const feeAmount=customerPaymentFeeFor(fareAmount);
+  const totalAmount=Math.round((fareAmount+feeAmount)*100)/100;
+
+  audit(
+   req,
+   'driver',
+   driverId,
+   'customer_payment_previewed',
+   'booking',
+   bookingId,
+   {
+    callsign:driver.callsign,
+    vehicleStatus:live.vehicle_status||null,
+    fareSource:'autocab_pricing_cost',
+    fareAmount,
+    feeAmount,
+    totalAmount
+   }
+  );
+
+  res.json({
+   ok:true,
+   eligible:true,
+   bookingId,
+   callsign:driver.callsign,
+   vehicleStatus:live.vehicle_status||'',
+   paymentType:String(
+    booking.paymentType ??
+    booking.PaymentType ??
+    ''
+   ),
+   paymentMethod:String(
+    booking.paymentMethod ??
+    booking.PaymentMethod ??
+    ''
+   ),
+   fareAmount,
+   feeAmount,
+   totalAmount,
+   fareSource:'autocab_pricing_cost'
+  });
+
+ }catch(e){
+  console.error('[FaivoPay] Driver customer payment preview error',e);
+  res.status(500).json({
+   error:'Unable to verify the current booking for payment.'
+  });
+ }
+});
+
 app.post('/api/driver/customer-payment',driverAuth,async(req,res)=>{
   try{
     if(!getStripeClient()){
