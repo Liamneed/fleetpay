@@ -3439,6 +3439,108 @@ app.post('/api/admin/mfa/recovery/complete',(req,res)=>{
 });
 
 
+
+function companyIntegrationPayload(companyId){
+ return {
+  autocab:{
+   companyIds:getCompanySetting(companyId,'autocabCompanyIds',''),
+   adjustmentsEnabled:Boolean(getCompanySetting(companyId,'autocabAdjustmentsEnabled',false)),
+   apiKeyConfigured:companySecretConfigured(companyId,'autocabApiKey')
+  },
+  stripe:{
+   secretKeyConfigured:companySecretConfigured(companyId,'stripeSecretKey'),
+   webhookSecretConfigured:companySecretConfigured(companyId,'stripeWebhookSecret')
+  },
+  sendgrid:{
+   fromEmail:getCompanySetting(companyId,'sendgridFromEmail',''),
+   fromName:getCompanySetting(companyId,'sendgridFromName','FaivoPay'),
+   apiKeyConfigured:companySecretConfigured(companyId,'sendgridApiKey')
+  },
+  twilio:{
+   accountSid:getCompanySetting(companyId,'twilioAccountSid',''),
+   messagingServiceSid:getCompanySetting(companyId,'twilioMessagingServiceSid',''),
+   fromNumber:getCompanySetting(companyId,'twilioFromNumber',''),
+   authTokenConfigured:companySecretConfigured(companyId,'twilioAuthToken')
+  },
+  branding:{
+   productName:getCompanySetting(companyId,'productName','FaivoPay'),
+   supportEmail:getCompanySetting(companyId,'supportEmail',''),
+   supportPhone:getCompanySetting(companyId,'supportPhone','')
+  },
+  features:{
+   paymentPlans:Boolean(getCompanySetting(companyId,'featurePaymentPlans',true)),
+   earlyPayouts:Boolean(getCompanySetting(companyId,'featureEarlyPayouts',true)),
+   customerPayments:Boolean(getCompanySetting(companyId,'featureCustomerPayments',true)),
+   driverPayouts:Boolean(getCompanySetting(companyId,'featureDriverPayouts',true)),
+   demoLab:Boolean(getCompanySetting(companyId,'featureDemoLab',true))
+  }
+ };
+}
+
+function saveCompanyConfiguration(companyId,input={}){
+ const row=db.prepare('SELECT * FROM companies WHERE id=?').get(companyId);
+ if(!row)throw new Error('Company not found');
+
+ const general=input.general||{};
+ const autocab=input.autocab||{};
+ const stripeCfg=input.stripe||{};
+ const sendgrid=input.sendgrid||{};
+ const twilioCfg=input.twilio||{};
+ const branding=input.branding||{};
+ const features=input.features||{};
+
+ const name=String(general.name??row.name).trim()||row.name;
+ const domain=String(general.primaryDomain??row.primary_domain??'').trim().toLowerCase();
+ const supportEmail=safeEmail(general.supportEmail??row.support_email);
+ const supportPhone=String(general.supportPhone??row.support_phone??'').trim();
+ const timezone=String(general.timezone??row.timezone??'Europe/London').trim()||'Europe/London';
+
+ db.prepare(`UPDATE companies
+  SET name=?,primary_domain=?,support_email=?,support_phone=?,timezone=?,updated_at=?
+  WHERE id=?`).run(
+   name,domain,supportEmail,supportPhone,timezone,new Date().toISOString(),companyId
+ );
+
+ if('companyIds' in autocab)setCompanySetting(companyId,'autocabCompanyIds',String(autocab.companyIds||'').trim());
+ if('adjustmentsEnabled' in autocab)setCompanySetting(companyId,'autocabAdjustmentsEnabled',Boolean(autocab.adjustmentsEnabled));
+ if(String(autocab.apiKey||'').trim())setCompanySecureSetting(companyId,'autocabApiKey',String(autocab.apiKey).trim());
+
+ if(String(stripeCfg.secretKey||'').trim())setCompanySecureSetting(companyId,'stripeSecretKey',String(stripeCfg.secretKey).trim());
+ if(String(stripeCfg.webhookSecret||'').trim())setCompanySecureSetting(companyId,'stripeWebhookSecret',String(stripeCfg.webhookSecret).trim());
+
+ if('fromEmail' in sendgrid)setCompanySetting(companyId,'sendgridFromEmail',safeEmail(sendgrid.fromEmail));
+ if('fromName' in sendgrid)setCompanySetting(companyId,'sendgridFromName',String(sendgrid.fromName||'').trim());
+ if(String(sendgrid.apiKey||'').trim())setCompanySecureSetting(companyId,'sendgridApiKey',String(sendgrid.apiKey).trim());
+
+ if('accountSid' in twilioCfg)setCompanySetting(companyId,'twilioAccountSid',String(twilioCfg.accountSid||'').trim());
+ if('messagingServiceSid' in twilioCfg)setCompanySetting(companyId,'twilioMessagingServiceSid',String(twilioCfg.messagingServiceSid||'').trim());
+ if('fromNumber' in twilioCfg)setCompanySetting(companyId,'twilioFromNumber',String(twilioCfg.fromNumber||'').trim());
+ if(String(twilioCfg.authToken||'').trim())setCompanySecureSetting(companyId,'twilioAuthToken',String(twilioCfg.authToken).trim());
+
+ if('productName' in branding)setCompanySetting(companyId,'productName',String(branding.productName||'FaivoPay').trim()||'FaivoPay');
+ if('supportEmail' in branding)setCompanySetting(companyId,'supportEmail',safeEmail(branding.supportEmail));
+ if('supportPhone' in branding)setCompanySetting(companyId,'supportPhone',String(branding.supportPhone||'').trim());
+
+ for(const [inputKey,settingKey] of [
+  ['paymentPlans','featurePaymentPlans'],
+  ['earlyPayouts','featureEarlyPayouts'],
+  ['customerPayments','featureCustomerPayments'],
+  ['driverPayouts','featureDriverPayouts'],
+  ['demoLab','featureDemoLab']
+ ]){
+  if(inputKey in features)setCompanySetting(companyId,settingKey,Boolean(features[inputKey]));
+ }
+
+ return db.prepare('SELECT * FROM companies WHERE id=?').get(companyId);
+}
+
+function companyConfigurationPayload(row){
+ return {
+  company:companyPublic(row),
+  config:companyIntegrationPayload(row.id)
+ };
+}
+
 app.get('/api/admin/platform/companies',adminAuth,requirePlatformAdmin,(req,res)=>{
  ensureDefaultCompany();
  const companies=db.prepare('SELECT * FROM companies ORDER BY created_at,name').all().map(companyPublic);
@@ -3449,18 +3551,39 @@ app.get('/api/admin/platform/companies/:id',adminAuth,requirePlatformAdmin,(req,
  ensureDefaultCompany();
  const row=db.prepare('SELECT * FROM companies WHERE id=?').get(req.params.id);
  if(!row)return res.status(404).json({error:'Company not found'});
- res.json({
-  company:companyPublic(row),
-  integrations:{
-   autocab:{apiKeyConfigured:companySecretConfigured(row.id,'autocabApiKey')},
-   stripe:{
-    secretKeyConfigured:companySecretConfigured(row.id,'stripeSecretKey'),
-    webhookSecretConfigured:companySecretConfigured(row.id,'stripeWebhookSecret')
-   },
-   sendgrid:{apiKeyConfigured:companySecretConfigured(row.id,'sendgridApiKey')},
-   twilio:{authTokenConfigured:companySecretConfigured(row.id,'twilioAuthToken')}
-  }
- });
+ res.json(companyConfigurationPayload(row));
+});
+
+app.put('/api/admin/platform/companies/:id',adminAuth,requirePlatformAdmin,(req,res)=>{
+ try{
+  const row=saveCompanyConfiguration(req.params.id,req.body||{});
+  audit(req,'staff',req.auth.email,'platform_company_configuration_updated','company',row.id,{
+   sections:Object.keys(req.body||{}),
+   secretsChanged:{
+    autocab:Boolean(String(req.body?.autocab?.apiKey||'').trim()),
+    stripeSecret:Boolean(String(req.body?.stripe?.secretKey||'').trim()),
+    stripeWebhook:Boolean(String(req.body?.stripe?.webhookSecret||'').trim()),
+    sendgrid:Boolean(String(req.body?.sendgrid?.apiKey||'').trim()),
+    twilio:Boolean(String(req.body?.twilio?.authToken||'').trim())
+   }
+  });
+  res.json(companyConfigurationPayload(row));
+ }catch(e){
+  res.status(e.message==='Company not found'?404:400).json({error:e.message});
+ }
+});
+
+app.post('/api/admin/platform/companies/:id/status',adminAuth,requirePlatformAdmin,(req,res)=>{
+ const row=db.prepare('SELECT * FROM companies WHERE id=?').get(req.params.id);
+ if(!row)return res.status(404).json({error:'Company not found'});
+ const status=String(req.body?.status||'').trim();
+ if(!['draft','configuration_incomplete','ready_for_testing','live'].includes(status)){
+  return res.status(400).json({error:'Invalid company status'});
+ }
+ db.prepare('UPDATE companies SET status=?,updated_at=? WHERE id=?')
+  .run(status,new Date().toISOString(),row.id);
+ audit(req,'staff',req.auth.email,'platform_company_status_changed','company',row.id,{from:row.status,to:status});
+ res.json({company:companyPublic(db.prepare('SELECT * FROM companies WHERE id=?').get(row.id))});
 });
 
 app.post('/api/admin/platform/companies',adminAuth,requirePlatformAdmin,(req,res)=>{
