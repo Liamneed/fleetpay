@@ -2451,6 +2451,27 @@ function updateDriverLiveStateFromTracks(raw){
  return {processed,updated};
 }
 
+
+let vehicleTrackCleanupCounter=0;
+
+function cleanupOldVehicleTrackWebhooks(){
+ vehicleTrackCleanupCounter++;
+
+ // VehicleTracksChanged can arrive roughly every second.
+ // Clean only periodically so we do not run a DELETE per webhook.
+ if(vehicleTrackCleanupCounter<300)return;
+
+ vehicleTrackCleanupCounter=0;
+
+ const cutoff=new Date(Date.now()-(15*60*1000)).toISOString();
+
+ db.prepare(`
+  DELETE FROM autocab_vehicle_webhooks
+  WHERE event_type='VehicleTracksChanged'
+    AND received_at<?
+ `).run(cutoff);
+}
+
 function captureAutocabVehicleWebhook(eventType,raw){
  const payload=
   raw?.Vehicle ??
@@ -2549,6 +2570,7 @@ app.post(
    const raw=req.body||{};
    const x=captureAutocabVehicleWebhook('VehicleTracksChanged',raw);
    const liveState=updateDriverLiveStateFromTracks(raw);
+   cleanupOldVehicleTrackWebhooks();
 
    res.status(200).json({
     ok:true,
@@ -11737,6 +11759,63 @@ if(item.payment_plan_id&&item.request_type==='payment_plan_instalment'){
  }
 }
 const session=await createStripePaymentRequest(item);audit(req,'driver',req.auth.driverId,'stripe_checkout_started','payment_request',item.id,{callsign:item.callsign,amount:item.amount,sessionId:session.id});res.json({ok:true,paymentUrl:session.url})}catch(e){res.status(500).json({error:e.message})}});
+
+app.get('/api/driver/live-state',driverAuth,(req,res)=>{
+ try{
+  const driverId=Number(req.auth.driverId);
+
+  const row=db.prepare(`
+   SELECT
+    driver_id,
+    driver_callsign,
+    vehicle_id,
+    vehicle_callsign,
+    vehicle_status,
+    booking_id,
+    track_timestamp,
+    updated_at
+   FROM driver_live_state
+   WHERE driver_id=?
+   LIMIT 1
+  `).get(driverId);
+
+  if(!row){
+   return res.json({
+    ok:true,
+    available:false,
+    current:false,
+    hasBooking:false,
+    stale:true,
+    state:null
+   });
+  }
+
+  const ageMs=Date.now()-new Date(row.updated_at).getTime();
+  const stale=!Number.isFinite(ageMs) || ageMs>30000;
+  const bookingId=Number(row.booking_id||0);
+
+  res.json({
+   ok:true,
+   available:true,
+   current:!stale,
+   hasBooking:!stale && bookingId>0,
+   stale,
+   state:{
+    driverId:Number(row.driver_id),
+    callsign:row.driver_callsign||'',
+    vehicleId:row.vehicle_id==null?null:Number(row.vehicle_id),
+    vehicleCallsign:row.vehicle_callsign||'',
+    vehicleStatus:row.vehicle_status||'',
+    bookingId:!stale && bookingId>0?bookingId:null,
+    trackTimestamp:row.track_timestamp||null,
+    updatedAt:row.updated_at||null
+   }
+  });
+ }catch(e){
+  res.status(500).json({error:e.message});
+ }
+});
+
 app.post('/api/driver/customer-payment',driverAuth,async(req,res)=>{
   try{
     if(!getStripeClient()){
