@@ -6296,6 +6296,8 @@ function DriverApp(){
  const[customerBooking,setCustomerBooking]=useState('');
  const[customerPayment,setCustomerPayment]=useState(null);
  const[customerPaymentBusy,setCustomerPaymentBusy]=useState(false);
+ const[livePaymentPreview,setLivePaymentPreview]=useState(null);
+ const[livePaymentPreviewBusy,setLivePaymentPreviewBusy]=useState(false);
  const[driverTab,setDriverTab]=useState('home');
  const[theme,setTheme]=useState(()=>localStorage.getItem('fleetpay_theme')||((window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches)?'light':'dark'));
  const[textScale,setTextScale]=useState(()=>{const saved=Number(localStorage.getItem('fleetpay_text_scale'));return Number.isFinite(saved)&&saved>=0.9&&saved<=1.5?saved:1});
@@ -6446,6 +6448,25 @@ function DriverApp(){
  async function enablePush(){setErr('');try{if(!('serviceWorker'in navigator)||!('PushManager'in window))throw new Error('Push notifications are not supported on this device/browser.');const cfg=await api('/api/driver/push-config');if(!cfg.enabled)throw new Error('Push notifications are not configured on the FaivoPay server.');const reg=await navigator.serviceWorker.register('/fleetpay-sw.js');const perm=await Notification.requestPermission();if(perm!=='granted')throw new Error('Notification permission was not granted.');let sub=await reg.pushManager.getSubscription();if(!sub){const padded=cfg.publicKey.replace(/-/g,'+').replace(/_/g,'/').padEnd(Math.ceil(cfg.publicKey.length/4)*4,'=');const bytes=Uint8Array.from(atob(padded),c=>c.charCodeAt(0));sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:bytes})}await api('/api/driver/push-subscription',{method:'POST',body:JSON.stringify({subscription:sub})});setPushReady(true);setNotice('Push notifications are enabled.');await api('/api/driver/push-test',{method:'POST'})}catch(e){setErr(e.message)}}
  async function payRequest(request){setErr('');setPaymentBusy(true);try{const j=await api(`/api/driver/payment-requests/${request.id}/checkout`,{method:'POST'});window.location.assign(j.paymentUrl)}catch(e){setErr(e.message);setPaymentBusy(false)}}
  async function createExtraPlanPayment(plan,maxExtra){setErr('');setNotice('');if(currentExtraPlanPayment)return payRequest(currentExtraPlanPayment);const raw=prompt(`How much extra would you like to pay?\n\nMaximum extra payment: ${money(maxExtra)}\nYour current instalment remains due separately.`,'');if(raw===null)return;const amount=Number(raw);if(!Number.isFinite(amount)||amount<=0){setErr('Enter a valid extra payment amount.');return}if(amount>maxExtra+0.00001){setErr(`Extra payment cannot exceed ${money(maxExtra)}.`);return}setPaymentBusy(true);try{const j=await api(`/api/driver/payment-plans/${plan.id}/extra-payment`,{method:'POST',body:JSON.stringify({amount})});await payRequest(j.paymentRequest)}catch(e){setErr(e.message);setPaymentBusy(false)}}
+
+
+ async function testLivePaymentPreview(){
+  setLivePaymentPreviewBusy(true);
+  setLivePaymentPreview(null);
+  setErr('');
+
+  try{
+   const j=await api('/api/driver/customer-payment/preview');
+   setLivePaymentPreview(j);
+  }catch(e){
+   setLivePaymentPreview({
+    ok:false,
+    error:e.message
+   });
+  }finally{
+   setLivePaymentPreviewBusy(false);
+  }
+ }
 
  async function createCustomerPayment(){
   setErr('');setNotice('');
@@ -6879,6 +6900,50 @@ function DriverApp(){
 
   {PaymentPlanCard()}
   {PaymentDueCard({})}
+
+  <section className="driverCard">
+   <div className="cardTop">
+    <div>
+     <span className="eyebrow">LIVE BOOKING TEST</span>
+     <h2>Payment preview</h2>
+    </div>
+   </div>
+
+   <p className="compactCopy">
+    Temporary test for the current Autocab cash booking.
+   </p>
+
+   <button
+    type="button"
+    className="primary"
+    disabled={livePaymentPreviewBusy}
+    onClick={testLivePaymentPreview}
+   >
+    {livePaymentPreviewBusy
+     ?'Checking current booking...'
+     :'Test live payment preview'}
+   </button>
+
+   {livePaymentPreview&&
+    <div style={{marginTop:16}}>
+     {livePaymentPreview.ok
+      ?<>
+        <div><b>Booking:</b> {livePaymentPreview.bookingId}</div>
+        <div><b>Status:</b> {livePaymentPreview.vehicleStatus}</div>
+        <div><b>Payment:</b> {livePaymentPreview.paymentType}</div>
+        <div><b>Driver amount:</b> {money(livePaymentPreview.fareAmount)}</div>
+        <div><b>FaivoPay fee:</b> {money(livePaymentPreview.feeAmount)}</div>
+        <div><b>Customer total:</b> {money(livePaymentPreview.totalAmount)}</div>
+       </>
+      :<div className="inlineError">
+        <AlertTriangle/>
+        {livePaymentPreview.error||'Preview failed'}
+       </div>
+     }
+    </div>
+   }
+  </section>
+
   {CustomerPaymentForm()}
 
   {standardPaymentRequests.length===0&&
