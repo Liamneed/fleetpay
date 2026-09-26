@@ -979,9 +979,7 @@ app.post('/api/stripe/webhook', express.raw({type:'application/json'}), async (r
 
         if(
           releaseItem &&
-          ['autocab_booking_created','driver_live_booking'].includes(
-           String(releaseItem.source||'')
-          ) &&
+          releaseItem.source==='autocab_booking_created' &&
           releaseItem.payment_status==='paid' &&
           releaseItem.job_status==='release_pending'
         ){
@@ -2892,10 +2890,7 @@ async function releaseFleetPayBooking(paymentId){
  const item=db.prepare('SELECT * FROM customer_payments WHERE id=?').get(paymentId);
  if(!item)throw new Error(`Customer payment ${paymentId} not found`);
 
- if(
-  !['autocab_booking_created','driver_live_booking']
-   .includes(String(item.source||''))
- ){
+ if(item.source!=='autocab_booking_created'){
   return {ok:true,skipped:true,reason:'not_autocab'};
  }
 
