@@ -3281,52 +3281,137 @@ async function sendCustomerPaymentCommunications(item){
    const total=esc(vars.total);
 
    const html=`
-    <div style="margin:0;padding:28px 14px;background:#f3f6f5;font-family:Arial,Helvetica,sans-serif;color:#172033">
-     <div style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:18px;overflow:hidden;border:1px solid #e4e9e7">
-      <div style="background:#173b32;padding:24px 28px;color:#ffffff">
-       <div style="font-size:12px;font-weight:700;letter-spacing:1.5px;opacity:.8">FAIVOPAY</div>
-       <div style="font-size:25px;font-weight:700;margin-top:7px">Your taxi payment is ready</div>
-      </div>
+    <div style="margin:0;padding:32px 12px;background:#f2f5f4;font-family:Arial,Helvetica,sans-serif;color:#172033">
+     <div style="max-width:620px;margin:0 auto">
 
-      <div style="padding:28px">
-       <p style="margin:0 0 20px;font-size:16px;line-height:1.6">Hello ${customer},</p>
-
-       <div style="background:#f7f9f8;border:1px solid #e7ece9;border-radius:14px;padding:20px;margin-bottom:22px">
-        <div style="font-size:13px;color:#66736f;margin-bottom:6px">TOTAL TO PAY</div>
-        <div style="font-size:34px;font-weight:800;color:#173b32">£${total}</div>
-       </div>
-
-       ${(pickup||destination)?`
-       <div style="margin-bottom:22px">
-        <div style="font-size:13px;font-weight:700;color:#66736f;margin-bottom:9px">JOURNEY</div>
-        ${pickup?`<div style="font-size:15px;margin-bottom:6px"><strong>From:</strong> ${pickup}</div>`:''}
-        ${destination?`<div style="font-size:15px"><strong>To:</strong> ${destination}</div>`:''}
-       </div>`:''}
-
-       <table role="presentation" style="width:100%;border-collapse:collapse;margin-bottom:24px;font-size:15px">
+      <div style="background:#173b32;border-radius:20px 20px 0 0;padding:26px 30px;color:#ffffff">
+       <table role="presentation" style="width:100%;border-collapse:collapse">
         <tr>
-         <td style="padding:9px 0;border-bottom:1px solid #edf0ef;color:#66736f">Journey fare</td>
-         <td style="padding:9px 0;border-bottom:1px solid #edf0ef;text-align:right;font-weight:700">£${fare}</td>
-        </tr>
-        <tr>
-         <td style="padding:9px 0;border-bottom:1px solid #edf0ef;color:#66736f">FaivoPay service fee</td>
-         <td style="padding:9px 0;border-bottom:1px solid #edf0ef;text-align:right;font-weight:700">£${fee}</td>
+         <td style="vertical-align:middle">
+          <div style="display:inline-block;width:38px;height:38px;line-height:38px;text-align:center;border-radius:10px;background:#ffffff;color:#173b32;font-size:22px;font-weight:800">F</div>
+         </td>
+         <td style="vertical-align:middle;padding-left:12px;width:100%">
+          <div style="font-size:18px;font-weight:800;letter-spacing:.2px">FaivoPay</div>
+          <div style="font-size:12px;opacity:.75;margin-top:2px">Secure taxi payments</div>
+         </td>
         </tr>
        </table>
 
-       <div style="text-align:center;margin:28px 0">
-        <a href="${paymentLink}" style="display:inline-block;background:#24845b;color:#ffffff;text-decoration:none;font-size:17px;font-weight:700;padding:15px 28px;border-radius:10px">Pay £${total} securely</a>
+       <div style="margin-top:24px;font-size:12px;font-weight:700;letter-spacing:1.2px;opacity:.75">
+        PAYMENT REQUEST
+       </div>
+       <div style="font-size:27px;line-height:1.25;font-weight:800;margin-top:6px">
+        Your taxi payment is ready
+       </div>
+      </div>
+
+      <div style="background:#ffffff;border:1px solid #e1e7e4;border-top:0;border-radius:0 0 20px 20px;padding:30px">
+
+       <p style="margin:0 0 22px;font-size:16px;line-height:1.6">
+        Hello ${customer},
+       </p>
+
+       <p style="margin:0 0 24px;font-size:15px;line-height:1.6;color:#4e5d58">
+        Your journey is ready to pay securely online.
+       </p>
+
+       <div style="background:#f4f8f6;border:1px solid #dce7e2;border-radius:16px;padding:22px;margin-bottom:24px;text-align:center">
+        <div style="font-size:12px;font-weight:700;letter-spacing:1px;color:#687770">
+         TOTAL TO PAY
+        </div>
+        <div style="font-size:40px;line-height:1.15;font-weight:800;color:#173b32;margin-top:7px">
+         £${total}
+        </div>
+       </div>
+
+       ${(pickup||destination)?`
+       <div style="border:1px solid #e5eae8;border-radius:14px;padding:18px 20px;margin-bottom:24px">
+        <div style="font-size:12px;font-weight:700;letter-spacing:1px;color:#687770;margin-bottom:14px">
+         YOUR JOURNEY
+        </div>
+
+        ${pickup?`
+        <table role="presentation" style="width:100%;border-collapse:collapse;margin-bottom:${destination?'14px':'0'}">
+         <tr>
+          <td style="width:48px;vertical-align:top;color:#687770;font-size:13px;font-weight:700">FROM</td>
+          <td style="vertical-align:top;font-size:15px;line-height:1.45;color:#172033">${pickup}</td>
+         </tr>
+        </table>`:''}
+
+        ${destination?`
+        <table role="presentation" style="width:100%;border-collapse:collapse">
+         <tr>
+          <td style="width:48px;vertical-align:top;color:#687770;font-size:13px;font-weight:700">TO</td>
+          <td style="vertical-align:top;font-size:15px;line-height:1.45;color:#172033">${destination}</td>
+         </tr>
+        </table>`:''}
+       </div>`:''}
+
+       <table role="presentation" style="width:100%;border-collapse:collapse;font-size:15px;margin-bottom:26px">
+        <tr>
+         <td style="padding:11px 0;border-bottom:1px solid #edf0ef;color:#687770">
+          Journey fare
+         </td>
+         <td style="padding:11px 0;border-bottom:1px solid #edf0ef;text-align:right;font-weight:700">
+          £${fare}
+         </td>
+        </tr>
+
+        <tr>
+         <td style="padding:11px 0;border-bottom:1px solid #edf0ef;color:#687770">
+          FaivoPay service fee
+         </td>
+         <td style="padding:11px 0;border-bottom:1px solid #edf0ef;text-align:right;font-weight:700">
+          £${fee}
+         </td>
+        </tr>
+
+        <tr>
+         <td style="padding:14px 0 0;font-size:16px;font-weight:800;color:#173b32">
+          Total
+         </td>
+         <td style="padding:14px 0 0;text-align:right;font-size:18px;font-weight:800;color:#173b32">
+          £${total}
+         </td>
+        </tr>
+       </table>
+
+       <div style="text-align:center;margin:30px 0 20px">
+        <a href="${paymentLink}"
+           style="display:inline-block;background:#24845b;color:#ffffff;text-decoration:none;font-size:17px;font-weight:800;padding:16px 34px;border-radius:11px">
+         Pay £${total} securely
+        </a>
+       </div>
+
+       <div style="text-align:center;font-size:12px;line-height:1.5;color:#71807a;margin-bottom:24px">
+        🔒 Secure card payment
        </div>
 
        ${bookingId?`
-       <div style="text-align:center;font-size:12px;color:#7a8581;margin-top:20px">
-        Booking reference: <strong>${bookingId}</strong>
+       <div style="background:#fafbfb;border-radius:10px;padding:12px 16px;text-align:center;font-size:12px;color:#71807a;margin-bottom:22px">
+        Booking reference&nbsp; <strong style="color:#394842">${bookingId}</strong>
        </div>`:''}
 
-       <p style="margin:26px 0 0;font-size:12px;line-height:1.55;color:#7a8581;text-align:center">
-        Secure payment powered by FaivoPay. If you were not expecting this payment request, please contact your taxi provider.
+       <div style="border-top:1px solid #edf0ef;padding-top:20px">
+        <p style="margin:0 0 8px;font-size:12px;line-height:1.55;color:#7b8883;text-align:center">
+         If the button above does not work, copy and paste this secure link into your browser:
+        </p>
+        <p style="margin:0;font-size:11px;line-height:1.5;text-align:center;word-break:break-all">
+         <a href="${paymentLink}" style="color:#24845b;text-decoration:none">${paymentLink}</a>
+        </p>
+       </div>
+
+       <p style="margin:24px 0 0;font-size:12px;line-height:1.6;color:#7b8883;text-align:center">
+        Payment securely processed through FaivoPay.<br>
+        If you were not expecting this request, please contact your taxi provider.
        </p>
+
       </div>
+
+      <div style="padding:18px;text-align:center;font-size:11px;color:#87938f">
+       © FaivoPay · Secure payments for taxi journeys
+      </div>
+
      </div>
     </div>`;
 
