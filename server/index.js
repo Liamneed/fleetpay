@@ -666,6 +666,18 @@ ON customer_payments(booking_id)
 WHERE source='autocab_booking_created';
 `);
 
+db.exec(`
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_payments_driver_live_booking
+ON customer_payments(booking_id)
+WHERE source='driver_live_booking';
+`);
+
+db.exec(`
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_payments_autocab_linked_booking
+ON customer_payments(booking_id)
+WHERE source IN ('autocab_booking_created','driver_live_booking');
+`);
+
 const defaultSettings = {
  negativeThreshold: 20,
  minimumPayoutThreshold: 0,
@@ -899,12 +911,12 @@ app.post('/api/stripe/webhook', express.raw({type:'application/json'}), async (r
             SET status=?,
                 payment_status='paid',
                 job_status=CASE
-                 WHEN source='autocab_booking_created'
+                 WHEN source IN ('autocab_booking_created','driver_live_booking')
                  THEN 'release_pending'
                  ELSE job_status
                 END,
                 autocab_release_status=CASE
-                 WHEN source='autocab_booking_created'
+                 WHEN source IN ('autocab_booking_created','driver_live_booking')
                  THEN 'pending'
                  ELSE autocab_release_status
                 END,
@@ -967,7 +979,9 @@ app.post('/api/stripe/webhook', express.raw({type:'application/json'}), async (r
 
         if(
           releaseItem &&
-          releaseItem.source==='autocab_booking_created' &&
+          ['autocab_booking_created','driver_live_booking'].includes(
+           String(releaseItem.source||'')
+          ) &&
           releaseItem.payment_status==='paid' &&
           releaseItem.job_status==='release_pending'
         ){
@@ -2878,7 +2892,10 @@ async function releaseFleetPayBooking(paymentId){
  const item=db.prepare('SELECT * FROM customer_payments WHERE id=?').get(paymentId);
  if(!item)throw new Error(`Customer payment ${paymentId} not found`);
 
- if(item.source!=='autocab_booking_created'){
+ if(
+  !['autocab_booking_created','driver_live_booking']
+   .includes(String(item.source||''))
+ ){
   return {ok:true,skipped:true,reason:'not_autocab'};
  }
 
@@ -12053,6 +12070,362 @@ app.get('/api/driver/customer-payment/preview',driverAuth,async(req,res)=>{
   console.error('[FaivoPay] Driver customer payment preview error',e);
   res.status(500).json({
    error:'Unable to verify the current booking for payment.'
+  });
+ }
+});
+
+
+app.post('/api/driver/customer-payment/live',driverAuth,async(req,res)=>{
+ try{
+  if(!getStripeClient()){
+   return res.status(400).json({
+    error:'Customer card payments are not currently available.'
+   });
+  }
+
+  const driverId=Number(req.auth.driverId);
+  const driver=cachedDriver(driverId);
+
+  if(!driver){
+   return res.status(404).json({
+    error:'Driver not found in FaivoPay cache'
+   });
+  }
+
+  const live=db.prepare(`
+   SELECT
+    driver_id,
+    driver_callsign,
+    vehicle_status,
+    booking_id,
+    track_timestamp,
+    updated_at
+   FROM driver_live_state
+   WHERE driver_id=?
+   LIMIT 1
+  `).get(driverId);
+
+  if(!live){
+   return res.status(409).json({
+    error:'No current Autocab driver state is available.'
+   });
+  }
+
+  const freshness=driverLiveStateFreshness(live);
+
+  if(!freshness.globalFeedFresh){
+   return res.status(409).json({
+    error:'Live Autocab vehicle updates are temporarily unavailable. Please try again.'
+   });
+  }
+
+  if(!freshness.driverStateFresh){
+   return res.status(409).json({
+    error:'Your current Autocab driver state is too old to use safely. Please try again.'
+   });
+  }
+
+  const bookingId=Number(live.booking_id||0);
+
+  if(!Number.isFinite(bookingId) || bookingId<=0){
+   return res.status(409).json({
+    error:'You do not currently have an active booking.'
+   });
+  }
+
+  /*
+   * Autocab is authoritative at the point the payment is created.
+   * The webhook cache only identifies the candidate booking.
+   */
+  const booking=await getJson(
+   `${BASE_URL}/booking/v1/booking/${encodeURIComponent(bookingId)}`
+  );
+
+  if(!booking || typeof booking!=='object'){
+   return res.status(502).json({
+    error:'Autocab did not return the current booking.'
+   });
+  }
+
+  const assignedDriver=
+   booking.driver ??
+   booking.Driver ??
+   booking.driverDetails?.driver ??
+   booking.DriverDetails?.Driver ??
+   booking.assignedDriver ??
+   booking.AssignedDriver ??
+   {};
+
+  const assignedDriverId=Number(
+   assignedDriver.id ??
+   assignedDriver.Id ??
+   assignedDriver.driverId ??
+   assignedDriver.DriverId ??
+   booking.driverId ??
+   booking.DriverId ??
+   0
+  );
+
+  if(
+   !Number.isFinite(assignedDriverId) ||
+   assignedDriverId<=0 ||
+   assignedDriverId!==driverId
+  ){
+   return res.status(409).json({
+    error:'This booking is no longer assigned to you.'
+   });
+  }
+
+  const paymentValues=[
+   booking.paymentType ?? booking.PaymentType,
+   booking.paymentMethod ?? booking.PaymentMethod
+  ]
+   .filter(v=>v!==null && v!==undefined && String(v).trim()!=='')
+   .map(v=>String(v).trim().toLowerCase());
+
+  const isCash=
+   paymentValues.length>0 &&
+   paymentValues.every(v=>v==='cash');
+
+  if(!isCash){
+   return res.status(409).json({
+    error:'FaivoPay customer payment is only available for cash bookings.'
+   });
+  }
+
+  const pricing=booking.pricing ?? booking.Pricing ?? {};
+
+  const fareAmount=Math.round(
+   Number(pricing.cost ?? pricing.Cost ?? 0)*100
+  )/100;
+
+  if(!Number.isFinite(fareAmount) || fareAmount<=0){
+   return res.status(409).json({
+    error:'The current Autocab driver cost is not available yet.'
+   });
+  }
+
+  const feeAmount=customerPaymentFeeFor(fareAmount);
+  const totalAmount=Math.round((fareAmount+feeAmount)*100)/100;
+
+  /*
+   * Prevent two FaivoPay payments being created for the same Autocab
+   * booking, including bookings already created by the legacy
+   * BookingCreated + capability flow.
+   */
+  const existing=db.prepare(`
+   SELECT *
+   FROM customer_payments
+   WHERE booking_id=?
+     AND source IN ('autocab_booking_created','driver_live_booking')
+   ORDER BY created_at DESC
+   LIMIT 1
+  `).get(String(bookingId));
+
+  if(existing){
+   if(
+    existing.payment_status==='paid' ||
+    existing.status==='paid'
+   ){
+    return res.json({
+     ok:true,
+     alreadyPaid:true,
+     reused:true,
+     id:existing.id,
+     bookingId,
+     fareAmount:Number(existing.fare_amount||0),
+     feeAmount:Number(existing.fee_amount||0),
+     totalAmount:Number(existing.total_amount||0),
+     paymentUrl:existing.payment_url||`${PUBLIC_BASE_URL}/pay/${existing.id}`
+    });
+   }
+
+   if(existing.status!=='open'){
+    return res.status(409).json({
+     error:'A previous FaivoPay payment already exists for this booking and cannot be reused safely.'
+    });
+   }
+
+   const existingFare=
+    Math.round(Number(existing.fare_amount||0)*100)/100;
+
+   const existingFee=
+    Math.round(Number(existing.fee_amount||0)*100)/100;
+
+   if(
+    existingFare!==fareAmount ||
+    existingFee!==feeAmount
+   ){
+    return res.status(409).json({
+     error:
+      'An existing payment link for this booking has a different amount. '+
+      'FaivoPay has not changed it automatically.'
+    });
+   }
+
+   return res.json({
+    ok:true,
+    reused:true,
+    id:existing.id,
+    bookingId,
+    fareAmount,
+    feeAmount,
+    totalAmount,
+    paymentUrl:
+     existing.payment_url||
+     `${PUBLIC_BASE_URL}/pay/${existing.id}`
+   });
+  }
+
+  const pickup=booking.pickup ?? booking.Pickup ?? {};
+  const destination=booking.destination ?? booking.Destination ?? {};
+
+  const passengerName=String(
+   booking.name ??
+   booking.Name ??
+   booking.passengerName ??
+   booking.PassengerName ??
+   ''
+  ).trim();
+
+  const passengerMobile=String(
+   booking.telephoneNumber ??
+   booking.TelephoneNumber ??
+   booking.mobile ??
+   booking.Mobile ??
+   booking.passengerMobile ??
+   booking.PassengerMobile ??
+   ''
+  ).trim();
+
+  const passengerEmail=String(
+   booking.customerEmail ??
+   booking.CustomerEmail ??
+   booking.email ??
+   booking.Email ??
+   ''
+  ).trim();
+
+  const pickupText=String(
+   pickup.address ??
+   pickup.Address ??
+   pickup.text ??
+   pickup.addressText ??
+   ''
+  ).trim();
+
+  const destinationText=String(
+   destination.address ??
+   destination.Address ??
+   destination.text ??
+   destination.addressText ??
+   ''
+  ).trim();
+
+  const journeyAt=
+   booking.pickupDueTimeUtc ??
+   booking.PickupDueTimeUtc ??
+   booking.pickupDueTime ??
+   booking.PickupDueTime ??
+   null;
+
+  const paymentMethod=String(
+   booking.paymentMethod ??
+   booking.PaymentMethod ??
+   booking.paymentType ??
+   booking.PaymentType ??
+   'Cash'
+  ).trim();
+
+  const paymentId=id('customerpay');
+  const now=new Date().toISOString();
+  const paymentUrl=`${PUBLIC_BASE_URL}/pay/${paymentId}`;
+
+  db.prepare(`
+   INSERT INTO customer_payments(
+    id,
+    driver_id,
+    callsign,
+    driver_name,
+    booking_id,
+    fare_amount,
+    fee_amount,
+    total_amount,
+    status,
+    payment_url,
+    payment_method,
+    customer_name,
+    customer_mobile,
+    customer_email,
+    pickup,
+    destination,
+    journey_at,
+    taxi_company,
+    source,
+    created_by,
+    created_at,
+    updated_at
+   )
+   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `).run(
+   paymentId,
+   driverId,
+   driver.callsign,
+   driver.fullName,
+   String(bookingId),
+   fareAmount,
+   feeAmount,
+   totalAmount,
+   'open',
+   paymentUrl,
+   paymentMethod||'Cash',
+   passengerName||null,
+   passengerMobile||null,
+   passengerEmail||null,
+   pickupText||null,
+   destinationText||null,
+   journeyAt,
+   getSettings().companyName||'Need-A-Cab',
+   'driver_live_booking',
+   'driver_live_booking',
+   now,
+   now
+  );
+
+  audit(
+   req,
+   'driver',
+   driverId,
+   'live_customer_payment_created',
+   'customer_payment',
+   paymentId,
+   {
+    bookingId,
+    callsign:driver.callsign,
+    vehicleStatus:live.vehicle_status||null,
+    fareSource:'autocab_pricing_cost',
+    fareAmount,
+    feeAmount,
+    totalAmount
+   }
+  );
+
+  res.json({
+   ok:true,
+   reused:false,
+   id:paymentId,
+   bookingId,
+   fareAmount,
+   feeAmount,
+   totalAmount,
+   paymentUrl,
+   fareSource:'autocab_pricing_cost'
+  });
+
+ }catch(e){
+  console.error('[FaivoPay] Live customer payment creation error',e);
+  res.status(500).json({
+   error:'Unable to create the customer payment.'
   });
  }
 });
