@@ -6980,17 +6980,59 @@ function DriverApp(){
      }
 
      {livePaymentPreview.ok&&
-      <button
-       type="button"
-       className="primary full actionButton"
-       style={{marginTop:16}}
-       disabled={customerPaymentBusy}
-       onClick={createLiveCustomerPayment}
-      >
-       {customerPaymentBusy
-        ?'Creating payment...'
-        :'Create live payment'}
-      </button>
+      customerPayment?.paymentUrl &&
+      String(customerPayment.bookingId||'')===String(livePaymentPreview.bookingId||'')
+      ?<div className="activePaymentSheet" style={{marginTop:16}}>
+        <div className="activePaymentTop">
+         <div>
+          <span>PAYMENT READY</span>
+          <strong>{money(customerPayment.totalAmount)}</strong>
+          <small>Booking {customerPayment.bookingId}</small>
+         </div>
+         <Pill tone="warn">Awaiting</Pill>
+        </div>
+
+        <div className="qrPanel">
+         <QRCodeSVG
+          value={customerPayment.paymentUrl}
+          size={210}
+          level="M"
+          includeMargin
+         />
+         <b>Scan to pay</b>
+         <span>Secure FaivoPay payment</span>
+        </div>
+
+        <div className="paymentActions">
+         <button
+          className="primary"
+          type="button"
+          onClick={()=>window.open(customerPayment.paymentUrl,'_blank')}
+         >
+          Open payment link
+         </button>
+
+         <button
+          className="outline"
+          type="button"
+          onClick={()=>sharePayment(customerPayment)}
+         >
+          Share link
+         </button>
+        </div>
+       </div>
+      :livePaymentPreview.ok&&
+       <button
+        type="button"
+        className="primary full actionButton"
+        style={{marginTop:16}}
+        disabled={customerPaymentBusy}
+        onClick={createLiveCustomerPayment}
+       >
+        {customerPaymentBusy
+         ?'Creating payment...'
+         :'Create live payment'}
+       </button>
      }
     </div>
    }
