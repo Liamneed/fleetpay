@@ -305,6 +305,7 @@ CREATE TABLE IF NOT EXISTS posted_driver_dockets (
  non_commissionable REAL NOT NULL DEFAULT 0,
 
  approved INTEGER NOT NULL DEFAULT 0,
+ source TEXT,
 
  raw_pricing_json TEXT,
  raw_json TEXT NOT NULL,
@@ -578,7 +579,8 @@ for (const sql of [
   'ALTER TABLE payout_runs ADD COLUMN funding_sent_at TEXT',
   'ALTER TABLE payout_runs ADD COLUMN funds_cleared_at TEXT',
   'ALTER TABLE payout_runs ADD COLUMN released_at TEXT',
-  'ALTER TABLE payout_runs ADD COLUMN reconciled_at TEXT'
+  'ALTER TABLE payout_runs ADD COLUMN reconciled_at TEXT',
+  'ALTER TABLE posted_driver_dockets ADD COLUMN source TEXT'
 ]) { try { db.exec(sql); } catch {} }
 
 // Existing databases created before automated Autocab customer payments
@@ -3233,12 +3235,13 @@ async function syncPostedDriverDockets(){
    commissionable,
    non_commissionable,
    approved,
+   source,
    raw_pricing_json,
    raw_json,
    first_seen_at,
    last_seen_at
   ) VALUES(
-   ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+   ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
   )
   ON CONFLICT(autocab_docket_id) DO UPDATE SET
    docket_number=excluded.docket_number,
@@ -3262,6 +3265,7 @@ async function syncPostedDriverDockets(){
    commissionable=excluded.commissionable,
    non_commissionable=excluded.non_commissionable,
    approved=excluded.approved,
+   source=excluded.source,
    raw_pricing_json=excluded.raw_pricing_json,
    raw_json=excluded.raw_json,
    last_seen_at=excluded.last_seen_at
@@ -3344,6 +3348,7 @@ async function syncPostedDriverDockets(){
    Number(docket?.commissionable||0),
    Number(docket?.nonCommissionable||0),
    docket?.approved ? 1 : 0,
+   String(docket?.source||'').trim()||null,
    JSON.stringify(pricing||{}),
    JSON.stringify(docket),
    now,
@@ -13116,7 +13121,8 @@ app.get('/api/driver/account-work',driverAuth,(req,res)=>{
     extra_cost extraCost,
     commissionable,
     non_commissionable nonCommissionable,
-    approved
+    approved,
+    source
    FROM posted_driver_dockets
    WHERE driver_id=?
      AND datetime(posted_at)>=datetime(?)

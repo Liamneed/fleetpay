@@ -6300,10 +6300,8 @@ function DriverApp(){
  const[livePaymentPreviewBusy,setLivePaymentPreviewBusy]=useState(false);
  const[showManualPayment,setShowManualPayment]=useState(false);
  const[activityFilter,setActivityFilter]=useState('account-work');
- const[accountWork,setAccountWork]=useState({
-  summary:{jobs:0,totalDriverCost:0,totalWaitingCost:0,totalExtraCost:0},
-  jobs:[]
- });
+ const[accountWork,setAccountWork]=useState(null);
+ const[accountWorkLoading,setAccountWorkLoading]=useState(true);
  const[accountWorkError,setAccountWorkError]=useState('');
  const[lastLivePreview,setLastLivePreview]=useState(null);
  const[lastLivePaid,setLastLivePaid]=useState(null);
@@ -6406,20 +6404,32 @@ function DriverApp(){
   if(!force&&me&&Date.now()-lastLoadAt.current<15000)return;
   loadingDriver.current=true;
   try{
-   const next=await api('/api/driver/me');
-   setMe(next);
+   const [meResult,workResult]=await Promise.allSettled([
+    api('/api/driver/me'),
+    api('/api/driver/account-work')
+   ]);
+
+   if(meResult.status!=='fulfilled'){
+    throw meResult.reason;
+   }
+
+   setMe(meResult.value);
    lastLoadAt.current=Date.now();
 
-   try{
-    const work=await api('/api/driver/account-work');
-    setAccountWork(work);
+   if(workResult.status==='fulfilled'){
+    setAccountWork(workResult.value);
     setAccountWorkError('');
-   }catch(x){
-    setAccountWorkError(x.message||'Account work is temporarily unavailable.');
+   }else{
+    setAccountWorkError(
+     workResult.reason?.message||'Account work is temporarily unavailable.'
+    );
    }
   }catch{
    localStorage.removeItem('fleetpay_driver');setToken('');setMe(null);
-  }finally{loadingDriver.current=false}
+  }finally{
+   setAccountWorkLoading(false);
+   loadingDriver.current=false;
+  }
  }
 
  async function checkPush(){
@@ -7249,10 +7259,18 @@ function DriverApp(){
     <section className="mockAccountWorkSummary">
      <div>
       <span>POSTED THIS WEEK</span>
-      <strong>{money(summary.totalDriverCost||0)}</strong>
-      <small>
-       {Number(summary.jobs||0)} posted {Number(summary.jobs||0)===1?'job':'jobs'}
-      </small>
+      {accountWorkLoading
+       ?<>
+         <strong className="mockAccountWorkLoading">Loading…</strong>
+         <small>Checking your posted account work</small>
+        </>
+       :<>
+         <strong>{money(summary.totalDriverCost||0)}</strong>
+         <small>
+          {Number(summary.jobs||0)} posted {Number(summary.jobs||0)===1?'job':'jobs'}
+         </small>
+        </>
+      }
      </div>
      <span className="mockRoundIcon indigo"><WalletCards/></span>
     </section>
@@ -7270,20 +7288,56 @@ function DriverApp(){
       <div className="mockEmptyList">{accountWorkError}</div>
      }
 
-     {!accountWorkError&&jobs.length===0&&
+     {accountWorkLoading&&
+      <div className="mockEmptyList">Loading posted account work…</div>
+     }
+
+     {!accountWorkLoading&&!accountWorkError&&jobs.length===0&&
       <div className="mockEmptyList">
        No account work has been posted this week.
       </div>
      }
 
-     {!accountWorkError&&jobs.map(x=>
+     {!accountWorkLoading&&!accountWorkError&&jobs.map(x=>
       <details className="mockAccountWorkRow" key={`aw-${x.autocabDocketId}`}>
        <summary>
         <span className="mockRoundIcon blue"><Banknote/></span>
 
         <span className="mockAccountWorkMain">
-         <b>Booking {x.bookingId}</b>
+         <span className="mockAccountWorkTitle">
+          <b>Booking {x.bookingId}</b>
+          {x.source&&
+           <i className={`mockAccountWorkStatus ${
+            String(x.source).toLowerCase()==='completed'
+             ?'completed'
+             :String(x.source).toLowerCase()==='nofare'
+             ?'nofare'
+             :String(x.source).toLowerCase()==='cancelled'
+             ?'cancelled'
+             :''
+           }`}>
+            {String(x.source).toLowerCase()==='nofare'
+             ?'No Fare'
+             :x.source
+            }
+           </i>
+          }
+         </span>
          <span>{x.accountName||x.accountCode||'Account job'}</span>
+         {(Number(x.waitingTimeCost||0)>0||Number(x.extraCost||0)>0)&&
+          <span className="mockAccountWorkFlags">
+           {Number(x.waitingTimeCost||0)>0&&
+            <i>
+             Waiting
+             {Number(x.waitingTime||0)>0?` ${Number(x.waitingTime)} min`:''}
+             {' · '}{money(x.waitingTimeCost)}
+            </i>
+           }
+           {Number(x.extraCost||0)>0&&
+            <i>Extras · {money(x.extraCost)}</i>
+           }
+          </span>
+         }
          <small>{dt(x.completedAt||x.postedAt)}</small>
         </span>
 
@@ -7307,30 +7361,29 @@ function DriverApp(){
 
         <div className="mockAccountWorkBreakdown">
          <div>
-          <span>Paid to you</span>
-          <strong>{money(x.driverCost)}</strong>
+          <span>Fare</span>
+          <b>{Number(x.fare||0)>0?money(x.fare):'Not itemised'}</b>
          </div>
 
-         {Number(x.fare||0)>0&&
-          <div>
-           <span>Fare</span>
-           <b>{money(x.fare)}</b>
-          </div>
-         }
+         <div>
+          <span>Waiting</span>
+          <b>
+           {Number(x.waitingTime||0)>0
+            ?`${Number(x.waitingTime)} min · ${money(x.waitingTimeCost||0)}`
+            :money(x.waitingTimeCost||0)
+           }
+          </b>
+         </div>
 
-         {Number(x.waitingTimeCost||0)>0&&
-          <div>
-           <span>Waiting</span>
-           <b>{money(x.waitingTimeCost)}</b>
-          </div>
-         }
+         <div>
+          <span>Extras</span>
+          <b>{money(x.extraCost||0)}</b>
+         </div>
 
-         {Number(x.extraCost||0)>0&&
-          <div>
-           <span>Extras</span>
-           <b>{money(x.extraCost)}</b>
-          </div>
-         }
+         <div className="mockAccountWorkTotal">
+          <span>Total cost</span>
+          <strong>{money(x.driverCost)}</strong>
+         </div>
         </div>
 
         <div className="mockAccountWorkMeta">
@@ -7353,8 +7406,9 @@ function DriverApp(){
         <div className="mockAccountWorkNote">
          <ShieldCheck/>
          <span>
-          This is the final amount posted by the office. Waiting and extras shown above
-          are included for information and are not added again.
+          Total cost is the final driver amount posted by the office. Fare, waiting
+          and extras are the component values supplied by Autocab and may not always
+          add up separately to the final total.
          </span>
         </div>
        </div>

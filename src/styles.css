@@ -10536,3 +10536,109 @@ body {
     padding-left:0;
   }
 }
+
+/* Account Work docket breakdown polish */
+.mockAccountWorkLoading{
+  font-size:1.45rem!important;
+  letter-spacing:-.025em!important;
+}
+
+.mockAccountWorkFlags{
+  display:flex!important;
+  flex-wrap:wrap;
+  gap:5px;
+  margin-top:5px!important;
+  white-space:normal!important;
+  overflow:visible!important;
+}
+
+.mockAccountWorkFlags i{
+  display:inline-flex;
+  align-items:center;
+  padding:3px 6px;
+  border-radius:6px;
+  background:rgba(47,117,239,.1);
+  color:#5598ef;
+  font-size:.69rem;
+  font-style:normal;
+  font-weight:750;
+  line-height:1.25;
+}
+
+.mockAccountWorkBreakdown .mockAccountWorkTotal{
+  margin-top:4px;
+  padding-top:11px;
+  border-top:1px solid rgba(120,130,150,.14);
+}
+
+.mockAccountWorkTotal span{
+  font-weight:800;
+  opacity:.8;
+}
+
+.mockAccountWorkTotal strong{
+  font-size:1.16rem!important;
+  letter-spacing:-.02em;
+}
+
+.mockDriverApp.theme-dark .mockAccountWorkFlags i{
+  background:rgba(76,139,255,.12);
+  color:#83b5ff;
+}
+
+
+/* Account Work job status badges */
+.mockAccountWorkTitle{
+  display:flex!important;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:7px;
+}
+
+.mockAccountWorkTitle b{
+  min-width:0;
+}
+
+.mockAccountWorkStatus{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  padding:3px 7px;
+  border-radius:999px;
+  font-size:.64rem;
+  line-height:1;
+  font-style:normal;
+  font-weight:850;
+  letter-spacing:.015em;
+  white-space:nowrap;
+}
+
+.mockAccountWorkStatus.completed{
+  background:rgba(39,174,96,.12);
+  color:#239154;
+}
+
+.mockAccountWorkStatus.nofare{
+  background:rgba(230,160,20,.14);
+  color:#a87000;
+}
+
+.mockAccountWorkStatus.cancelled{
+  background:rgba(205,75,75,.12);
+  color:#bd4e4e;
+}
+
+.mockDriverApp.theme-dark .mockAccountWorkStatus.completed{
+  background:rgba(53,196,111,.15);
+  color:#66d993;
+}
+
+.mockDriverApp.theme-dark .mockAccountWorkStatus.nofare{
+  background:rgba(245,184,55,.15);
+  color:#f1c35f;
+}
+
+.mockDriverApp.theme-dark .mockAccountWorkStatus.cancelled{
+  background:rgba(227,91,91,.15);
+  color:#ef8a8a;
+}
