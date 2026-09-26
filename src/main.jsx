@@ -629,6 +629,19 @@ function AdminApp(){
  const[mobileNav,setMobileNav]=useState(false),[loading,setLoading]=useState(false),[err,setErr]=useState('');
  const[sessionBooting,setSessionBooting]=useState(Boolean(token));
  const[newStaff,setNewStaff]=useState({name:'',email:'',role:'office',password:''}),[showNewStaff,setShowNewStaff]=useState(false);
+ const[platformCompanies,setPlatformCompanies]=useState([]);
+ const[platformCompany,setPlatformCompany]=useState(null);
+ const[platformWizardOpen,setPlatformWizardOpen]=useState(false);
+ const[platformWizardStep,setPlatformWizardStep]=useState(0);
+ const[platformWizard,setPlatformWizard]=useState({
+  general:{name:'',primaryDomain:'',supportEmail:'',supportPhone:'',timezone:'Europe/London'},
+  autocab:{companyIds:'',adjustmentsEnabled:false,apiKey:''},
+  stripe:{secretKey:'',webhookSecret:''},
+  sendgrid:{fromEmail:'',fromName:'FaivoPay',apiKey:''},
+  twilio:{accountSid:'',messagingServiceSid:'',fromNumber:'',authToken:''},
+  branding:{productName:'FaivoPay',supportEmail:'',supportPhone:''},
+  features:{paymentPlans:true,earlyPayouts:true,customerPayments:true,driverPayouts:true,demoLab:true}
+ });
  const[manual,setManual]=useState({callsign:'',type:'pay_in',amount:'',reason:''}),[manualBusy,setManualBusy]=useState(false);
  const[testSms,setTestSms]=useState({to:'',message:'FaivoPay test SMS – communications are configured correctly.'});
  const[testEmail,setTestEmail]=useState('');
@@ -709,6 +722,17 @@ function AdminApp(){
  const loadDriverUsers=()=>safeLoad(async()=>setDriverUsers(await api('/api/admin/users')));
  const loadStaff=()=>safeLoad(async()=>setStaff((await api('/api/admin/staff')).staff||[]));
  const loadSecurity=()=>safeLoad(async()=>setSecurityLogs((await api('/api/admin/security')).logs||[]));
+ const loadPlatformCompanies=()=>safeLoad(async()=>{
+  const j=await api('/api/admin/platform/companies');
+  setPlatformCompanies(j.companies||[]);
+ });
+ const openPlatformCompany=async id=>{
+  try{
+   const j=await api(`/api/admin/platform/companies/${id}`);
+   setPlatformCompany(j);
+   setPlatformWizardOpen(false);
+  }catch(e){alert(e.message)}
+ };
  const loadDemo=()=>safeLoad(async()=>setDemo(await api('/api/admin/demo')));
 
  useEffect(()=>{
@@ -837,9 +861,9 @@ function AdminApp(){
  },[token,view,txQ,txType,txStatus,txCategory,txDateFrom,txDateTo]);
 
  useEffect(()=>{if(token&&view==='transactions')loadTransactions()},[txType,txStatus,txCategory,txDateFrom,txDateTo]);
- const isAdmin=me?.role==='administrator',canMoney=['administrator','finance'].includes(me?.role),canOffice=['administrator','finance','office'].includes(me?.role);
+ const isAdmin=me?.role==='administrator',isPlatformAdmin=Boolean(me?.platformAdmin),canMoney=['administrator','finance'].includes(me?.role),canOffice=['administrator','finance','office'].includes(me?.role);
  const nav=[
-  ['dashboard',LayoutDashboard,'Dashboard'],['transactions',CreditCard,'Transactions'],['customerPayments',Send,'Customer Payments'],['monday',CalendarDays,'Monday Run'],['early',ArrowUpRight,'Early Payouts'],['outstanding',AlertTriangle,'Outstanding'],['paymentPlans',CalendarDays,'Payment Plans'],['fees',BadgePoundSterling,'Fees & Billing'],['demo',PlayCircle,'Demo Lab'],['drivers',Users,'Drivers'],['access',UserCheck,'Users & Access'],...(isAdmin?[['security',ShieldCheck,'Security'],['settings',Settings,'Settings']]:[])
+  ['dashboard',LayoutDashboard,'Dashboard'],['transactions',CreditCard,'Transactions'],['customerPayments',Send,'Customer Payments'],['monday',CalendarDays,'Monday Run'],['early',ArrowUpRight,'Early Payouts'],['outstanding',AlertTriangle,'Outstanding'],['paymentPlans',CalendarDays,'Payment Plans'],['fees',BadgePoundSterling,'Fees & Billing'],['demo',PlayCircle,'Demo Lab'],['drivers',Users,'Drivers'],['access',UserCheck,'Users & Access'],...(isPlatformAdmin?[['platform',KeyRound,'Platform Admin']]:[]),...(isAdmin?[['security',ShieldCheck,'Security'],['settings',Settings,'Settings']]:[])
  ];
  const filtered=useMemo(()=>drivers.filter(d=>{const h=`${d.callsign} ${d.fullName} ${d.mobile} ${d.email} ${d.driverId} ${d.bankAccount?.accountHolder||''} ${d.bankAccount?.accountNumberMasked||''}`.toLowerCase();if(!h.includes(q.toLowerCase()))return false;if(filter==='negative')return(d.currentBalance??0)<0;if(filter==='positive')return(d.currentBalance??0)>0;if(filter==='unmatched')return d.currentBalance==null;if(filter==='bank_ready')return Boolean(d.bankAccount?.ready)&&!d.bankAccount?.changedRecently;if(filter==='bank_missing')return !d.bankAccount?.ready;if(filter==='bank_recent')return Boolean(d.bankAccount?.changedRecently);if(filter==='payout_excluded')return Boolean(d.payoutExcluded);return true}).sort((a,b)=>String(a.callsign??'').localeCompare(String(b.callsign??''),'en-GB',{numeric:true})),[drivers,q,filter]);
 
@@ -1005,7 +1029,7 @@ function AdminApp(){
  );
  const dueEarly=earlySummary?.requests?.filter(x=>['requested','approved','batched'].includes(x.status))||[];
  const recentTx=transactions.slice(0,7);
- function go(k){setView(k);setMobileNav(false);setErr('');if(k==='customerPayments')loadCustomerAdmin();if(k==='monday'){loadMonday();loadSett()}if(k==='early'){loadEarlySummary();loadSett()}if(k==='outstanding'){loadOutstanding();loadPaymentPlans();}if(k==='paymentPlans')loadPaymentPlans();if(k==='fees')loadFees();if(k==='demo')loadDemo();if(k==='drivers')loadDrivers();if(k==='access'){loadStaff();loadDriverUsers()}if(k==='security')loadSecurity();if(k==='settings'){loadSettings();loadIntegrations()}}
+ function go(k){setView(k);setMobileNav(false);setErr('');if(k==='customerPayments')loadCustomerAdmin();if(k==='monday'){loadMonday();loadSett()}if(k==='early'){loadEarlySummary();loadSett()}if(k==='outstanding'){loadOutstanding();loadPaymentPlans();}if(k==='paymentPlans')loadPaymentPlans();if(k==='fees')loadFees();if(k==='demo')loadDemo();if(k==='drivers')loadDrivers();if(k==='access'){loadStaff();loadDriverUsers()}if(k==='security')loadSecurity();if(k==='platform'){loadPlatformCompanies();setPlatformCompany(null)}if(k==='settings'){loadSettings();loadIntegrations()}}
  async function createOfficeCustomerPayment(e){
   e?.preventDefault();setCustomerCreateBusy(true);
   try{
@@ -1721,7 +1745,75 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
  async function downloadFeesCsv(){try{const r=await fetch(`${API_BASE}/api/admin/fees/csv?status=all`,{headers:{Authorization:`Bearer ${token}`}});if(!r.ok)throw new Error('Could not export fees');const b=await r.blob(),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download='FaivoPay-fees.csv';a.click();URL.revokeObjectURL(u)}catch(e){alert(e.message)}}
  async function downloadPaymentPlansCsv(){try{const r=await fetch(`${API_BASE}/api/admin/payment-plans/csv`,{headers:{Authorization:`Bearer ${token}`}});if(!r.ok)throw new Error('Could not export payment plans');const b=await r.blob(),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download='FaivoPay-payment-plans.csv';a.click();URL.revokeObjectURL(u)}catch(e){alert(e.message)}}
  async function downloadOfficeCsv(dataset,filename){try{const r=await fetch(`${API_BASE}/api/admin/exports/${dataset}.csv`,{headers:{Authorization:`Bearer ${token}`}});if(!r.ok){let message='Could not export CSV';try{const j=await r.json();message=j.error||message}catch{}throw new Error(message)}const b=await r.blob(),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download=filename||`FaivoPay-${dataset}.csv`;a.click();URL.revokeObjectURL(u)}catch(e){alert(e.message)}}
- async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff',{method:'POST',body:JSON.stringify(newStaff)});setNewStaff({name:'',email:'',role:'office',password:''});setShowNewStaff(false);await loadStaff()}catch(e){alert(e.message)}}
+
+ async function startCompanyWizard(){
+  setPlatformCompany(null);
+  setPlatformWizardStep(0);
+  setPlatformWizard({
+   general:{name:'',primaryDomain:'',supportEmail:'',supportPhone:'',timezone:'Europe/London'},
+   autocab:{companyIds:'',adjustmentsEnabled:false,apiKey:''},
+   stripe:{secretKey:'',webhookSecret:''},
+   sendgrid:{fromEmail:'',fromName:'FaivoPay',apiKey:''},
+   twilio:{accountSid:'',messagingServiceSid:'',fromNumber:'',authToken:''},
+   branding:{productName:'FaivoPay',supportEmail:'',supportPhone:''},
+   features:{paymentPlans:true,earlyPayouts:true,customerPayments:true,driverPayouts:true,demoLab:true}
+  });
+  setPlatformWizardOpen(true);
+ }
+
+ async function createPlatformCompany(){
+  const g=platformWizard.general;
+  if(!String(g.name||'').trim())return alert('Enter the company name first.');
+  try{
+   const created=await api('/api/admin/platform/companies',{
+    method:'POST',
+    body:JSON.stringify(g)
+   });
+   const companyId=created.company.id;
+   const saved=await api(`/api/admin/platform/companies/${companyId}`,{
+    method:'PUT',
+    body:JSON.stringify(platformWizard)
+   });
+   setPlatformWizardOpen(false);
+   setPlatformWizardStep(0);
+   setPlatformCompany(saved);
+   await loadPlatformCompanies();
+   alert(`${created.company.name} has been created as a draft company. No live integrations have been switched.`);
+  }catch(e){alert(e.message)}
+ }
+
+ async function savePlatformCompany(){
+  if(!platformCompany?.company?.id)return;
+  try{
+   const saved=await api(`/api/admin/platform/companies/${platformCompany.company.id}`,{
+    method:'PUT',
+    body:JSON.stringify({
+     general:platformCompany.company,
+     autocab:platformCompany.config?.autocab||{},
+     stripe:platformCompany.config?.stripe||{},
+     sendgrid:platformCompany.config?.sendgrid||{},
+     twilio:platformCompany.config?.twilio||{},
+     branding:platformCompany.config?.branding||{},
+     features:platformCompany.config?.features||{}
+    })
+   });
+   setPlatformCompany(saved);
+   await loadPlatformCompanies();
+   alert('Company configuration saved. Live integration behaviour is unchanged.');
+  }catch(e){alert(e.message)}
+ }
+
+ function updatePlatformConfig(section,key,value){
+  setPlatformCompany(cur=>({
+   ...cur,
+   config:{
+    ...cur.config,
+    [section]:{...(cur.config?.[section]||{}),[key]:value}
+   }
+  }));
+ }
+
+async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff',{method:'POST',body:JSON.stringify(newStaff)});setNewStaff({name:'',email:'',role:'office',password:''});setShowNewStaff(false);await loadStaff()}catch(e){alert(e.message)}}
  async function updateStaff(u,changes){try{await api(`/api/admin/staff/${u.id}`,{method:'PATCH',body:JSON.stringify(changes)});await loadStaff()}catch(e){alert(e.message)}}
  async function setApproval(u,approved){try{await api(`/api/admin/users/${u.id}`,{method:'PATCH',body:JSON.stringify({approved})});await loadDriverUsers()}catch(e){alert(e.message)}}
  const statusTone=s=>['paid','completed','approved','sent','invoiced'].includes(String(s))?'good':['failed','declined','overdue','cancelled','defaulted'].includes(String(s))?'bad':['on_plan','active','paused'].includes(String(s))?'warn':'warn';
@@ -4786,6 +4878,177 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
     {view==='demo'&&<DemoLab demo={demo} loadDemo={loadDemo} resetDemo={resetDemo} action={demoAction} demoEmail={demoEmail} setDemoEmail={setDemoEmail} demoMobile={demoMobile} setDemoMobile={setDemoMobile} sendEmail={demoSendEmail} sendSms={demoSendSms}/>}
     {view==='drivers'&&<><section className="officePageIntro"><div><span>AUTOCAB + PAYOUT READINESS</span><h2>Driver accounts</h2><p>Balances and payout-bank readiness in one place. Full bank account numbers are never exposed in the normal office view.</p></div><button className="secondary" onClick={syncNow}><RefreshCw className={loading?'spin':''}/>Sync Autocab</button></section><section className="officeStats three"><Stat icon={Banknote} label="Bank ready" value={meta.bankReady??drivers.filter(d=>d.bankAccount?.ready).length} sub="Payout details saved"/><Stat icon={AlertTriangle} label="Missing bank details" value={meta.bankMissing??drivers.filter(d=>!d.bankAccount?.ready).length} sub="Cannot be released for payout"/><Stat icon={Clock3} label="Recently changed" value={meta.bankRecentlyChanged??drivers.filter(d=>d.bankAccount?.changedRecently).length} sub="Changed in the last 7 days"/></section><div className="driverToolbar"><div className="searchBox"><Search/><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search callsign, name, mobile, email or bank ending…"/></div><select value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All drivers</option><option value="bank_ready">Bank ready</option><option value="bank_missing">Missing bank details</option><option value="bank_recent">Recently changed bank</option><option value="payout_excluded">Payout excluded</option><option value="positive">Positive balance</option><option value="negative">Negative balance</option><option value="unmatched">Unmatched</option></select></div><section className="panel driverPanel"><div className="tableWrap proTable"><table><thead><tr><th>Callsign</th><th>Driver</th><th>Previous</th><th>Current</th><th>Payout account</th><th>Payout status</th><th>Last processed</th></tr></thead><tbody>{filtered.map(d=>{const b=d.bankAccount||{};return <tr key={d.driverId} onClick={()=>setSelected(d)}><td><span className="callsign">{d.callsign}</span></td><td><b>{d.fullName}</b><small>{d.email||d.mobile||`Driver ${d.driverId}`}</small></td><td>{money(d.previousBalance)}</td><td><b className={(d.currentBalance??0)<0?'negative':''}>{money(d.currentBalance)}</b></td><td><div className="bankTableCell"><Pill tone={bankTone(b)}>{b.label||'Bank details missing'}</Pill>{b.ready&&<small>{b.accountNumberMasked} · {b.sortCodeMasked}</small>}</div></td><td><div className="bankTableCell"><Pill tone={d.payoutExcluded?'bad':'good'}>{d.payoutExcluded?'Excluded':'Enabled'}</Pill>{d.payoutExcluded&&<small>{d.payoutExclusionReason||'Persistent exclusion'}</small>}</div></td><td>{dt(d.lastProcessed)}</td></tr>})}</tbody></table></div></section></>}
     {view==='access'&&<><section className="officePageIntro"><div><span>IDENTITY & PERMISSIONS</span><h2>Users & access</h2><p>Office accounts use mandatory authenticator MFA. Roles limit who can move money or change settings.</p></div>{isAdmin&&<button className="primary" onClick={()=>setShowNewStaff(!showNewStaff)}><UserCheck/>Add office user</button>}</section>{isAdmin&&showNewStaff&&<section className="panel"><form className="staffForm" onSubmit={createStaff}><label>Name<input required value={newStaff.name} onChange={e=>setNewStaff({...newStaff,name:e.target.value})}/></label><label>Email<input type="email" required value={newStaff.email} onChange={e=>setNewStaff({...newStaff,email:e.target.value})}/></label><label>Role<select value={newStaff.role} onChange={e=>setNewStaff({...newStaff,role:e.target.value})}><option value="administrator">Administrator</option><option value="finance">Finance</option><option value="office">Office</option><option value="readonly">Read only</option></select></label><label>Temporary password<input type="password" minLength="10" required value={newStaff.password} onChange={e=>setNewStaff({...newStaff,password:e.target.value})}/></label><button className="primary">Create user</button></form></section>}<section className="panel"><div className="panelHead"><div><h3>Office users</h3><p>MFA and role status for each staff account.</p></div><button className="mini" onClick={loadStaff}>Refresh</button></div><div className="tableWrap proTable"><table><thead><tr><th>User</th><th>Role</th><th>MFA</th><th>Last login</th><th>Status</th><th/></tr></thead><tbody>{staff.map(u=><tr key={u.id}><td><b>{u.name}</b><small>{u.email}</small></td><td><select value={u.role} onChange={e=>updateStaff(u,{role:e.target.value})} disabled={u.id===me?.id}><option value="administrator">Administrator</option><option value="finance">Finance</option><option value="office">Office</option><option value="readonly">Read only</option></select></td><td><Pill tone={u.mfaEnabled?'good':'warn'}>{u.mfaEnabled?'Enabled':'Setup required'}</Pill></td><td>{dt(u.lastLoginAt)}</td><td><Pill tone={u.active?'good':'bad'}>{u.active?'Active':'Disabled'}</Pill></td><td>{u.id!==me?.id&&<button className="mini" onClick={()=>updateStaff(u,{active:!u.active})}>{u.active?'Disable':'Enable'}</button>}</td></tr>)}</tbody></table></div></section><section className="panel"><div className="panelHead"><div><h3>Driver app accounts</h3><p>Registration remains matched to active Autocab driver details.</p></div><button className="mini" onClick={loadDriverUsers}>Refresh</button></div><div className="tableWrap proTable"><table><thead><tr><th>Callsign</th><th>Email</th><th>Created</th><th>Last login</th><th>Status</th><th/></tr></thead><tbody>{driverUsers.map(u=><tr key={u.id}><td><span className="callsign">{u.callsign}</span></td><td>{u.email}</td><td>{dt(u.createdAt)}</td><td>{dt(u.lastLoginAt)}</td><td><Pill tone={u.approved?'good':'warn'}>{u.approved?'Approved':'Pending'}</Pill></td><td>{canOffice&&<button className="mini" onClick={()=>setApproval(u,!u.approved)}>{u.approved?'Suspend':'Approve'}</button>}</td></tr>)}</tbody></table></div></section></>}
+
+    {view==='platform'&&isPlatformAdmin&&<>
+     <section className="officePageIntro">
+      <div>
+       <span>PLATFORM ADMINISTRATION</span>
+       <h2>Companies & onboarding</h2>
+       <p>Configure operators, integrations and features without changing the live environment until each company is explicitly migrated and tested.</p>
+      </div>
+      <button className="primary" onClick={startCompanyWizard}><UserCheck/>New company</button>
+     </section>
+
+     <section className="platformSummaryGrid">
+      <div className="platformMetric"><span>Companies</span><b>{platformCompanies.length}</b><small>Configured on this FaivoPay platform</small></div>
+      <div className="platformMetric"><span>Live</span><b>{platformCompanies.filter(x=>x.status==='live'||x.status==='active').length}</b><small>Currently marked active/live</small></div>
+      <div className="platformMetric"><span>Draft</span><b>{platformCompanies.filter(x=>x.status==='draft'||x.status==='configuration_incomplete').length}</b><small>Still being configured</small></div>
+     </section>
+
+     {!platformWizardOpen&&!platformCompany&&
+      <section className="panel">
+       <div className="panelHead">
+        <div><h3>Companies</h3><p>Select a company to review its platform configuration.</p></div>
+        <button className="mini" onClick={loadPlatformCompanies}>Refresh</button>
+       </div>
+       <div className="platformCompanyList">
+        {platformCompanies.map(c=>
+         <button className="platformCompanyRow" key={c.id} onClick={()=>openPlatformCompany(c.id)}>
+          <div><b>{c.name}</b><span>{c.primaryDomain||'No domain configured'}</span></div>
+          <div><Pill tone={['live','active'].includes(c.status)?'good':c.status==='ready_for_testing'?'warn':'muted'}>{String(c.status||'draft').replaceAll('_',' ')}</Pill><small>{c.supportEmail||'No support email'}</small></div>
+         </button>
+        )}
+        {!platformCompanies.length&&<div className="emptyState">No companies have been created yet.</div>}
+       </div>
+      </section>
+     }
+
+     {platformWizardOpen&&
+      <section className="panel platformWizard">
+       <div className="panelHead">
+        <div><h3>New company setup</h3><p>Create the company as a safe draft. Credentials are stored but are not used by live integrations yet.</p></div>
+        <button className="mini" onClick={()=>setPlatformWizardOpen(false)}>Cancel</button>
+       </div>
+
+       <div className="platformWizardSteps">
+        {['Company','Autocab','Stripe','SendGrid','Twilio','Features','Review'].map((x,i)=>
+         <button key={x} className={platformWizardStep===i?'active':''} onClick={()=>setPlatformWizardStep(i)}>
+          <span>{i+1}</span>{x}
+         </button>
+        )}
+       </div>
+
+       {platformWizardStep===0&&<div className="formGrid2 platformWizardBody">
+        <label>Company name<input value={platformWizard.general.name} onChange={e=>setPlatformWizard({...platformWizard,general:{...platformWizard.general,name:e.target.value}})}/></label>
+        <label>Primary domain<input placeholder="example.faivopay.app" value={platformWizard.general.primaryDomain} onChange={e=>setPlatformWizard({...platformWizard,general:{...platformWizard.general,primaryDomain:e.target.value}})}/></label>
+        <label>Support email<input type="email" value={platformWizard.general.supportEmail} onChange={e=>setPlatformWizard({...platformWizard,general:{...platformWizard.general,supportEmail:e.target.value}})}/></label>
+        <label>Support phone<input value={platformWizard.general.supportPhone} onChange={e=>setPlatformWizard({...platformWizard,general:{...platformWizard.general,supportPhone:e.target.value}})}/></label>
+        <label>Timezone<input value={platformWizard.general.timezone} onChange={e=>setPlatformWizard({...platformWizard,general:{...platformWizard.general,timezone:e.target.value}})}/></label>
+       </div>}
+
+       {platformWizardStep===1&&<div className="formGrid2 platformWizardBody">
+        <label>Autocab company ID(s)<input placeholder="1,2" value={platformWizard.autocab.companyIds} onChange={e=>setPlatformWizard({...platformWizard,autocab:{...platformWizard.autocab,companyIds:e.target.value}})}/></label>
+        <label>Autocab API key<input type="password" autoComplete="new-password" value={platformWizard.autocab.apiKey} onChange={e=>setPlatformWizard({...platformWizard,autocab:{...platformWizard.autocab,apiKey:e.target.value}})}/><small>Never displayed again after saving.</small></label>
+        <label className="toggleRow"><span className="toggleCopy"><b>Allow Autocab adjustments</b><small>Leave disabled during onboarding.</small></span><span className="toggleSwitch"><input type="checkbox" checked={platformWizard.autocab.adjustmentsEnabled} onChange={e=>setPlatformWizard({...platformWizard,autocab:{...platformWizard.autocab,adjustmentsEnabled:e.target.checked}})}/><span className="toggleSlider"/></span></label>
+       </div>}
+
+       {platformWizardStep===2&&<div className="formGrid2 platformWizardBody">
+        <label>Stripe secret key<input type="password" autoComplete="new-password" value={platformWizard.stripe.secretKey} onChange={e=>setPlatformWizard({...platformWizard,stripe:{...platformWizard.stripe,secretKey:e.target.value}})}/></label>
+        <label>Stripe webhook secret<input type="password" autoComplete="new-password" value={platformWizard.stripe.webhookSecret} onChange={e=>setPlatformWizard({...platformWizard,stripe:{...platformWizard.stripe,webhookSecret:e.target.value}})}/></label>
+       </div>}
+
+       {platformWizardStep===3&&<div className="formGrid2 platformWizardBody">
+        <label>From name<input value={platformWizard.sendgrid.fromName} onChange={e=>setPlatformWizard({...platformWizard,sendgrid:{...platformWizard.sendgrid,fromName:e.target.value}})}/></label>
+        <label>From email<input type="email" value={platformWizard.sendgrid.fromEmail} onChange={e=>setPlatformWizard({...platformWizard,sendgrid:{...platformWizard.sendgrid,fromEmail:e.target.value}})}/></label>
+        <label>SendGrid API key<input type="password" autoComplete="new-password" value={platformWizard.sendgrid.apiKey} onChange={e=>setPlatformWizard({...platformWizard,sendgrid:{...platformWizard.sendgrid,apiKey:e.target.value}})}/></label>
+       </div>}
+
+       {platformWizardStep===4&&<div className="formGrid2 platformWizardBody">
+        <label>Twilio Account SID<input value={platformWizard.twilio.accountSid} onChange={e=>setPlatformWizard({...platformWizard,twilio:{...platformWizard.twilio,accountSid:e.target.value}})}/></label>
+        <label>Messaging Service SID<input value={platformWizard.twilio.messagingServiceSid} onChange={e=>setPlatformWizard({...platformWizard,twilio:{...platformWizard.twilio,messagingServiceSid:e.target.value}})}/></label>
+        <label>Fallback From number<input value={platformWizard.twilio.fromNumber} onChange={e=>setPlatformWizard({...platformWizard,twilio:{...platformWizard.twilio,fromNumber:e.target.value}})}/></label>
+        <label>Twilio Auth Token<input type="password" autoComplete="new-password" value={platformWizard.twilio.authToken} onChange={e=>setPlatformWizard({...platformWizard,twilio:{...platformWizard.twilio,authToken:e.target.value}})}/></label>
+       </div>}
+
+       {platformWizardStep===5&&<div className="platformFeatureGrid platformWizardBody">
+        {[
+         ['paymentPlans','Payment plans'],
+         ['earlyPayouts','Early payouts'],
+         ['customerPayments','Customer payments'],
+         ['driverPayouts','Driver payouts'],
+         ['demoLab','Demo Lab']
+        ].map(([key,label])=>
+         <label className="toggleRow" key={key}>
+          <span className="toggleCopy"><b>{label}</b><small>Available to this company when the tenant is activated.</small></span>
+          <span className="toggleSwitch"><input type="checkbox" checked={platformWizard.features[key]} onChange={e=>setPlatformWizard({...platformWizard,features:{...platformWizard.features,[key]:e.target.checked}})}/><span className="toggleSlider"/></span>
+         </label>
+        )}
+       </div>}
+
+       {platformWizardStep===6&&<div className="platformReview">
+        <div><span>Company</span><b>{platformWizard.general.name||'Not entered'}</b></div>
+        <div><span>Domain</span><b>{platformWizard.general.primaryDomain||'Not entered'}</b></div>
+        <div><span>Autocab</span><b>{platformWizard.autocab.companyIds?`Company ${platformWizard.autocab.companyIds}`:'Not configured'}</b></div>
+        <div><span>Stripe</span><b>{platformWizard.stripe.secretKey?'Credentials entered':'Not configured'}</b></div>
+        <div><span>SendGrid</span><b>{platformWizard.sendgrid.fromEmail||'Not configured'}</b></div>
+        <div><span>Twilio</span><b>{platformWizard.twilio.accountSid?'Credentials entered':'Not configured'}</b></div>
+        <div className="platformReviewNotice"><ShieldCheck/><div><b>This creates a draft only</b><span>No live FaivoPay integration will start using these values yet.</span></div></div>
+       </div>}
+
+       <div className="platformWizardActions">
+        <button className="mini" disabled={platformWizardStep===0} onClick={()=>setPlatformWizardStep(x=>Math.max(0,x-1))}>Back</button>
+        {platformWizardStep<6
+         ?<button className="primary" onClick={()=>setPlatformWizardStep(x=>Math.min(6,x+1))}>Continue</button>
+         :<button className="primary" onClick={createPlatformCompany}>Create draft company</button>}
+       </div>
+      </section>
+     }
+
+     {!platformWizardOpen&&platformCompany&&
+      <>
+       <section className="panel">
+        <div className="panelHead">
+         <div><h3>{platformCompany.company.name}</h3><p>{platformCompany.company.primaryDomain||'No domain configured'} · {String(platformCompany.company.status||'draft').replaceAll('_',' ')}</p></div>
+         <div className="inlineActions"><button className="mini" onClick={()=>setPlatformCompany(null)}>Back</button><button className="primary" onClick={savePlatformCompany}>Save configuration</button></div>
+        </div>
+        <div className="formGrid2">
+         <label>Company name<input value={platformCompany.company.name||''} onChange={e=>setPlatformCompany({...platformCompany,company:{...platformCompany.company,name:e.target.value}})}/></label>
+         <label>Primary domain<input value={platformCompany.company.primaryDomain||''} onChange={e=>setPlatformCompany({...platformCompany,company:{...platformCompany.company,primaryDomain:e.target.value}})}/></label>
+         <label>Support email<input value={platformCompany.company.supportEmail||''} onChange={e=>setPlatformCompany({...platformCompany,company:{...platformCompany.company,supportEmail:e.target.value}})}/></label>
+         <label>Support phone<input value={platformCompany.company.supportPhone||''} onChange={e=>setPlatformCompany({...platformCompany,company:{...platformCompany.company,supportPhone:e.target.value}})}/></label>
+        </div>
+       </section>
+
+       <div className="settingsSections">
+        <section className="panel settingsCardV2">
+         <div className="settingsHead"><Settings/><div><h3>Autocab</h3><p>Operator connection. Current live runtime is still using environment configuration.</p></div></div>
+         <div className="formGrid2">
+          <label>Company ID(s)<input value={platformCompany.config?.autocab?.companyIds||''} onChange={e=>updatePlatformConfig('autocab','companyIds',e.target.value)}/></label>
+          <label>Replace API key<input type="password" autoComplete="new-password" value={platformCompany.config?.autocab?.apiKey||''} onChange={e=>updatePlatformConfig('autocab','apiKey',e.target.value)}/><small>{platformCompany.config?.autocab?.apiKeyConfigured?'A key is securely stored. Leave blank to keep it.':'No company-specific key stored.'}</small></label>
+         </div>
+        </section>
+
+        <section className="panel settingsCardV2">
+         <div className="settingsHead"><CreditCard/><div><h3>Stripe</h3><p>Payment credentials are masked and never returned to the browser.</p></div></div>
+         <div className="formGrid2">
+          <label>Replace secret key<input type="password" autoComplete="new-password" value={platformCompany.config?.stripe?.secretKey||''} onChange={e=>updatePlatformConfig('stripe','secretKey',e.target.value)}/><small>{platformCompany.config?.stripe?.secretKeyConfigured?'Secret key stored':'No company-specific key stored'}</small></label>
+          <label>Replace webhook secret<input type="password" autoComplete="new-password" value={platformCompany.config?.stripe?.webhookSecret||''} onChange={e=>updatePlatformConfig('stripe','webhookSecret',e.target.value)}/><small>{platformCompany.config?.stripe?.webhookSecretConfigured?'Webhook secret stored':'No company-specific webhook secret stored'}</small></label>
+         </div>
+        </section>
+
+        <section className="panel settingsCardV2">
+         <div className="settingsHead"><Send/><div><h3>SendGrid</h3><p>Email identity and API credentials.</p></div></div>
+         <div className="formGrid2">
+          <label>From name<input value={platformCompany.config?.sendgrid?.fromName||''} onChange={e=>updatePlatformConfig('sendgrid','fromName',e.target.value)}/></label>
+          <label>From email<input value={platformCompany.config?.sendgrid?.fromEmail||''} onChange={e=>updatePlatformConfig('sendgrid','fromEmail',e.target.value)}/></label>
+          <label>Replace API key<input type="password" autoComplete="new-password" value={platformCompany.config?.sendgrid?.apiKey||''} onChange={e=>updatePlatformConfig('sendgrid','apiKey',e.target.value)}/><small>{platformCompany.config?.sendgrid?.apiKeyConfigured?'API key stored':'No company-specific key stored'}</small></label>
+         </div>
+        </section>
+
+        <section className="panel settingsCardV2">
+         <div className="settingsHead"><Send/><div><h3>Twilio</h3><p>SMS account and Messaging Service configuration.</p></div></div>
+         <div className="formGrid2">
+          <label>Account SID<input value={platformCompany.config?.twilio?.accountSid||''} onChange={e=>updatePlatformConfig('twilio','accountSid',e.target.value)}/></label>
+          <label>Messaging Service SID<input value={platformCompany.config?.twilio?.messagingServiceSid||''} onChange={e=>updatePlatformConfig('twilio','messagingServiceSid',e.target.value)}/></label>
+          <label>Fallback From number<input value={platformCompany.config?.twilio?.fromNumber||''} onChange={e=>updatePlatformConfig('twilio','fromNumber',e.target.value)}/></label>
+          <label>Replace Auth Token<input type="password" autoComplete="new-password" value={platformCompany.config?.twilio?.authToken||''} onChange={e=>updatePlatformConfig('twilio','authToken',e.target.value)}/><small>{platformCompany.config?.twilio?.authTokenConfigured?'Auth token stored':'No company-specific token stored'}</small></label>
+         </div>
+        </section>
+       </div>
+      </>
+     }
+    </>}
+
     {view==='security'&&isAdmin&&<><section className="officePageIntro"><div><span>SECURITY CENTRE</span><h2>Authentication & audit</h2><p>Office access requires password plus authenticator verification. Sensitive actions are recorded against the signed-in user.</p></div><div className="secureBadge"><ShieldCheck/><div><b>MFA enforced</b><span>{me?.email}</span></div></div></section><section className="securityCards"><div className="securityCard"><ShieldCheck/><div><span>Current session</span><b>MFA verified</b><small>{me?.role}</small></div></div><div className="securityCard"><KeyRound/><div><span>Authentication</span><b>TOTP authenticator</b><small>Required for every office account</small></div></div><div className="securityCard"><Clock3/><div><span>Session lifetime</span><b>12 hours maximum</b><small>Sign out on shared devices</small></div></div></section><section className="panel"><div className="panelHead"><div><h3>Security history</h3><p>Recent login, MFA and security events.</p></div><button className="mini" onClick={loadSecurity}>Refresh</button></div><div className="securityLogList">{securityLogs.map(l=><div className="securityLog" key={l.id}><div className="logIcon"><ShieldCheck/></div><div><b>{String(l.action).replaceAll('_',' ')}</b><span>{l.actorId||'system'} · {dt(l.createdAt)}</span><small>{l.ip||'No IP recorded'}</small></div></div>)}</div></section></>}
     {view==='settings'&&isAdmin&&settings&&<><section className="officePageIntro"><div><span>ADMINISTRATION</span><h2>FaivoPay settings</h2><p>Operational rules, payout descriptions, communications and fee splits. Secret values are stored encrypted and are never returned to the browser.</p></div><button className="primary" onClick={saveSettings}><Settings/>Save all settings</button></section><div className="settingsSections">
      <section className="panel settingsCardV2"><div className="settingsHead"><CalendarDays/><div><h3>Settlement & payout rules</h3><p>Controls used for Monday and early payout processing.</p></div></div><div className="formGrid2"><label>Outstanding threshold<div className="moneyField"><span>£</span><input type="number" step="0.01" value={settings.negativeThreshold??0} onChange={e=>setSettings({...settings,negativeThreshold:e.target.value})}/></div><small>Amounts owed below this are carried forward.</small></label><label>Minimum payout threshold<div className="moneyField"><span>£</span><input type="number" min="0" step="0.01" value={settings.minimumPayoutThreshold??0} onChange={e=>setSettings({...settings,minimumPayoutThreshold:e.target.value})}/></div><small>Positive balances below this remain on the driver account until a future settlement.</small></label><label>Weekly FaivoPay fee<div className="moneyField"><span>£</span><input type="number" step="0.01" value={settings.weeklyAppFee??0} onChange={e=>setSettings({...settings,weeklyAppFee:e.target.value})}/></div></label><label className="toggleRow"><span className="toggleCopy"><b>Charge weekly fee when no work is recorded</b><small>Turn this off to waive the weekly fee for drivers with no recorded work during the week being settled.</small></span><span className="toggleSwitch"><input type="checkbox" checked={settings.chargeWeeklyFeeWhenInactive!==false} onChange={e=>setSettings({...settings,chargeWeeklyFeeWhenInactive:e.target.checked})}/><span className="toggleSlider"/></span></label><label>Early payout fee<div className="moneyField"><span>£</span><input type="number" step="0.01" value={settings.earlyPayoutFee??0} onChange={e=>setSettings({...settings,earlyPayoutFee:e.target.value})}/></div></label><label>Early payout cutoff<input type="time" value={settings.earlyPayoutCutoffTime||'11:00'} onChange={e=>setSettings({...settings,earlyPayoutCutoffTime:e.target.value})}/></label><label>Outstanding payment deadline<input type="time" value={settings.outstandingDueTime||'17:00'} onChange={e=>setSettings({...settings,outstandingDueTime:e.target.value})}/></label><label>Autocab sync interval<input type="number" min="2" max="60" value={settings.syncMinutes||10} onChange={e=>setSettings({...settings,syncMinutes:e.target.value})}/><small>Minutes between automatic syncs.</small></label></div><div className="formGrid1"><label>Weekly payout Autocab description<input value={settings.weeklyPayoutReasonTemplate||''} onChange={e=>setSettings({...settings,weeklyPayoutReasonTemplate:e.target.value})}/><small>Available: {'{date}'} {'{time}'} {'{callsign}'} {'{amount}'}</small></label><label>Early payout Autocab description<input value={settings.earlyPayoutReasonTemplate||''} onChange={e=>setSettings({...settings,earlyPayoutReasonTemplate:e.target.value})}/></label><div className="formGrid2"><label>Manual pay-in default reason<input value={settings.manualPayInReasonDefault||''} onChange={e=>setSettings({...settings,manualPayInReasonDefault:e.target.value})}/></label><label>Manual payout default reason<input value={settings.manualPayoutReasonDefault||''} onChange={e=>setSettings({...settings,manualPayoutReasonDefault:e.target.value})}/></label></div></div></section>

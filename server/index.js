@@ -19,6 +19,7 @@ const COMPANY_IDS = String(process.env.AUTOCAB_COMPANY_IDS || process.env.AUTOCA
   .filter(Number.isFinite);
 const BASE_URL = 'https://autocab-api.azure-api.net';
 const TOKEN_SECRET = process.env.PORTAL_TOKEN_SECRET || 'change-me-in-production';
+const SETTINGS_ENCRYPTION_SECRET = process.env.SETTINGS_ENCRYPTION_KEY || TOKEN_SECRET;
 const ADMIN_EMAIL = String(process.env.ADMIN_EMAIL || 'admin@fleetpay.local').toLowerCase();
 const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || 'ChangeMe123!');
 const APP_ENV_LABEL = String(process.env.APP_ENV_LABEL || 'LOCAL').trim().toUpperCase();
@@ -49,7 +50,7 @@ const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || '';
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '';
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@example.com';
 if(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY){ webpush.setVapidDetails(VAPID_SUBJECT,VAPID_PUBLIC_KEY,VAPID_PRIVATE_KEY); }
-const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
+// Stripe client is resolved dynamically from company configuration with env fallback.
 const DATA_DIR = path.resolve('data');
 fs.mkdirSync(DATA_DIR, { recursive: true });
 const DB_PATH = path.join(DATA_DIR, 'fleetpay.sqlite');
@@ -358,7 +359,50 @@ CREATE TABLE IF NOT EXISTS staff_users (
  last_login_at TEXT
 );
 
+
 CREATE INDEX IF NOT EXISTS idx_staff_email ON staff_users(email);
+
+CREATE TABLE IF NOT EXISTS platform_admins (
+ staff_id TEXT PRIMARY KEY,
+ granted_at TEXT NOT NULL,
+ granted_by TEXT NOT NULL DEFAULT 'bootstrap',
+ FOREIGN KEY(staff_id) REFERENCES staff_users(id)
+);
+
+CREATE TABLE IF NOT EXISTS companies (
+ id TEXT PRIMARY KEY,
+ name TEXT NOT NULL,
+ slug TEXT NOT NULL UNIQUE,
+ status TEXT NOT NULL DEFAULT 'draft',
+ primary_domain TEXT,
+ support_email TEXT,
+ support_phone TEXT,
+ timezone TEXT NOT NULL DEFAULT 'Europe/London',
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS company_settings (
+ company_id TEXT NOT NULL,
+ key TEXT NOT NULL,
+ value TEXT NOT NULL,
+ updated_at TEXT NOT NULL,
+ PRIMARY KEY(company_id,key),
+ FOREIGN KEY(company_id) REFERENCES companies(id)
+);
+
+CREATE TABLE IF NOT EXISTS company_secure_settings (
+ company_id TEXT NOT NULL,
+ key TEXT NOT NULL,
+ value_enc TEXT NOT NULL,
+ updated_at TEXT NOT NULL,
+ PRIMARY KEY(company_id,key),
+ FOREIGN KEY(company_id) REFERENCES companies(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_companies_status ON companies(status);
+CREATE INDEX IF NOT EXISTS idx_company_settings_company ON company_settings(company_id);
+
 
 CREATE TABLE IF NOT EXISTS secure_settings (
  key TEXT PRIMARY KEY,
@@ -681,17 +725,20 @@ for (const [k,v] of Object.entries(defaultSettings)) {
 
 app.use(cors());
 app.post('/api/stripe/webhook', express.raw({type:'application/json'}), async (req,res)=>{
-  if(!stripe || !STRIPE_WEBHOOK_SECRET){
+  const stripeClient=getStripeClient();
+  const stripeWebhookSecret=getStripeWebhookSecret();
+
+  if(!stripeClient || !stripeWebhookSecret){
     return res.status(503).send('Stripe webhook not configured');
   }
 
   let event;
 
   try{
-    event=stripe.webhooks.constructEvent(
+    event=stripeClient.webhooks.constructEvent(
       req.body,
       req.headers['stripe-signature'],
-      STRIPE_WEBHOOK_SECRET
+      stripeWebhookSecret
     );
   }catch(e){
     return res.status(400).send(`Webhook Error: ${e.message}`);
@@ -729,7 +776,7 @@ app.post('/api/stripe/webhook', express.raw({type:'application/json'}), async (r
          * webhook event only describes one refund, while FaivoPay's
          * current-state fields represent the cumulative Stripe outcome.
          */
-        const stripeRefunds=await stripe.refunds.list({
+        const stripeRefunds=await stripeClient.refunds.list({
          payment_intent:paymentIntentId,
          limit:100
         });
@@ -1312,7 +1359,7 @@ app.post(['/api/webhooks/autocab/booking-created','/created'],async(req,res)=>{
      receivedAt
     );
 
-    if(stripe){
+    if(getStripeClient()){
      const item=db.prepare(`
       SELECT *
       FROM customer_payments
@@ -1645,7 +1692,7 @@ app.post(['/api/webhooks/autocab/booking-modified','/modified'],async(req,res)=>
       LIMIT 1
      `).get(bookingId);
 
-     if(payment && stripe && !payment.provider_session_id){
+     if(payment && getStripeClient() && !payment.provider_session_id){
       await createStripeCustomerPayment(payment);
 
       const updatedItem=db.prepare(`
@@ -1669,7 +1716,7 @@ app.post(['/api/webhooks/autocab/booking-modified','/modified'],async(req,res)=>
     */
    if(
     payment &&
-    stripe &&
+    getStripeClient() &&
     payment.status==='open' &&
     !payment.provider_session_id
    ){
@@ -2011,7 +2058,7 @@ function applyCustomerJobState(bookingId,b,jobStatus){
 }
 
 async function expireUnpaidCustomerCheckout(row){
- if(!row || !stripe)return;
+ if(!row || !getStripeClient())return;
 
  const paymentStatus=
   row.payment_status ||
@@ -2022,7 +2069,7 @@ async function expireUnpaidCustomerCheckout(row){
  if(!row.provider_session_id)return;
 
  try{
-  await stripe.checkout.sessions.expire(row.provider_session_id);
+  await getStripeClient().checkout.sessions.expire(row.provider_session_id);
  }catch(e){
   console.warn(
    '[FaivoPay] Stripe checkout expiry skipped/failed',
@@ -2261,20 +2308,36 @@ function setSettings(obj){
 }
 function id(prefix){return `${prefix}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`}
 
-const SECURE_KEY=crypto.createHash('sha256').update(String(TOKEN_SECRET)).digest();
-function encryptSecret(value){
- const iv=crypto.randomBytes(12),cipher=crypto.createCipheriv('aes-256-gcm',SECURE_KEY,iv);
+const SECURE_KEY=crypto.createHash('sha256').update(String(SETTINGS_ENCRYPTION_SECRET)).digest();
+const LEGACY_SECURE_KEY=crypto.createHash('sha256').update(String(TOKEN_SECRET)).digest();
+
+function encryptSecretWithKey(value,key){
+ const iv=crypto.randomBytes(12),cipher=crypto.createCipheriv('aes-256-gcm',key,iv);
  const encrypted=Buffer.concat([cipher.update(String(value||''),'utf8'),cipher.final()]),tag=cipher.getAuthTag();
  return `${iv.toString('base64url')}.${tag.toString('base64url')}.${encrypted.toString('base64url')}`;
 }
+function decryptSecretWithKey(value,key){
+ try{
+  const [a,b,c]=String(value||'').split('.');
+  if(!a||!b||!c)return '';
+  const decipher=crypto.createDecipheriv('aes-256-gcm',key,Buffer.from(a,'base64url'));
+  decipher.setAuthTag(Buffer.from(b,'base64url'));
+  return Buffer.concat([decipher.update(Buffer.from(c,'base64url')),decipher.final()]).toString('utf8');
+ }catch{return ''}
+}
+function encryptSecret(value){return encryptSecretWithKey(value,SECURE_KEY)}
 function decryptSecret(value){
- try{const [a,b,c]=String(value||'').split('.');if(!a||!b||!c)return '';const decipher=crypto.createDecipheriv('aes-256-gcm',SECURE_KEY,Buffer.from(a,'base64url'));decipher.setAuthTag(Buffer.from(b,'base64url'));return Buffer.concat([decipher.update(Buffer.from(c,'base64url')),decipher.final()]).toString('utf8')}catch{return ''}
+ const current=decryptSecretWithKey(value,SECURE_KEY);
+ if(current)return current;
+ if(!SECURE_KEY.equals(LEGACY_SECURE_KEY))return decryptSecretWithKey(value,LEGACY_SECURE_KEY);
+ return '';
 }
 function setSecureSetting(key,value){
  if(value===undefined||value===null||value==='')return;
  db.prepare('INSERT INTO secure_settings(key,value_enc,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value_enc=excluded.value_enc,updated_at=excluded.updated_at').run(key,encryptSecret(value),new Date().toISOString());
 }
 function getSecureSetting(key){const r=db.prepare('SELECT value_enc FROM secure_settings WHERE key=?').get(key);return r?decryptSecret(r.value_enc):''}
+
 function templateText(input,vars={}){return String(input||'').replace(/\{([a-zA-Z0-9_]+)\}/g,(_,k)=>vars[k]??'')}
 function dateTimeVars(extra={}){const now=new Date();return {date:new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/London',day:'2-digit',month:'2-digit',year:'numeric'}).format(now),time:new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/London',hour:'2-digit',minute:'2-digit',hour12:false}).format(now),...extra}}
 function feeSplitPercent(type,settings=getSettings()){
@@ -2309,7 +2372,16 @@ function totpCode(secret,time=Date.now(),stepOffset=0){
 }
 function verifyTotp(secret,code){const c=String(code||'').replace(/\D/g,'');if(c.length!==6)return false;return [-1,0,1].some(o=>{const expected=totpCode(secret,Date.now(),o);return crypto.timingSafeEqual(Buffer.from(expected),Buffer.from(c))})}
 function newMfaSecret(){return base32Encode(crypto.randomBytes(20))}
-function staffSafe(u){return {id:u.id,email:u.email,name:u.name,role:u.role,mfaEnabled:Boolean(u.mfa_enabled),active:Boolean(u.active),createdAt:u.created_at,updatedAt:u.updated_at,lastLoginAt:u.last_login_at}}
+function isPlatformAdmin(staffId){
+ if(!staffId)return false;
+ return Boolean(db.prepare('SELECT 1 FROM platform_admins WHERE staff_id=?').get(staffId));
+}
+function ensurePlatformAdminGrant(staffId,grantedBy='bootstrap'){
+ if(!staffId)return;
+ db.prepare('INSERT OR IGNORE INTO platform_admins(staff_id,granted_at,granted_by) VALUES(?,?,?)')
+  .run(staffId,new Date().toISOString(),grantedBy);
+}
+function staffSafe(u){return {id:u.id,email:u.email,name:u.name,role:u.role,platformAdmin:isPlatformAdmin(u.id),mfaEnabled:Boolean(u.mfa_enabled),active:Boolean(u.active),createdAt:u.created_at,updatedAt:u.updated_at,lastLoginAt:u.last_login_at}}
 function makeOtpAuth(email,secret){
  const issuer=`FaivoPay ${APP_ENV_LABEL}`;
  const label=`${issuer}:${email}`;
@@ -2317,9 +2389,15 @@ function makeOtpAuth(email,secret){
 }
 function ensureBootstrapAdmin(){
  const email=safeEmail(ADMIN_EMAIL);if(!email||!ADMIN_PASSWORD)return;
- const existing=db.prepare('SELECT id FROM staff_users WHERE email=?').get(email);if(existing)return;
- const hp=hashPassword(ADMIN_PASSWORD),now=new Date().toISOString();
- db.prepare('INSERT INTO staff_users(id,email,name,role,password_hash,password_salt,mfa_enabled,active,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id('staff'),email,'FaivoPay Administrator','administrator',hp.hash,hp.salt,0,1,now,now);
+ const existing=db.prepare('SELECT id FROM staff_users WHERE email=?').get(email);
+ if(existing){
+  ensurePlatformAdminGrant(existing.id,'bootstrap');
+  return;
+ }
+ const hp=hashPassword(ADMIN_PASSWORD),now=new Date().toISOString(),staffId=id('staff');
+ db.prepare('INSERT INTO staff_users(id,email,name,role,password_hash,password_salt,mfa_enabled,active,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)')
+  .run(staffId,email,'FaivoPay Administrator','administrator',hp.hash,hp.salt,0,1,now,now);
+ ensurePlatformAdminGrant(staffId,'bootstrap');
 }
 
 function signToken(payload,hours=24*30){const body=Buffer.from(JSON.stringify({...payload,exp:Date.now()+hours*3600000})).toString('base64url');const sig=crypto.createHmac('sha256',TOKEN_SECRET).update(body).digest('base64url');return `${body}.${sig}`}
@@ -2328,15 +2406,179 @@ function bearer(req){return String(req.headers.authorization||'').replace(/^Bear
 function adminAuth(req,res,next){const p=verifyToken(bearer(req));if(p?.role!=='admin'||p?.mfa!==true)return res.status(401).json({error:'Office authentication required'});req.auth=p;next()}
 const staffRoleRank={readonly:1,office:2,finance:3,administrator:4};
 function requireStaffRole(...roles){return (req,res,next)=>{if(!roles.includes(req.auth?.staffRole))return res.status(403).json({error:'You do not have permission for this action'});next()}}
+
+function requirePlatformAdmin(req,res,next){
+ const u=req.auth?.staffId?db.prepare('SELECT id,active,role FROM staff_users WHERE id=?').get(req.auth.staffId):null;
+ if(!u||!u.active||u.role!=='administrator'||!isPlatformAdmin(u.id)){
+  return res.status(403).json({error:'Platform Administrator access is required'});
+ }
+ next();
+}
+
+function companySlug(value){
+ return String(value||'company').toLowerCase().trim()
+  .replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,80)||'company';
+}
+function companyPublic(row){
+ if(!row)return null;
+ return {
+  id:row.id,
+  name:row.name,
+  slug:row.slug,
+  status:row.status,
+  primaryDomain:row.primary_domain||'',
+  supportEmail:row.support_email||'',
+  supportPhone:row.support_phone||'',
+  timezone:row.timezone||'Europe/London',
+  createdAt:row.created_at,
+  updatedAt:row.updated_at
+ };
+}
+function getCompanySetting(companyId,key,fallback=''){
+ const r=db.prepare('SELECT value FROM company_settings WHERE company_id=? AND key=?').get(companyId,key);
+ if(!r)return fallback;
+ try{return JSON.parse(r.value)}catch{return r.value}
+}
+function setCompanySetting(companyId,key,value){
+ db.prepare(`INSERT INTO company_settings(company_id,key,value,updated_at)
+ VALUES(?,?,?,?)
+ ON CONFLICT(company_id,key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`)
+  .run(companyId,key,JSON.stringify(value),new Date().toISOString());
+}
+function getCompanySecureSetting(companyId,key){
+ const r=db.prepare('SELECT value_enc FROM company_secure_settings WHERE company_id=? AND key=?').get(companyId,key);
+ return r?decryptSecret(r.value_enc):'';
+}
+function setCompanySecureSetting(companyId,key,value){
+ if(value===undefined||value===null||String(value)==='')return;
+ db.prepare(`INSERT INTO company_secure_settings(company_id,key,value_enc,updated_at)
+ VALUES(?,?,?,?)
+ ON CONFLICT(company_id,key) DO UPDATE SET value_enc=excluded.value_enc,updated_at=excluded.updated_at`)
+  .run(companyId,key,encryptSecret(value),new Date().toISOString());
+}
+function companySecretConfigured(companyId,key){
+ return Boolean(db.prepare('SELECT 1 FROM company_secure_settings WHERE company_id=? AND key=?').get(companyId,key));
+}
+function ensureDefaultCompany(){
+ const count=Number(db.prepare('SELECT COUNT(*) count FROM companies').get()?.count||0);
+ if(count)return;
+ const settings=getSettings(),now=new Date().toISOString();
+ let domain='';
+ try{domain=new URL(PUBLIC_BASE_URL).hostname}catch{}
+ const name=String(settings.companyName||'Need-A-Cab').trim()||'Need-A-Cab';
+ db.prepare(`INSERT INTO companies(
+  id,name,slug,status,primary_domain,support_email,support_phone,timezone,created_at,updated_at
+ ) VALUES(?,?,?,?,?,?,?,?,?,?)`).run(
+  'company_primary',
+  name,
+  companySlug(name),
+  'active',
+  domain,
+  safeEmail(settings.officeNotificationEmail||ADMIN_EMAIL),
+  '',
+  'Europe/London',
+  now,
+  now
+ );
+}
+
+function runtimeCompanyId(){
+ const row=db.prepare(`
+  SELECT id
+  FROM companies
+  WHERE status IN ('active','live')
+  ORDER BY CASE WHEN id='company_primary' THEN 0 ELSE 1 END, created_at
+  LIMIT 1
+ `).get();
+ return row?.id||'';
+}
+
+function runtimeCompanySetting(key,fallback=''){
+ const companyId=runtimeCompanyId();
+ if(!companyId)return fallback;
+
+ const value=getCompanySetting(companyId,key,undefined);
+ return value===undefined||value===null||value===''?fallback:value;
+}
+
+function runtimeCompanySecret(key,fallback=''){
+ const companyId=runtimeCompanyId();
+ if(!companyId)return fallback;
+
+ return getCompanySecureSetting(companyId,key)||fallback;
+}
+
+function getAutocabApiKey(){
+ return String(runtimeCompanySecret('autocabApiKey',API_KEY)||'').trim();
+}
+
+function getAutocabCompanyIds(){
+ const configured=String(runtimeCompanySetting('autocabCompanyIds','')||'').trim();
+
+ if(!configured)return COMPANY_IDS;
+
+ const ids=configured
+  .split(',')
+  .map(x=>Number(String(x).trim()))
+  .filter(Number.isFinite)
+  .filter(x=>x>0);
+
+ return ids.length?ids:COMPANY_IDS;
+}
+
+function getStripeSecretKey(){
+ return String(runtimeCompanySecret('stripeSecretKey',STRIPE_SECRET_KEY)||'').trim();
+}
+
+function getStripeWebhookSecret(){
+ return String(runtimeCompanySecret('stripeWebhookSecret',STRIPE_WEBHOOK_SECRET)||'').trim();
+}
+
+let stripeClientCacheKey='';
+let stripeClientCache=null;
+
+function getStripeClient(){
+ const key=getStripeSecretKey();
+
+ if(!key)return null;
+
+ if(stripeClientCache && stripeClientCacheKey===key){
+  return stripeClientCache;
+ }
+
+ stripeClientCacheKey=key;
+ stripeClientCache=new Stripe(key);
+
+ return stripeClientCache;
+}
+
+function getSendGridConfig(){
+ return {
+  apiKey:String(runtimeCompanySecret('sendgridApiKey',SENDGRID_API_KEY)||'').trim(),
+  fromEmail:String(runtimeCompanySetting('sendgridFromEmail',SENDGRID_FROM_EMAIL)||'').trim(),
+  fromName:String(runtimeCompanySetting('sendgridFromName',SENDGRID_FROM_NAME)||'FaivoPay').trim()||'FaivoPay'
+ };
+}
+
+function getTwilioConfig(){
+ return {
+  accountSid:String(runtimeCompanySetting('twilioAccountSid',TWILIO_ACCOUNT_SID)||'').trim(),
+  authToken:String(runtimeCompanySecret('twilioAuthToken',TWILIO_AUTH_TOKEN)||'').trim(),
+  messagingServiceSid:String(runtimeCompanySetting('twilioMessagingServiceSid',TWILIO_MESSAGING_SERVICE_SID)||'').trim(),
+  fromNumber:String(runtimeCompanySetting('twilioFromNumber',TWILIO_FROM_NUMBER)||'').trim()
+ };
+}
+
+
 function driverAuth(req,res,next){const p=verifyToken(bearer(req));if(!p?.driverId)return res.status(401).json({error:'Authentication required'});req.auth=p;next()}
 function audit(req,actorType,actorId,action,entityType=null,entityId=null,details={}){let displayActor=String(actorId||'');if(actorType==='driver'){const d=cachedDriver(Number(actorId));if(d?.callsign)displayActor=d.callsign}db.prepare('INSERT INTO audit_logs(created_at,actor_type,actor_id,action,entity_type,entity_id,details_json,ip) VALUES(?,?,?,?,?,?,?,?)').run(new Date().toISOString(),actorType,displayActor,action,entityType,entityId?String(entityId):null,JSON.stringify(details||{}),req?.ip||'')}
 
-const headers=()=>({'Content-Type':'application/json','Cache-Control':'no-cache','Ocp-Apim-Subscription-Key':API_KEY});
-async function putJson(url,body){if(!API_KEY)throw new Error('AUTOCAB_API_KEY is not configured');const r=await fetch(url,{method:'PUT',headers:headers(),body:JSON.stringify(body)});const text=await r.text();if(!r.ok)throw new Error(`Autocab ${r.status}: ${text.slice(0,500)}`);try{return text?JSON.parse(text):{ok:true}}catch{return {ok:true,raw:text}}}
-async function postJson(url,body){if(!API_KEY)throw new Error('AUTOCAB_API_KEY is not configured');const r=await fetch(url,{method:'POST',headers:headers(),body:JSON.stringify(body)});if(!r.ok)throw new Error(`Autocab ${r.status}: ${(await r.text()).slice(0,300)}`);return r.json()}
+const headers=()=>({'Content-Type':'application/json','Cache-Control':'no-cache','Ocp-Apim-Subscription-Key':getAutocabApiKey()});
+async function putJson(url,body){if(!getAutocabApiKey())throw new Error('AUTOCAB_API_KEY is not configured');const r=await fetch(url,{method:'PUT',headers:headers(),body:JSON.stringify(body)});const text=await r.text();if(!r.ok)throw new Error(`Autocab ${r.status}: ${text.slice(0,500)}`);try{return text?JSON.parse(text):{ok:true}}catch{return {ok:true,raw:text}}}
+async function postJson(url,body){if(!getAutocabApiKey())throw new Error('AUTOCAB_API_KEY is not configured');const r=await fetch(url,{method:'POST',headers:headers(),body:JSON.stringify(body)});if(!r.ok)throw new Error(`Autocab ${r.status}: ${(await r.text()).slice(0,300)}`);return r.json()}
 
 async function getJson(url){
- if(!API_KEY)throw new Error('AUTOCAB_API_KEY is not configured');
+ if(!getAutocabApiKey())throw new Error('AUTOCAB_API_KEY is not configured');
  const r=await fetch(url,{method:'GET',headers:headers()});
  const text=await r.text();
  if(!r.ok)throw new Error(`Autocab ${r.status}: ${text.slice(0,500)}`);
@@ -2445,7 +2687,7 @@ async function releaseFleetPayBooking(paymentId){
 }
 
 async function getActiveDrivers(){
- const groups=await Promise.all(COMPANY_IDS.map(async companyId=>{
+ const groups=await Promise.all(getAutocabCompanyIds().map(async companyId=>{
   const drivers=await postJson(`${BASE_URL}/driver/v1/drivers/active`,{CompanyId:companyId,ActiveStatusType:'Active'});
   return (drivers||[]).map(d=>({...d,companyId}));
  }));
@@ -2612,14 +2854,14 @@ function ledger(driverId,entryType,direction,amount,feeAmount,description,refere
 }
 
 async function createStripePaymentRequest(item){
- if(!stripe) return null;
+ if(!getStripeClient()) return null;
 
  if(item.payment_url && item.provider_session_id){
    let existingSession;
 
    try{
     existingSession=
-     await stripe.checkout.sessions.retrieve(
+     await getStripeClient().checkout.sessions.retrieve(
       item.provider_session_id
      );
    }catch(e){
@@ -2672,7 +2914,7 @@ async function createStripePaymentRequest(item){
 
  const d=cachedDriver(item.driver_id);
 
- const session=await stripe.checkout.sessions.create({
+ const session=await getStripeClient().checkout.sessions.create({
    mode:'payment',
    client_reference_id:item.id,
    customer_email:d?.email||undefined,
@@ -2726,7 +2968,7 @@ async function createStripePaymentRequest(item){
 }
 
 async function createStripeCustomerPayment(item){
- if(!stripe) return null;
+ if(!getStripeClient()) return null;
 
  if(item.provider_checkout_url && item.provider_session_id){
    return {
@@ -2765,7 +3007,7 @@ async function createStripeCustomerPayment(item){
    });
  }
 
- const session=await stripe.checkout.sessions.create({
+ const session=await getStripeClient().checkout.sessions.create({
   mode:'payment',
   client_reference_id:item.id,
 
@@ -2820,17 +3062,19 @@ async function markPayoutPaid(item, req, source='manual'){
  audit(req,'admin',req?.auth?.email||source,'payout_paid','payout',item.id,{callsign:item.callsign,amount:Number(item.net_amount||item.amount||0),source});
 }
 async function sendEmail(to,subject,html){
- if(SENDGRID_API_KEY && SENDGRID_FROM_EMAIL){
+ const sendgridConfig=getSendGridConfig();
+
+ if(sendgridConfig.apiKey && sendgridConfig.fromEmail){
   try{
    const mod=await import('@sendgrid/mail');
    const sendgrid=mod.default||mod;
-   sendgrid.setApiKey(SENDGRID_API_KEY);
+   sendgrid.setApiKey(sendgridConfig.apiKey);
 
    const [response]=await sendgrid.send({
     to,
     from:{
-     email:SENDGRID_FROM_EMAIL,
-     name:SENDGRID_FROM_NAME
+     email:sendgridConfig.fromEmail,
+     name:sendgridConfig.fromName
     },
     subject,
     html
@@ -2853,16 +3097,24 @@ async function sendEmail(to,subject,html){
  if(!RESEND_API_KEY||!RESEND_FROM_EMAIL)return {sent:false,provider:'none'};const r=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${RESEND_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({from:RESEND_FROM_EMAIL,to:[to],subject,html})});if(!r.ok)throw new Error(`Email provider error ${r.status}`);const out=await r.json().catch(()=>({}));return {sent:true,provider:'resend',id:out.id||''}
 }
 let twilioClientPromise=null;
+let twilioClientCacheKey='';
 
 async function getTwilioClient(){
- if(!TWILIO_ACCOUNT_SID||!TWILIO_AUTH_TOKEN)return null;
- if(!twilioClientPromise){
+ const cfg=getTwilioConfig();
+
+ if(!cfg.accountSid||!cfg.authToken)return null;
+
+ const cacheKey=`${cfg.accountSid}:${cfg.authToken}`;
+
+ if(!twilioClientPromise || twilioClientCacheKey!==cacheKey){
+  twilioClientCacheKey=cacheKey;
   twilioClientPromise=(async()=>{
    const mod=await import('twilio');
    const twilio=mod.default||mod;
-   return twilio(TWILIO_ACCOUNT_SID,TWILIO_AUTH_TOKEN);
+   return twilio(cfg.accountSid,cfg.authToken);
   })();
  }
+
  return twilioClientPromise;
 }
 
@@ -2898,10 +3150,12 @@ async function sendTwilioSms(to,message,{templateKey='',entityType='',entityId='
   statusCallback:`${PUBLIC_BASE_URL}/api/webhooks/twilio/sms-status`
  };
 
- if(TWILIO_MESSAGING_SERVICE_SID){
-  payload.messagingServiceSid=TWILIO_MESSAGING_SERVICE_SID;
- }else if(TWILIO_FROM_NUMBER){
-  payload.from=TWILIO_FROM_NUMBER;
+ const twilioConfig=getTwilioConfig();
+
+ if(twilioConfig.messagingServiceSid){
+  payload.messagingServiceSid=twilioConfig.messagingServiceSid;
+ }else if(twilioConfig.fromNumber){
+  payload.from=twilioConfig.fromNumber;
  }else{
   throw new Error('Twilio Messaging Service SID or From Number is required');
  }
@@ -3138,14 +3392,16 @@ function earlyPayoutWindowMessage(settings){const t=earlyPayoutTiming(settings);
 
 app.post('/api/webhooks/twilio/sms-status',express.urlencoded({extended:false}),async(req,res)=>{
  try{
-  if(TWILIO_AUTH_TOKEN){
+  const twilioWebhookConfig=getTwilioConfig();
+
+  if(twilioWebhookConfig.authToken){
    const mod=await import('twilio');
    const twilio=mod.default||mod;
    const signature=String(req.headers['x-twilio-signature']||'');
    const callbackUrl=`${PUBLIC_BASE_URL}${req.originalUrl}`;
 
    const valid=twilio.validateRequest(
-    TWILIO_AUTH_TOKEN,
+    twilioWebhookConfig.authToken,
     signature,
     callbackUrl,
     req.body||{}
@@ -3222,8 +3478,9 @@ app.get('/api/admin/twilio/balance',adminAuth,async(req,res)=>{
  }
 });
 
-app.get('/api/health',(_q,res)=>res.json({ok:true,configured:Boolean(API_KEY),database:'sqlite',databasePath:'data/fleetpay.sqlite'}));
+app.get('/api/health',(_q,res)=>res.json({ok:true,configured:Boolean(getAutocabApiKey()),database:'sqlite',databasePath:'data/fleetpay.sqlite'}));
 ensureBootstrapAdmin();
+ensureDefaultCompany();
 
 app.post('/api/admin/login',(req,res)=>{
  const email=safeEmail(req.body.email),pass=String(req.body.password||''),u=db.prepare('SELECT * FROM staff_users WHERE email=?').get(email);
@@ -3285,6 +3542,179 @@ app.post('/api/admin/mfa/recovery/complete',(req,res)=>{
  db.prepare('DELETE FROM auth_challenges WHERE id=?').run(c.id);
  audit(req,'staff',u.email,'office_mfa_recovery_completed','staff_user',u.id);
  res.json({mfaSetupRequired:true,setupToken:signToken({role:'admin_mfa_setup',staffId:u.id,email:u.email},0.17),secret,otpauthUri:makeOtpAuth(u.email,secret),staff:staffSafe({...u,mfa_secret:secret,mfa_enabled:0})});
+});
+
+
+
+function companyIntegrationPayload(companyId){
+ return {
+  autocab:{
+   companyIds:getCompanySetting(companyId,'autocabCompanyIds',''),
+   adjustmentsEnabled:Boolean(getCompanySetting(companyId,'autocabAdjustmentsEnabled',false)),
+   apiKeyConfigured:companySecretConfigured(companyId,'autocabApiKey')
+  },
+  stripe:{
+   secretKeyConfigured:companySecretConfigured(companyId,'stripeSecretKey'),
+   webhookSecretConfigured:companySecretConfigured(companyId,'stripeWebhookSecret')
+  },
+  sendgrid:{
+   fromEmail:getCompanySetting(companyId,'sendgridFromEmail',''),
+   fromName:getCompanySetting(companyId,'sendgridFromName','FaivoPay'),
+   apiKeyConfigured:companySecretConfigured(companyId,'sendgridApiKey')
+  },
+  twilio:{
+   accountSid:getCompanySetting(companyId,'twilioAccountSid',''),
+   messagingServiceSid:getCompanySetting(companyId,'twilioMessagingServiceSid',''),
+   fromNumber:getCompanySetting(companyId,'twilioFromNumber',''),
+   authTokenConfigured:companySecretConfigured(companyId,'twilioAuthToken')
+  },
+  branding:{
+   productName:getCompanySetting(companyId,'productName','FaivoPay'),
+   supportEmail:getCompanySetting(companyId,'supportEmail',''),
+   supportPhone:getCompanySetting(companyId,'supportPhone','')
+  },
+  features:{
+   paymentPlans:Boolean(getCompanySetting(companyId,'featurePaymentPlans',true)),
+   earlyPayouts:Boolean(getCompanySetting(companyId,'featureEarlyPayouts',true)),
+   customerPayments:Boolean(getCompanySetting(companyId,'featureCustomerPayments',true)),
+   driverPayouts:Boolean(getCompanySetting(companyId,'featureDriverPayouts',true)),
+   demoLab:Boolean(getCompanySetting(companyId,'featureDemoLab',true))
+  }
+ };
+}
+
+function saveCompanyConfiguration(companyId,input={}){
+ const row=db.prepare('SELECT * FROM companies WHERE id=?').get(companyId);
+ if(!row)throw new Error('Company not found');
+
+ const general=input.general||{};
+ const autocab=input.autocab||{};
+ const stripeCfg=input.stripe||{};
+ const sendgrid=input.sendgrid||{};
+ const twilioCfg=input.twilio||{};
+ const branding=input.branding||{};
+ const features=input.features||{};
+
+ const name=String(general.name??row.name).trim()||row.name;
+ const domain=String(general.primaryDomain??row.primary_domain??'').trim().toLowerCase();
+ const supportEmail=safeEmail(general.supportEmail??row.support_email);
+ const supportPhone=String(general.supportPhone??row.support_phone??'').trim();
+ const timezone=String(general.timezone??row.timezone??'Europe/London').trim()||'Europe/London';
+
+ db.prepare(`UPDATE companies
+  SET name=?,primary_domain=?,support_email=?,support_phone=?,timezone=?,updated_at=?
+  WHERE id=?`).run(
+   name,domain,supportEmail,supportPhone,timezone,new Date().toISOString(),companyId
+ );
+
+ if('companyIds' in autocab)setCompanySetting(companyId,'autocabCompanyIds',String(autocab.companyIds||'').trim());
+ if('adjustmentsEnabled' in autocab)setCompanySetting(companyId,'autocabAdjustmentsEnabled',Boolean(autocab.adjustmentsEnabled));
+ if(String(autocab.apiKey||'').trim())setCompanySecureSetting(companyId,'autocabApiKey',String(autocab.apiKey).trim());
+
+ if(String(stripeCfg.secretKey||'').trim())setCompanySecureSetting(companyId,'stripeSecretKey',String(stripeCfg.secretKey).trim());
+ if(String(stripeCfg.webhookSecret||'').trim())setCompanySecureSetting(companyId,'stripeWebhookSecret',String(stripeCfg.webhookSecret).trim());
+
+ if('fromEmail' in sendgrid)setCompanySetting(companyId,'sendgridFromEmail',safeEmail(sendgrid.fromEmail));
+ if('fromName' in sendgrid)setCompanySetting(companyId,'sendgridFromName',String(sendgrid.fromName||'').trim());
+ if(String(sendgrid.apiKey||'').trim())setCompanySecureSetting(companyId,'sendgridApiKey',String(sendgrid.apiKey).trim());
+
+ if('accountSid' in twilioCfg)setCompanySetting(companyId,'twilioAccountSid',String(twilioCfg.accountSid||'').trim());
+ if('messagingServiceSid' in twilioCfg)setCompanySetting(companyId,'twilioMessagingServiceSid',String(twilioCfg.messagingServiceSid||'').trim());
+ if('fromNumber' in twilioCfg)setCompanySetting(companyId,'twilioFromNumber',String(twilioCfg.fromNumber||'').trim());
+ if(String(twilioCfg.authToken||'').trim())setCompanySecureSetting(companyId,'twilioAuthToken',String(twilioCfg.authToken).trim());
+
+ if('productName' in branding)setCompanySetting(companyId,'productName',String(branding.productName||'FaivoPay').trim()||'FaivoPay');
+ if('supportEmail' in branding)setCompanySetting(companyId,'supportEmail',safeEmail(branding.supportEmail));
+ if('supportPhone' in branding)setCompanySetting(companyId,'supportPhone',String(branding.supportPhone||'').trim());
+
+ for(const [inputKey,settingKey] of [
+  ['paymentPlans','featurePaymentPlans'],
+  ['earlyPayouts','featureEarlyPayouts'],
+  ['customerPayments','featureCustomerPayments'],
+  ['driverPayouts','featureDriverPayouts'],
+  ['demoLab','featureDemoLab']
+ ]){
+  if(inputKey in features)setCompanySetting(companyId,settingKey,Boolean(features[inputKey]));
+ }
+
+ return db.prepare('SELECT * FROM companies WHERE id=?').get(companyId);
+}
+
+function companyConfigurationPayload(row){
+ return {
+  company:companyPublic(row),
+  config:companyIntegrationPayload(row.id)
+ };
+}
+
+app.get('/api/admin/platform/companies',adminAuth,requirePlatformAdmin,(req,res)=>{
+ ensureDefaultCompany();
+ const companies=db.prepare('SELECT * FROM companies ORDER BY created_at,name').all().map(companyPublic);
+ res.json({companies});
+});
+
+app.get('/api/admin/platform/companies/:id',adminAuth,requirePlatformAdmin,(req,res)=>{
+ ensureDefaultCompany();
+ const row=db.prepare('SELECT * FROM companies WHERE id=?').get(req.params.id);
+ if(!row)return res.status(404).json({error:'Company not found'});
+ res.json(companyConfigurationPayload(row));
+});
+
+app.put('/api/admin/platform/companies/:id',adminAuth,requirePlatformAdmin,(req,res)=>{
+ try{
+  const row=saveCompanyConfiguration(req.params.id,req.body||{});
+  audit(req,'staff',req.auth.email,'platform_company_configuration_updated','company',row.id,{
+   sections:Object.keys(req.body||{}),
+   secretsChanged:{
+    autocab:Boolean(String(req.body?.autocab?.apiKey||'').trim()),
+    stripeSecret:Boolean(String(req.body?.stripe?.secretKey||'').trim()),
+    stripeWebhook:Boolean(String(req.body?.stripe?.webhookSecret||'').trim()),
+    sendgrid:Boolean(String(req.body?.sendgrid?.apiKey||'').trim()),
+    twilio:Boolean(String(req.body?.twilio?.authToken||'').trim())
+   }
+  });
+  res.json(companyConfigurationPayload(row));
+ }catch(e){
+  res.status(e.message==='Company not found'?404:400).json({error:e.message});
+ }
+});
+
+app.post('/api/admin/platform/companies/:id/status',adminAuth,requirePlatformAdmin,(req,res)=>{
+ const row=db.prepare('SELECT * FROM companies WHERE id=?').get(req.params.id);
+ if(!row)return res.status(404).json({error:'Company not found'});
+ const status=String(req.body?.status||'').trim();
+ if(!['draft','configuration_incomplete','ready_for_testing','live'].includes(status)){
+  return res.status(400).json({error:'Invalid company status'});
+ }
+ db.prepare('UPDATE companies SET status=?,updated_at=? WHERE id=?')
+  .run(status,new Date().toISOString(),row.id);
+ audit(req,'staff',req.auth.email,'platform_company_status_changed','company',row.id,{from:row.status,to:status});
+ res.json({company:companyPublic(db.prepare('SELECT * FROM companies WHERE id=?').get(row.id))});
+});
+
+app.post('/api/admin/platform/companies',adminAuth,requirePlatformAdmin,(req,res)=>{
+ const name=String(req.body?.name||'').trim();
+ if(!name)return res.status(400).json({error:'Company name is required'});
+ let slug=companySlug(req.body?.slug||name);
+ const exists=db.prepare('SELECT id FROM companies WHERE slug=?').get(slug);
+ if(exists)return res.status(409).json({error:'A company with this name/slug already exists'});
+ const now=new Date().toISOString(),companyId=id('company');
+ db.prepare(`INSERT INTO companies(
+  id,name,slug,status,primary_domain,support_email,support_phone,timezone,created_at,updated_at
+ ) VALUES(?,?,?,?,?,?,?,?,?,?)`).run(
+  companyId,
+  name,
+  slug,
+  'draft',
+  String(req.body?.primaryDomain||'').trim().toLowerCase(),
+  safeEmail(req.body?.supportEmail),
+  String(req.body?.supportPhone||'').trim(),
+  String(req.body?.timezone||'Europe/London'),
+  now,
+  now
+ );
+ audit(req,'staff',req.auth.email,'platform_company_created','company',companyId,{name,slug,status:'draft'});
+ res.status(201).json({company:companyPublic(db.prepare('SELECT * FROM companies WHERE id=?').get(companyId))});
 });
 
 app.get('/api/admin/me',adminAuth,(req,res)=>{const u=db.prepare('SELECT * FROM staff_users WHERE id=?').get(req.auth.staffId);if(!u)return res.status(404).json({error:'Office user not found'});res.json(staffSafe(u))});
@@ -4199,11 +4629,11 @@ function publicCustomerPayment(row){
 app.get('/api/public/customer-payments/:id',(req,res)=>{
  const row=db.prepare('SELECT * FROM customer_payments WHERE id=?').get(req.params.id);
  if(!row)return res.status(404).json({error:'Payment link not found'});
- res.json({payment:publicCustomerPayment(row),stripeConfigured:Boolean(stripe)});
+ res.json({payment:publicCustomerPayment(row),stripeConfigured:Boolean(getStripeClient())});
 });
 app.post('/api/public/customer-payments/:id/checkout',async(req,res)=>{
  try{
-  if(!stripe)return res.status(400).json({error:'Card payments are not currently available.'});
+  if(!getStripeClient())return res.status(400).json({error:'Card payments are not currently available.'});
   const row=db.prepare('SELECT * FROM customer_payments WHERE id=?').get(req.params.id);
   if(!row)return res.status(404).json({error:'Payment link not found'});
   if(row.status==='paid')return res.status(400).json({error:'This payment has already been completed.'});
@@ -4418,7 +4848,7 @@ app.post(
  requireStaffRole('administrator','finance','office'),
  async(req,res)=>{
   try{
-   if(!stripe){
+   if(!getStripeClient()){
     return res.status(400).json({
      error:'Stripe refunds are not currently available.'
     });
@@ -4470,7 +4900,7 @@ app.post(
     * has actually been refunded. This protects against duplicate clicks
     * or a previous refund succeeding before FaivoPay saved its state.
     */
-   const stripeRefunds=await stripe.refunds.list({
+   const stripeRefunds=await getStripeClient().refunds.list({
     payment_intent:paymentIntentId,
     limit:100
    });
@@ -4590,7 +5020,7 @@ app.post(
    let stripeRefund=null;
 
    if(additionalRefund>0){
-    stripeRefund=await stripe.refunds.create(
+    stripeRefund=await getStripeClient().refunds.create(
      {
       payment_intent:paymentIntentId,
       amount:Math.round(additionalRefund*100),
@@ -4611,7 +5041,7 @@ app.post(
     * Re-read Stripe after the operation rather than assuming the
     * requested amount was accepted.
     */
-   const verifiedRefunds=await stripe.refunds.list({
+   const verifiedRefunds=await getStripeClient().refunds.list({
     payment_intent:paymentIntentId,
     limit:100
    });
@@ -5205,7 +5635,29 @@ app.get('/api/admin/autocab-booking-webhooks',adminAuth,requireStaffRole('admini
  res.json({webhooks:rows});
 });
 
-app.get('/api/admin/integrations',adminAuth,(req,res)=>{res.json({stripe:{configured:Boolean(STRIPE_SECRET_KEY),testMode:STRIPE_SECRET_KEY.startsWith('sk_test_')},wise:{configured:Boolean(WISE_API_TOKEN),environment:WISE_ENV,profileId:WISE_PROFILE_ID||null},autocab:{configured:Boolean(API_KEY),adjustmentsEnabled:AUTOCAB_ADJUSTMENTS_ENABLED},push:{configured:Boolean(VAPID_PUBLIC_KEY&&VAPID_PRIVATE_KEY),publicKey:VAPID_PUBLIC_KEY||null}})});
+app.get('/api/admin/integrations',adminAuth,(req,res)=>{
+ const stripeKey=getStripeSecretKey();
+
+ res.json({
+  stripe:{
+   configured:Boolean(stripeKey),
+   testMode:stripeKey.startsWith('sk_test_')
+  },
+  wise:{
+   configured:Boolean(WISE_API_TOKEN),
+   environment:WISE_ENV,
+   profileId:WISE_PROFILE_ID||null
+  },
+  autocab:{
+   configured:Boolean(getAutocabApiKey()),
+   adjustmentsEnabled:AUTOCAB_ADJUSTMENTS_ENABLED
+  },
+  push:{
+   configured:Boolean(VAPID_PUBLIC_KEY&&VAPID_PRIVATE_KEY),
+   publicKey:VAPID_PUBLIC_KEY||null
+  }
+ });
+});
 app.post('/api/admin/integrations/wise/test',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{const out=await testWiseConnection();audit(req,'admin',req.auth.email,'wise_connection_test','integration','wise',{environment:WISE_ENV});res.json(out)}catch(e){res.status(500).json({error:e.message})}});
 app.post('/api/admin/autocab/test-adjustment',adminAuth,requireStaffRole('administrator'),async(req,res)=>{try{const callsign=String(req.body.callsign||'').trim();const d=cacheRows().find(x=>String(x.callsign)===callsign);if(!d)return res.status(404).json({error:'Callsign not found in FaivoPay cache'});const amount=Number(req.body.amount||0);if(!(amount>0))return res.status(400).json({error:'Amount must be greater than zero'});const result=await postAutocabAdjustment({driverId:d.driverId,callsign:d.callsign,amount,isCredit:Boolean(req.body.isCredit),description:String(req.body.description||'FaivoPay test adjustment'),adjustmentReason:String(req.body.adjustmentReason||'FleetPay Test'),eventKey:`test:${Date.now()}:${d.driverId}`,force:true});audit(req,'admin',req.auth.email,'autocab_test_adjustment','driver',d.callsign,{callsign:d.callsign,amount,isCredit:Boolean(req.body.isCredit)});setTimeout(()=>syncAutocab().catch(()=>{}),500);res.json({ok:true,driver:{driverId:d.driverId,callsign:d.callsign,fullName:d.fullName},result})}catch(e){res.status(500).json({error:e.message})}});
 app.get('/api/admin/autocab/adjustments',adminAuth,(req,res)=>{const rows=db.prepare('SELECT id,event_key eventKey,driver_id driverId,callsign,amount,is_credit isCredit,description,adjustment_reason adjustmentReason,status,created_at createdAt,completed_at completedAt,error FROM autocab_adjustments ORDER BY created_at DESC LIMIT 250').all().map(x=>({...x,isCredit:Boolean(x.isCredit)}));res.json({adjustments:rows})});
@@ -5305,7 +5757,7 @@ app.post('/api/admin/payout-runs/:id/wise-sandbox',adminAuth,requireStaffRole('a
  }catch(e){res.status(500).json({error:e.message})}});
 app.get('/api/admin/payout-runs/:id/csv',adminAuth,(req,res)=>{const run=db.prepare('SELECT * FROM payout_runs WHERE id=?').get(req.params.id);if(!run)return res.status(404).json({error:'Payout run not found'});const items=db.prepare('SELECT callsign,driver_name,net_amount,amount,type,status FROM payouts WHERE payout_run_id=? ORDER BY CAST(callsign AS INTEGER),callsign').all(run.id);const esc=v=>`"${String(v??'').replaceAll('"','""')}"`;const csv=['Callsign,Driver,Amount,Type,Status',...items.map(x=>[esc(x.callsign),esc(x.driver_name),Number(x.net_amount||x.amount||0).toFixed(2),x.type,x.status].join(','))].join('\n');res.setHeader('Content-Type','text/csv');res.setHeader('Content-Disposition',`attachment; filename=FaivoPay-${run.run_type}-${run.id}.csv`);res.send(csv)});
 
-app.post('/api/admin/payment-requests/:id/stripe',adminAuth,requireStaffRole('administrator','finance','office'),async(req,res)=>{try{if(!stripe)return res.status(400).json({error:'Stripe is not configured. Add STRIPE_SECRET_KEY to .env'});const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(req.params.id);if(!item)return res.status(404).json({error:'Payment request not found'});if(item.status==='paid')return res.status(400).json({error:'This payment request is already paid'});if(item.payment_plan_id&&item.request_type==='payment_plan_instalment'){const pendingExtra=db.prepare(`SELECT * FROM payment_requests WHERE payment_plan_id=? AND request_type='payment_plan_extra' AND status='open' ORDER BY created_at DESC LIMIT 1`).get(item.payment_plan_id);if(pendingExtra){await safelyExpirePlanPaymentSession(pendingExtra);db.prepare(`UPDATE payment_requests SET status='cancelled',payment_url=NULL,provider=NULL,provider_session_id=NULL,provider_payment_intent_id=NULL,updated_at=? WHERE id=? AND status='open'`).run(new Date().toISOString(),pendingExtra.id);audit(req,'staff',req.auth.email,'payment_plan_extra_payment_cancelled','driver_payment_plan',item.payment_plan_id,{paymentRequestId:pendingExtra.id,reason:'scheduled_instalment_checkout_started'})}}const session=await createStripePaymentRequest(item);audit(req,'admin',req.auth.email,'stripe_payment_request_created','payment_request',item.id,{callsign:item.callsign,amount:item.amount,sessionId:session.id});res.json({ok:true,paymentUrl:session.url})}catch(e){res.status(500).json({error:e.message})}});
+app.post('/api/admin/payment-requests/:id/stripe',adminAuth,requireStaffRole('administrator','finance','office'),async(req,res)=>{try{if(!getStripeClient())return res.status(400).json({error:'Stripe is not configured. Add STRIPE_SECRET_KEY to .env'});const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(req.params.id);if(!item)return res.status(404).json({error:'Payment request not found'});if(item.status==='paid')return res.status(400).json({error:'This payment request is already paid'});if(item.payment_plan_id&&item.request_type==='payment_plan_instalment'){const pendingExtra=db.prepare(`SELECT * FROM payment_requests WHERE payment_plan_id=? AND request_type='payment_plan_extra' AND status='open' ORDER BY created_at DESC LIMIT 1`).get(item.payment_plan_id);if(pendingExtra){await safelyExpirePlanPaymentSession(pendingExtra);db.prepare(`UPDATE payment_requests SET status='cancelled',payment_url=NULL,provider=NULL,provider_session_id=NULL,provider_payment_intent_id=NULL,updated_at=? WHERE id=? AND status='open'`).run(new Date().toISOString(),pendingExtra.id);audit(req,'staff',req.auth.email,'payment_plan_extra_payment_cancelled','driver_payment_plan',item.payment_plan_id,{paymentRequestId:pendingExtra.id,reason:'scheduled_instalment_checkout_started'})}}const session=await createStripePaymentRequest(item);audit(req,'admin',req.auth.email,'stripe_payment_request_created','payment_request',item.id,{callsign:item.callsign,amount:item.amount,sessionId:session.id});res.json({ok:true,paymentUrl:session.url})}catch(e){res.status(500).json({error:e.message})}});
 app.patch('/api/admin/payment-requests/:id',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{
  const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(req.params.id);if(!item)return res.status(404).json({error:'Payment request not found'});
  const status='status'in req.body?String(req.body.status):item.status,url='paymentUrl'in req.body?(req.body.paymentUrl?String(req.body.paymentUrl):null):item.payment_url,now=new Date().toISOString();
@@ -7702,13 +8154,13 @@ app.post(
     * instalment.
     */
    if(
-    stripe &&
+    getStripeClient() &&
     source.provider==='stripe' &&
     source.provider_session_id
    ){
     try{
      const stripeSession=
-      await stripe.checkout.sessions.retrieve(
+      await getStripeClient().checkout.sessions.retrieve(
        source.provider_session_id
       );
 
@@ -7720,7 +8172,7 @@ app.post(
      }
 
      if(stripeSession?.status==='open'){
-      await stripe.checkout.sessions.expire(
+      await getStripeClient().checkout.sessions.expire(
        source.provider_session_id
       );
      }else if(stripeSession?.status!=='expired'){
@@ -7967,13 +8419,13 @@ async function safelyExpirePlanPaymentSession(item){
 
  if(item.provider && item.provider!=='stripe')return;
 
- if(!stripe){
+ if(!getStripeClient()){
   throw new Error(
    'FaivoPay cannot safely change this plan because an existing Stripe payment link is present but Stripe is not configured.'
   );
  }
 
- const session=await stripe.checkout.sessions.retrieve(
+ const session=await getStripeClient().checkout.sessions.retrieve(
   item.provider_session_id
  );
 
@@ -7984,7 +8436,7 @@ async function safelyExpirePlanPaymentSession(item){
  }
 
  if(session?.status==='open'){
-  await stripe.checkout.sessions.expire(
+  await getStripeClient().checkout.sessions.expire(
    item.provider_session_id
   );
  }
@@ -10916,7 +11368,7 @@ app.post('/api/driver/payment-plans/:id/extra-payment',driverAuth,async(req,res)
  }catch(e){res.status(500).json({error:e.message})}
 });
 
-app.post('/api/driver/payment-requests/:id/checkout',driverAuth,async(req,res)=>{try{if(!stripe)return res.status(400).json({error:'Card payments are not currently available. Please contact the office.'});const item=db.prepare('SELECT * FROM payment_requests WHERE id=? AND driver_id=?').get(req.params.id,req.auth.driverId);if(!item)return res.status(404).json({error:'Payment request not found'});if(item.status!=='open'){
+app.post('/api/driver/payment-requests/:id/checkout',driverAuth,async(req,res)=>{try{if(!getStripeClient())return res.status(400).json({error:'Card payments are not currently available. Please contact the office.'});const item=db.prepare('SELECT * FROM payment_requests WHERE id=? AND driver_id=?').get(req.params.id,req.auth.driverId);if(!item)return res.status(404).json({error:'Payment request not found'});if(item.status!=='open'){
  return res.status(400).json({
   error:item.status==='paid'
    ?'This payment has already been received'
@@ -10936,7 +11388,7 @@ if(item.payment_plan_id&&item.request_type==='payment_plan_instalment'){
 const session=await createStripePaymentRequest(item);audit(req,'driver',req.auth.driverId,'stripe_checkout_started','payment_request',item.id,{callsign:item.callsign,amount:item.amount,sessionId:session.id});res.json({ok:true,paymentUrl:session.url})}catch(e){res.status(500).json({error:e.message})}});
 app.post('/api/driver/customer-payment',driverAuth,async(req,res)=>{
   try{
-    if(!stripe){
+    if(!getStripeClient()){
       return res.status(400).json({
         error:'Customer card payments are not currently available.'
       });
@@ -11227,7 +11679,7 @@ app.get('/api/driver/me',driverAuth,(req,res)=>{
       earlyPayoutRequests:early,
       ledger:ledgerRows,
       notifications,
-      stripeConfigured:Boolean(stripe),
+      stripeConfigured:Boolean(getStripeClient()),
       reservedForEarlyPayout:reserved,
       earlyPayoutAllowed:
         !livePaymentPlan &&
@@ -11296,13 +11748,13 @@ app.get('/payment-cancelled',(_req,res)=>{
 });
 
 const __filename=fileURLToPath(import.meta.url),__dirname=path.dirname(__filename),dist=path.resolve(__dirname,'../dist');app.use(express.static(dist));app.get('*',(req,res,next)=>{if(req.path.startsWith('/api'))return next();res.sendFile(path.join(dist,'index.html'),e=>e&&next())});
-function scheduleSync(){if(!API_KEY)return;const minutes=Math.max(2,Number(getSettings().syncMinutes||10));setTimeout(async()=>{try{const r=await syncAutocab();console.log(`FaivoPay scheduled sync: ${r.drivers.length} drivers`)}catch(e){console.error('Scheduled Autocab sync failed:',e.message)}finally{scheduleSync()}},minutes*60000)}
+function scheduleSync(){if(!getAutocabApiKey())return;const minutes=Math.max(2,Number(getSettings().syncMinutes||10));setTimeout(async()=>{try{const r=await syncAutocab();console.log(`FaivoPay scheduled sync: ${r.drivers.length} drivers`)}catch(e){console.error('Scheduled Autocab sync failed:',e.message)}finally{scheduleSync()}},minutes*60000)}
 function scheduleEarlySummary(){setTimeout(async()=>{try{await sendEarlyPayoutOfficeSummary()}catch(e){console.error('Early payout office summary failed:',e.message)}finally{scheduleEarlySummary()}},60000)}
 function schedulePaymentPlanStatusRefresh(){setTimeout(()=>{try{const r=refreshPaymentPlanStatuses();if(r.overdueInstalments||r.defaultedPlans)console.log(`FaivoPay payment plan refresh: ${r.overdueInstalments} overdue instalment(s), ${r.defaultedPlans} newly defaulted plan(s)`)}catch(e){console.error('Payment plan status refresh failed:',e.message)}finally{schedulePaymentPlanStatusRefresh()}},15*60000)}
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`FaivoPay server running on port ${PORT} · DB ${DB_PATH}`);
 
-  if (API_KEY) {
+  if (getAutocabApiKey()) {
     syncAutocab()
       .then(r => console.log(`FaivoPay initial Autocab sync: ${r.drivers.length} drivers`))
       .catch(e => console.error('Initial Autocab sync failed:', e.message))
