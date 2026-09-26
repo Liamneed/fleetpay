@@ -2952,8 +2952,16 @@ async function releaseFleetPayBooking(paymentId){
  booking.paymentType='Account';
  booking.paymentMethod='Cash';
 
+ /*
+  * fareAmount is the driver's Autocab Cost.
+  *
+  * Preserve Autocab's existing Price. Cost and Price are not guaranteed
+  * to be the same and FaivoPay must not collapse the two values.
+  *
+  * The journey is moved to the FaivoPay account for the driver's cost
+  * only. The FaivoPay customer service fee never enters Autocab.
+  */
  booking.pricing.cost=fareAmount;
- booking.pricing.price=fareAmount;
  booking.pricing.accountAmount=fareAmount;
  booking.pricing.cardAmount=0;
  booking.pricing.cashAmount=0;
