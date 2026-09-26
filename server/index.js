@@ -12314,19 +12314,33 @@ app.post('/api/driver/customer-payment/live',driverAuth,async(req,res)=>{
    ''
   ).trim();
 
-  const pickupText=String(
+  const pickupAddress=
    pickup.address ??
    pickup.Address ??
+   {};
+
+  const destinationAddress=
+   destination.address ??
+   destination.Address ??
+   {};
+
+  const pickupText=String(
+   pickupAddress.text ??
+   pickupAddress.Text ??
    pickup.text ??
+   pickup.Text ??
    pickup.addressText ??
+   pickup.AddressText ??
    ''
   ).trim();
 
   const destinationText=String(
-   destination.address ??
-   destination.Address ??
+   destinationAddress.text ??
+   destinationAddress.Text ??
    destination.text ??
+   destination.Text ??
    destination.addressText ??
+   destination.AddressText ??
    ''
   ).trim();
 
