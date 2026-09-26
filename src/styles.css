@@ -6924,3 +6924,20 @@ body {
  .platformCompanyRow{align-items:flex-start;flex-direction:column}
  .platformCompanyRow>div:last-child{align-items:flex-start}
 }
+
+/* Public customer payment page must scroll independently of the app shell */
+.publicPayPage{
+  height:100vh;
+  height:100dvh;
+  min-height:100vh;
+  min-height:100dvh;
+  overflow-x:hidden;
+  overflow-y:auto;
+  -webkit-overflow-scrolling:touch;
+  overscroll-behavior-y:auto;
+  padding-bottom:calc(34px + env(safe-area-inset-bottom));
+}
+
+.publicPayShell{
+  min-height:min-content;
+}
