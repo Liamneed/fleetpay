@@ -6468,6 +6468,44 @@ function DriverApp(){
   }
  }
 
+
+ async function createLiveCustomerPayment(){
+  if(!livePaymentPreview?.ok)return;
+
+  const confirmed=window.confirm(
+   `Create customer payment for booking ${livePaymentPreview.bookingId}?\n\n`+
+   `Driver amount: ${money(livePaymentPreview.fareAmount)}\n`+
+   `FaivoPay fee: ${money(livePaymentPreview.feeAmount)}\n`+
+   `Customer total: ${money(livePaymentPreview.totalAmount)}`
+  );
+
+  if(!confirmed)return;
+
+  setCustomerPaymentBusy(true);
+  setErr('');
+
+  try{
+   const j=await api(
+    '/api/driver/customer-payment/live',
+    {method:'POST'}
+   );
+
+   setCustomerPayment(j);
+
+   if(j.alreadyPaid){
+    setNotice('This booking has already been paid.');
+   }else if(j.reused){
+    setNotice('Existing payment link reopened.');
+   }else{
+    setNotice('Live customer payment created.');
+   }
+  }catch(e){
+   setErr(e.message);
+  }finally{
+   setCustomerPaymentBusy(false);
+  }
+ }
+
  async function createCustomerPayment(){
   setErr('');setNotice('');
   const amount=Number(customerFare);
@@ -6939,6 +6977,20 @@ function DriverApp(){
         <AlertTriangle/>
         {livePaymentPreview.error||'Preview failed'}
        </div>
+     }
+
+     {livePaymentPreview.ok&&
+      <button
+       type="button"
+       className="primary full actionButton"
+       style={{marginTop:16}}
+       disabled={customerPaymentBusy}
+       onClick={createLiveCustomerPayment}
+      >
+       {customerPaymentBusy
+        ?'Creating payment...'
+        :'Create live payment'}
+      </button>
      }
     </div>
    }
