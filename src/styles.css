@@ -6941,3 +6941,674 @@ body {
 .publicPayShell{
   min-height:min-content;
 }
+
+
+/* ============================================================
+   FAIVOPAY PUBLIC CUSTOMER PAYMENT V2
+   ============================================================ */
+
+.publicPayV2{
+  background:
+    radial-gradient(circle at 50% -120px,rgba(16,113,90,.13),transparent 420px),
+    #f4f7f6;
+  color:#10241f;
+  padding:0 14px calc(30px + env(safe-area-inset-bottom));
+}
+
+.publicPayShellV2{
+  width:min(100%,540px);
+  margin:0 auto;
+  padding-top:max(18px,env(safe-area-inset-top));
+}
+
+.publicPayBrandV2{
+  display:flex;
+  align-items:center;
+  gap:11px;
+  padding:10px 3px 18px;
+}
+
+.publicPayLogoV2{
+  width:44px;
+  height:44px;
+  flex:0 0 44px;
+  border-radius:13px;
+  overflow:hidden;
+  box-shadow:0 8px 22px rgba(9,78,61,.18);
+}
+
+.publicPayLogoV2 img{
+  width:100%;
+  height:100%;
+  object-fit:cover;
+}
+
+.publicPayBrandWords{
+  display:flex;
+  flex-direction:column;
+  min-width:0;
+}
+
+.publicPayBrandWords b{
+  font-size:21px;
+  letter-spacing:-.03em;
+  color:#0d3028;
+}
+
+.publicPayBrandWords span{
+  margin-top:1px;
+  font-size:11px;
+  color:#71827d;
+}
+
+.publicPaySafe{
+  margin-left:auto;
+  display:flex;
+  align-items:center;
+  gap:5px;
+  color:#57716a;
+  font-size:10px;
+  font-weight:700;
+}
+
+.publicPaySafe svg{
+  width:16px;
+  color:#138662;
+}
+
+.publicPayIntro{
+  text-align:center;
+  padding:18px 10px 20px;
+}
+
+.publicPayIntro>span{
+  font-size:10px;
+  letter-spacing:.14em;
+  font-weight:900;
+  color:#71827d;
+}
+
+.publicPayIntro h1{
+  margin:5px 0 2px;
+  font-size:52px;
+  line-height:1;
+  letter-spacing:-.055em;
+  color:#0c2f27;
+}
+
+.publicPayIntro p{
+  margin:6px 0 0;
+  color:#71827d;
+  font-size:13px;
+}
+
+.publicPayCardV2,
+.publicPayTermsV2,
+.publicPayStateCard{
+  background:#fff;
+  border:1px solid #dde6e2;
+  border-radius:18px;
+  box-shadow:0 8px 28px rgba(23,54,47,.055);
+}
+
+.publicPayCardV2{
+  padding:18px;
+  margin-bottom:12px;
+}
+
+.publicPaySectionTitle{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:14px;
+}
+
+.publicPaySectionTitle>div{
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+}
+
+.publicPaySectionTitle span{
+  font-size:9px;
+  letter-spacing:.12em;
+  color:#7d8d88;
+  font-weight:900;
+}
+
+.publicPaySectionTitle h2{
+  margin:0;
+  font-size:17px;
+  letter-spacing:-.02em;
+  color:#152c26;
+}
+
+.publicPaySectionTitle>svg{
+  width:21px;
+  color:#168967;
+}
+
+.publicJourneyV2{
+  margin:0 -2px 14px;
+  padding:13px 14px;
+  border-radius:14px;
+  background:#f6faf8;
+}
+
+.publicJourneyV2>div{
+  position:relative;
+  display:grid;
+  grid-template-columns:16px minmax(0,1fr);
+  column-gap:10px;
+  padding:4px 0 10px;
+}
+
+.publicJourneyV2>div:last-child{
+  padding-bottom:4px;
+}
+
+.publicJourneyV2>div:not(:last-child):after{
+  content:"";
+  position:absolute;
+  left:6px;
+  top:18px;
+  bottom:-2px;
+  border-left:2px dotted #a8c7bd;
+}
+
+.publicJourneyV2 i{
+  width:12px;
+  height:12px;
+  margin-top:3px;
+  border:3px solid #15966e;
+  background:#fff;
+  border-radius:50%;
+  box-sizing:border-box;
+}
+
+.publicJourneyV2>div:last-child i{
+  border-color:#193f5d;
+}
+
+.publicJourneyV2 span{
+  font-size:10px;
+  color:#7b8a86;
+}
+
+.publicJourneyV2 b{
+  grid-column:2;
+  margin-top:1px;
+  font-size:13px;
+  line-height:1.35;
+  color:#152c26;
+}
+
+.publicPayMeta{
+  border-top:1px solid #edf1ef;
+  padding-top:8px;
+}
+
+.publicPayMeta>div{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:18px;
+  padding:7px 0;
+}
+
+.publicPayMeta span{
+  color:#7c8b87;
+  font-size:11px;
+}
+
+.publicPayMeta b{
+  color:#243934;
+  font-size:12px;
+  text-align:right;
+  overflow-wrap:anywhere;
+}
+
+.publicPayPriceRow,
+.publicPayPriceTotal{
+  display:flex;
+  justify-content:space-between;
+  gap:18px;
+  align-items:flex-start;
+}
+
+.publicPayPriceRow{
+  padding:8px 0;
+  color:#536762;
+}
+
+.publicPayPriceRow span{
+  font-size:13px;
+}
+
+.publicPayPriceRow span small{
+  display:block;
+  margin-top:2px;
+  color:#8b9995;
+  font-size:9px;
+}
+
+.publicPayPriceRow b{
+  color:#263b35;
+  font-size:13px;
+}
+
+.publicPayPriceTotal{
+  margin:10px -7px -7px;
+  padding:14px 12px;
+  border-radius:12px;
+  background:#eaf7f1;
+}
+
+.publicPayPriceTotal span,
+.publicPayPriceTotal b{
+  font-size:17px;
+  color:#0b4c3b;
+  font-weight:900;
+}
+
+.publicPayTermsV2{
+  padding:17px;
+  margin-top:12px;
+}
+
+.publicPayTermsHead{
+  display:flex;
+  align-items:flex-start;
+  gap:10px;
+  margin-bottom:11px;
+}
+
+.publicPayTermsHead>svg{
+  width:20px;
+  color:#12835f;
+  flex:0 0 auto;
+}
+
+.publicPayTermsHead>div{
+  display:flex;
+  flex-direction:column;
+}
+
+.publicPayTermsHead b{
+  font-size:14px;
+  color:#19332c;
+}
+
+.publicPayTermsHead span{
+  margin-top:2px;
+  font-size:10px;
+  color:#7c8b87;
+}
+
+.publicPayTermsV2 ul{
+  list-style:none;
+  margin:0;
+  padding:0;
+  display:flex;
+  flex-direction:column;
+  gap:7px;
+}
+
+.publicPayTermsV2 li{
+  position:relative;
+  padding-left:18px;
+  color:#566a64;
+  font-size:11px;
+  line-height:1.45;
+}
+
+.publicPayTermsV2 li:before{
+  content:"✓";
+  position:absolute;
+  left:0;
+  top:0;
+  width:13px;
+  height:13px;
+  display:grid;
+  place-items:center;
+  border-radius:50%;
+  background:#15966e;
+  color:#fff;
+  font-size:8px;
+  font-weight:900;
+}
+
+.publicPayFullTerms{
+  margin-top:13px;
+  border-top:1px solid #e8eeeb;
+  padding-top:11px;
+}
+
+.publicPayFullTerms summary{
+  cursor:pointer;
+  color:#0c6a50;
+  font-size:12px;
+  font-weight:800;
+}
+
+.publicPayFullTerms>div{
+  padding:8px 2px 2px;
+}
+
+.publicPayFullTerms h3{
+  margin:11px 0 3px;
+  color:#253b35;
+  font-size:12px;
+}
+
+.publicPayFullTerms p{
+  margin:0;
+  color:#677974;
+  font-size:11px;
+  line-height:1.5;
+}
+
+.publicPayAgree{
+  display:flex;
+  align-items:flex-start;
+  gap:10px;
+  margin-top:15px;
+  padding:12px;
+  border-radius:12px;
+  background:#f5f8f7;
+  cursor:pointer;
+}
+
+.publicPayAgree input{
+  width:18px;
+  height:18px;
+  margin:0;
+  flex:0 0 auto;
+  accent-color:#08785a;
+}
+
+.publicPayAgree span{
+  color:#344b45;
+  font-size:11px;
+  line-height:1.45;
+  font-weight:650;
+}
+
+.publicPayActionDock{
+  position:sticky;
+  bottom:0;
+  z-index:10;
+  margin:12px -14px 0;
+  padding:10px 14px calc(10px + env(safe-area-inset-bottom));
+  background:linear-gradient(to bottom,rgba(244,247,246,.45),rgba(244,247,246,.98) 22%);
+  backdrop-filter:blur(12px);
+}
+
+.publicPayButtonV2{
+  width:100%;
+  min-height:56px;
+  border:0;
+  border-radius:14px;
+  padding:14px 17px;
+  display:grid;
+  grid-template-columns:22px 1fr 22px;
+  align-items:center;
+  gap:8px;
+  background:linear-gradient(135deg,#08785a,#075f49);
+  color:#fff;
+  box-shadow:0 12px 26px rgba(8,120,90,.22);
+  font:inherit;
+  font-size:15px;
+  font-weight:900;
+  cursor:pointer;
+}
+
+.publicPayButtonV2 svg{
+  width:19px;
+}
+
+.publicPayButtonV2:disabled{
+  background:#aebbb7;
+  box-shadow:none;
+  cursor:not-allowed;
+}
+
+.publicPayActionDock>small{
+  display:block;
+  text-align:center;
+  margin-top:7px;
+  color:#7c8c87;
+  font-size:9px;
+}
+
+.publicPayInlineError,
+.publicPayCancelNotice{
+  display:flex;
+  gap:9px;
+  align-items:flex-start;
+  border-radius:12px;
+}
+
+.publicPayInlineError{
+  margin-top:12px;
+  padding:11px 12px;
+  color:#922d31;
+  background:#fff1f1;
+  border:1px solid #f0cecf;
+  font-size:11px;
+}
+
+.publicPayInlineError svg,
+.publicPayCancelNotice>svg{
+  width:17px;
+  flex:0 0 auto;
+}
+
+.publicPayCancelNotice{
+  margin-bottom:10px;
+  padding:11px 12px;
+  background:#fff7e9;
+  border:1px solid #f1deba;
+  color:#7c5616;
+}
+
+.publicPayCancelNotice>div{
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+}
+
+.publicPayCancelNotice b{
+  font-size:12px;
+}
+
+.publicPayCancelNotice span{
+  font-size:10px;
+}
+
+.publicPayStateCard{
+  margin-top:22px;
+  padding:34px 24px;
+  text-align:center;
+}
+
+.publicPayStateIcon,
+.publicPayProcessingIcon{
+  width:70px;
+  height:70px;
+  margin:0 auto 14px;
+  display:grid;
+  place-items:center;
+  border-radius:50%;
+}
+
+.publicPayStateIcon svg,
+.publicPayProcessingIcon svg{
+  width:38px;
+  height:38px;
+}
+
+.publicPayStateCard>span{
+  display:block;
+  color:#7b8b86;
+  font-size:9px;
+  letter-spacing:.14em;
+  font-weight:900;
+}
+
+.publicPayStateCard h1{
+  margin:7px 0;
+  color:#163029;
+  font-size:30px;
+  letter-spacing:-.035em;
+}
+
+.publicPayStateCard h2{
+  margin:10px 0 4px;
+  color:#163029;
+}
+
+.publicPayStateCard p{
+  color:#697b76;
+  font-size:12px;
+  line-height:1.5;
+}
+
+.publicPayStateCard small{
+  color:#86938f;
+  font-size:10px;
+}
+
+.publicPayStateCard.success .publicPayStateIcon{
+  background:#e6f8ef;
+  color:#16a16f;
+}
+
+.publicPayStateCard.cancelled .publicPayStateIcon,
+.publicPayStateCard.unavailable .publicPayStateIcon{
+  background:#fff2e2;
+  color:#dc821d;
+}
+
+.publicPayProcessingIcon{
+  background:#eaf3ff;
+  color:#2177d6;
+}
+
+.publicPayReceipt{
+  margin:20px 0 16px;
+  padding:7px 14px;
+  border-radius:13px;
+  background:#f5faf8;
+}
+
+.publicPayReceipt>div{
+  display:flex;
+  justify-content:space-between;
+  gap:15px;
+  padding:8px 0;
+}
+
+.publicPayReceipt span{
+  color:#788984;
+  font-size:10px;
+}
+
+.publicPayReceipt b{
+  color:#263b35;
+  font-size:11px;
+}
+
+.publicPayClose{
+  display:block;
+  color:#176b53;
+  font-size:12px;
+}
+
+.publicPayProgress{
+  margin-top:20px;
+  display:flex;
+  flex-direction:column;
+  gap:9px;
+  text-align:left;
+}
+
+.publicPayProgress>div{
+  display:flex;
+  gap:9px;
+  align-items:center;
+  padding:10px 12px;
+  background:#f5f8fb;
+  border-radius:11px;
+  color:#667976;
+  font-size:11px;
+}
+
+.publicPayProgress svg{
+  width:17px;
+}
+
+.publicPayProgress .done{
+  color:#157657;
+}
+
+.publicPayLegalNote{
+  margin:3px 10px 0;
+  text-align:center;
+  font-size:9px;
+  color:#8a9894;
+  line-height:1.45;
+}
+
+.publicPayFooterV2{
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  gap:5px;
+  padding:20px 0 8px;
+  color:#83918d;
+  font-size:9px;
+  text-transform:uppercase;
+  letter-spacing:.08em;
+}
+
+.publicPayFooterV2 svg{
+  width:13px;
+}
+
+@media(max-width:420px){
+  .publicPayV2{
+    padding-left:10px;
+    padding-right:10px;
+  }
+
+  .publicPayShellV2{
+    width:100%;
+  }
+
+  .publicPayIntro{
+    padding-top:12px;
+  }
+
+  .publicPayIntro h1{
+    font-size:46px;
+  }
+
+  .publicPayCardV2,
+  .publicPayTermsV2{
+    border-radius:15px;
+    padding:15px;
+  }
+
+  .publicPayActionDock{
+    margin-left:-10px;
+    margin-right:-10px;
+    padding-left:10px;
+    padding-right:10px;
+  }
+
+  .publicPaySafe span{
+    display:none;
+  }
+}

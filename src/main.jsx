@@ -6004,31 +6004,278 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
 
 function CustomerPayPage(){
  const id=window.location.pathname.split('/').filter(Boolean)[1]||'';
- const[payment,setPayment]=useState(null),[error,setError]=useState(''),[busy,setBusy]=useState(false),[stripeReady,setStripeReady]=useState(true);
- async function load(){try{const j=await call(`/api/public/customer-payments/${id}`);setPayment(j.payment);setStripeReady(j.stripeConfigured!==false);setError('')}catch(e){setError(e.message)}}
- useEffect(()=>{load();const timer=setInterval(()=>{if(document.visibilityState==='visible')load()},4000);return()=>clearInterval(timer)},[id]);
- async function checkout(){setBusy(true);setError('');try{const j=await call(`/api/public/customer-payments/${id}/checkout`,{method:'POST'});window.location.assign(j.checkoutUrl)}catch(e){setError(e.message);setBusy(false)}}
- if(!payment&&!error)return <div className="publicPayPage"><div className="publicPayShell"><div className="publicPayLoading"><RefreshCw className="spin"/><span>Opening secure payment…</span></div></div></div>;
- if(error&&!payment)return <div className="publicPayPage"><div className="publicPayShell"><div className="publicPayBrand"><div className="publicPayLogo"><img src={faivopayMark} alt="" aria-hidden="true"/></div><b>FaivoPay</b></div><div className="publicPayError"><AlertTriangle/><h2>Payment link unavailable</h2><p>{error}</p></div></div></div>;
- const paid=payment.status==='paid';const cancelled=payment.status==='cancelled';
- return <div className="publicPayPage"><div className="publicPayShell">
-  <header className="publicPayBrand"><div className="publicPayLogo"><img src={faivopayMark} alt="" aria-hidden="true"/></div><div><b>FaivoPay</b><span>Secure customer payment</span></div><ShieldCheck/></header>
-  {paid?<section className="publicPayComplete"><CheckCircle2/><span>PAYMENT RECEIVED</span><h1>{money(payment.totalAmount)}</h1><p>Thank you. Your payment has been received securely.</p>{payment.bookingId&&<small>Reference {payment.bookingId}</small>}</section>:cancelled?<section className="publicPayComplete cancelled"><AlertTriangle/><span>PAYMENT LINK CANCELLED</span><h2>This link is no longer active</h2><p>Please contact the taxi company if you still need to make payment.</p></section>:<>
-   <section className="publicPayTotal"><div><span>PAYMENT TOTAL</span><h1>{money(payment.totalAmount)}</h1><p>Review the journey and fee breakdown before continuing.</p></div><CreditCard/></section>
-   <section className="publicPayBreakdown">
-    <div><span>Business</span><b>{payment.taxiCompany}</b></div>{payment.bookingId&&<div><span>Reference</span><b>{payment.bookingId}</b></div>}
-    {payment.customerName&&<div><span>Passenger</span><b>{payment.customerName}</b></div>}
-    {(payment.pickup||payment.destination)&&<div className="publicJourney"><span>Journey</span><b>{payment.pickup||'Pickup'}{payment.destination?` → ${payment.destination}`:''}</b></div>}
-    {payment.journeyAt&&<div><span>Date / time</span><b>{dt(payment.journeyAt)}</b></div>}
-    <div className="publicPayDivider"/><div><span>Journey fare</span><b>{money(payment.fareAmount)}</b></div><div><span>Service fee</span><b>{money(payment.feeAmount)}</b></div><div className="publicPayGrandTotal"><span>Total to pay</span><b>{money(payment.totalAmount)}</b></div>
-   </section>
-   <div className="publicPayTrust"><ShieldCheck/><div><b>Secure checkout</b><span>Card details are entered on Stripe's secure checkout. FaivoPay does not store your card number.</span></div></div>
-   {error&&<div className="inlineError"><AlertTriangle/>{error}</div>}
-   <button className="publicPayButton" disabled={busy||!stripeReady} onClick={checkout}>{busy?'Opening secure checkout…':`Pay ${money(payment.totalAmount)}`}<ArrowRight/></button>
-   <p className="publicPayConsent">By continuing you agree to the payment details above. The service fee is included in the total shown.</p>
-  </>}
-  <footer className="publicPayFooter">FaivoPay · Secure driver payments</footer>
- </div></div>;
+ const returnStatus=new URLSearchParams(window.location.search).get('status')||'';
+ const[payment,setPayment]=useState(null),[error,setError]=useState(''),[busy,setBusy]=useState(false),[stripeReady,setStripeReady]=useState(true),[termsAccepted,setTermsAccepted]=useState(false);
+
+ async function load(){
+  try{
+   const j=await call(`/api/public/customer-payments/${id}`);
+   setPayment(j.payment);
+   setStripeReady(j.stripeConfigured!==false);
+   setError('');
+  }catch(e){setError(e.message)}
+ }
+
+ useEffect(()=>{
+  load();
+  const timer=setInterval(()=>{
+   if(document.visibilityState==='visible')load()
+  },4000);
+  return()=>clearInterval(timer)
+ },[id]);
+
+ async function checkout(){
+  if(!termsAccepted){
+   setError('Please agree to the payment and cancellation terms before continuing.');
+   return;
+  }
+  setBusy(true);
+  setError('');
+  try{
+   const j=await call(`/api/public/customer-payments/${id}/checkout`,{method:'POST'});
+   window.location.assign(j.checkoutUrl)
+  }catch(e){
+   setError(e.message);
+   setBusy(false)
+  }
+ }
+
+ const Brand=()=>(
+  <header className="publicPayBrandV2">
+   <div className="publicPayLogoV2"><img src={faivopayMark} alt="FaivoPay"/></div>
+   <div className="publicPayBrandWords">
+    <b>FaivoPay</b>
+    <span>Secure taxi payments</span>
+   </div>
+   <div className="publicPaySafe"><ShieldCheck/><span>Safe. Secure.</span></div>
+  </header>
+ );
+
+ if(!payment&&!error)return(
+  <div className="publicPayPage publicPayV2">
+   <div className="publicPayShellV2">
+    <Brand/>
+    <div className="publicPayStateCard">
+     <RefreshCw className="spin"/>
+     <h2>Opening secure payment</h2>
+     <p>Please wait while we load your journey.</p>
+    </div>
+   </div>
+  </div>
+ );
+
+ if(error&&!payment)return(
+  <div className="publicPayPage publicPayV2">
+   <div className="publicPayShellV2">
+    <Brand/>
+    <div className="publicPayStateCard unavailable">
+     <div className="publicPayStateIcon"><AlertTriangle/></div>
+     <span>PAYMENT UNAVAILABLE</span>
+     <h1>We couldn't open this payment</h1>
+     <p>{error}</p>
+     <small>Please contact the taxi company if you still need to make payment.</small>
+    </div>
+    <footer className="publicPayFooterV2"><ShieldCheck/> Secure payments by FaivoPay</footer>
+   </div>
+  </div>
+ );
+
+ const paid=payment.status==='paid';
+ const cancelled=payment.status==='cancelled';
+ const returnedCancelled=returnStatus==='cancelled'&&!paid&&!cancelled;
+ const successPending=returnStatus==='success'&&!paid&&!cancelled;
+
+ if(paid)return(
+  <div className="publicPayPage publicPayV2">
+   <div className="publicPayShellV2">
+    <Brand/>
+    <div className="publicPayStateCard success">
+     <div className="publicPayStateIcon"><CheckCircle2/></div>
+     <span>PAYMENT COMPLETE</span>
+     <h1>{money(payment.totalAmount)}</h1>
+     <p>Your payment has been received successfully.</p>
+     <div className="publicPayReceipt">
+      {payment.bookingId&&<div><span>Booking reference</span><b>{payment.bookingId}</b></div>}
+      {payment.journeyAt&&<div><span>Journey</span><b>{dt(payment.journeyAt)}</b></div>}
+      <div><span>Status</span><b>Paid securely</b></div>
+     </div>
+     <strong className="publicPayClose">You can now close this page.</strong>
+    </div>
+    <footer className="publicPayFooterV2"><ShieldCheck/> Secure payments by FaivoPay</footer>
+   </div>
+  </div>
+ );
+
+ if(cancelled)return(
+  <div className="publicPayPage publicPayV2">
+   <div className="publicPayShellV2">
+    <Brand/>
+    <div className="publicPayStateCard cancelled">
+     <div className="publicPayStateIcon"><AlertTriangle/></div>
+     <span>PAYMENT LINK CANCELLED</span>
+     <h1>This payment is no longer available</h1>
+     <p>The payment link has been cancelled. Please contact the taxi company if you still need to make payment.</p>
+    </div>
+    <footer className="publicPayFooterV2"><ShieldCheck/> Secure payments by FaivoPay</footer>
+   </div>
+  </div>
+ );
+
+ if(successPending)return(
+  <div className="publicPayPage publicPayV2">
+   <div className="publicPayShellV2">
+    <Brand/>
+    <div className="publicPayStateCard processing">
+     <div className="publicPayProcessingIcon"><RefreshCw className="spin"/></div>
+     <span>FINALISING PAYMENT</span>
+     <h1>Almost done</h1>
+     <p>We're confirming your payment securely. Please keep this page open for a moment.</p>
+     <div className="publicPayProgress">
+      <div className="done"><CheckCircle2/><span>Card payment submitted</span></div>
+      <div><RefreshCw className="spin"/><span>Confirming payment</span></div>
+     </div>
+    </div>
+    <footer className="publicPayFooterV2"><ShieldCheck/> Secure payments by FaivoPay</footer>
+   </div>
+  </div>
+ );
+
+ return(
+  <div className="publicPayPage publicPayV2">
+   <div className="publicPayShellV2">
+    <Brand/>
+
+    {returnedCancelled&&
+     <div className="publicPayCancelNotice">
+      <AlertTriangle/>
+      <div>
+       <b>Payment cancelled</b>
+       <span>No payment was taken. You can try again below.</span>
+      </div>
+     </div>
+    }
+
+    <section className="publicPayIntro">
+     <span>YOUR TAXI JOURNEY PAYMENT</span>
+     <h1>{money(payment.totalAmount)}</h1>
+     <p>Amount due</p>
+    </section>
+
+    <section className="publicPayCardV2">
+     <div className="publicPaySectionTitle">
+      <div>
+       <span>JOURNEY</span>
+       <h2>Journey details</h2>
+      </div>
+      <CreditCard/>
+     </div>
+
+     {(payment.pickup||payment.destination)&&
+      <div className="publicJourneyV2">
+       {payment.pickup&&
+        <div>
+         <i/>
+         <span>Pickup</span>
+         <b>{payment.pickup}</b>
+        </div>
+       }
+       {payment.destination&&
+        <div>
+         <i/>
+         <span>Destination</span>
+         <b>{payment.destination}</b>
+        </div>
+       }
+      </div>
+     }
+
+     <div className="publicPayMeta">
+      <div><span>Business</span><b>{payment.taxiCompany}</b></div>
+      {payment.bookingId&&<div><span>Booking reference</span><b>{payment.bookingId}</b></div>}
+      {payment.customerName&&<div><span>Passenger</span><b>{payment.customerName}</b></div>}
+      {payment.journeyAt&&<div><span>Date & time</span><b>{dt(payment.journeyAt)}</b></div>}
+     </div>
+    </section>
+
+    <section className="publicPayCardV2 publicPaySummaryV2">
+     <div className="publicPaySectionTitle">
+      <div>
+       <span>PAYMENT</span>
+       <h2>Payment summary</h2>
+      </div>
+     </div>
+     <div className="publicPayPriceRow"><span>Journey fare</span><b>{money(payment.fareAmount)}</b></div>
+     <div className="publicPayPriceRow">
+      <span>FaivoPay service fee <small>non-refundable*</small></span>
+      <b>{money(payment.feeAmount)}</b>
+     </div>
+     <div className="publicPayPriceTotal">
+      <span>Total to pay</span>
+      <b>{money(payment.totalAmount)}</b>
+     </div>
+    </section>
+
+    <section className="publicPayTermsV2">
+     <div className="publicPayTermsHead">
+      <ShieldCheck/>
+      <div><b>Important payment terms</b><span>Please review before paying</span></div>
+     </div>
+
+     <ul>
+      <li>Cancellation before dispatch may incur a cancellation charge.</li>
+      <li>After dispatch, the journey fare is non-refundable if the booking is cancelled, except where required by law.</li>
+      <li>No-shows are non-refundable after the permitted waiting period, except where required by law.</li>
+      <li>The FaivoPay service fee is non-refundable once payment has been processed, except where required by law.</li>
+     </ul>
+
+     <details className="publicPayFullTerms">
+      <summary>View full terms & conditions</summary>
+      <div>
+       <h3>Cancellation before dispatch</h3>
+       <p>A cancellation charge may apply where a booking is cancelled before a vehicle is dispatched.</p>
+
+       <h3>Cancellation after dispatch</h3>
+       <p>Once a vehicle has been dispatched, the journey fare is non-refundable if the booking is cancelled, except where required by law.</p>
+
+       <h3>No-shows</h3>
+       <p>If the passenger is not available at the agreed pickup point within the permitted waiting period, the booking may be treated as a no-show and the journey fare will be non-refundable, except where required by law.</p>
+
+       <h3>Waiting time and journey changes</h3>
+       <p>Additional waiting time, stops, route changes or other journey changes may alter the final fare where applicable.</p>
+
+       <h3>FaivoPay service fee</h3>
+       <p>The FaivoPay service fee covers the secure payment service and is non-refundable once payment has been processed, except where required by law.</p>
+
+       <h3>Refunds</h3>
+       <p>Where a refund is approved, any refundable amount will be returned to the original payment method. Card-provider processing times may vary.</p>
+
+       <h3>Statutory rights</h3>
+       <p>Nothing in these terms affects any consumer rights that cannot legally be excluded or restricted.</p>
+      </div>
+     </details>
+
+     <label className="publicPayAgree">
+      <input type="checkbox" checked={termsAccepted} onChange={e=>{setTermsAccepted(e.target.checked);if(e.target.checked)setError('')}}/>
+      <span>I agree to the payment, cancellation and no-show terms above.</span>
+     </label>
+    </section>
+
+    {error&&<div className="publicPayInlineError"><AlertTriangle/><span>{error}</span></div>}
+
+    <div className="publicPayActionDock">
+     <button className="publicPayButtonV2" disabled={busy||!stripeReady||!termsAccepted} onClick={checkout}>
+      <ShieldCheck/>
+      <span>{busy?'Opening secure checkout…':`Pay ${money(payment.totalAmount)} securely`}</span>
+      {!busy&&<ArrowRight/>}
+     </button>
+     <small>Secure card payment powered by Stripe</small>
+    </div>
+
+    <p className="publicPayLegalNote">*Service fee is non-refundable once payment has been processed, except where required by law.</p>
+    <footer className="publicPayFooterV2">FaivoPay · Secure taxi payments</footer>
+   </div>
+  </div>
+ );
 }
 
 function DriverApp(){
