@@ -10051,7 +10051,7 @@ function DriverApp(){
  if(!token)return <div className={`driverAuthPage driverAuthV2 theme-${theme}`} style={{'--driver-text-scale':textScale}}>
   <button className="authThemeToggle" type="button" onClick={()=>setTheme(theme==='dark'?'light':'dark')} aria-label="Change appearance">{theme==='dark'?<Sun/>:<Moon/>}</button>
   <div className="driverAuthShell">
-   <div className="driverAuthBrand"><div className="authLogoMark branded"><img src={faivopayMark} alt="FaivoPay"/></div><div><b>FaivoPay</b><span>Driver Payments</span></div></div>
+   <div className="driverAuthBrand driverAuthBrandImage"><img src={faivopayMark} alt="FaivoPay"/></div>
    <div className="driverAuthCard polishedAuthCard">
     <div className="authIntro"><span className="authKicker">SECURE DRIVER APP</span><h1>{mode==='forgot'?'Reset your password':mode==='register'?'Create your account':'Welcome back'}</h1><p>{mode==='login'?'Manage payments, balances and payouts without the clutter.':'Secure access is matched against your active Autocab driver record.'}</p></div>
     {err&&<div className={`inlineError ${err.startsWith('Password reset')?'success':''}`}>{err}</div>}
@@ -10070,7 +10070,7 @@ function DriverApp(){
   </div>
  </div>;
 
- if(!me)return <div className={`driverAuthPage driverAuthV2 theme-${theme}`} style={{'--driver-text-scale':textScale}}><div className="driverAuthShell"><div className="driverAuthBrand"><div className="authLogoMark branded"><img src={faivopayMark} alt="FaivoPay"/></div><div><b>FaivoPay</b><span>Driver Payments</span></div></div><div className="driverAuthCard polishedAuthCard authLoading"><RefreshCw className="spin"/><b>Loading FaivoPay</b><span>Preparing your driver account…</span></div></div></div>;
+ if(!me)return <div className={`driverAuthPage driverAuthV2 theme-${theme}`} style={{'--driver-text-scale':textScale}}><div className="driverAuthShell"><div className="driverAuthBrand driverAuthBrandImage"><img src={faivopayMark} alt="FaivoPay"/></div><div className="driverAuthCard polishedAuthCard authLoading"><RefreshCw className="spin"/><b>Loading FaivoPay</b><span>Preparing your driver account…</span></div></div></div>;
 
  const d=me.driver;
  const balance=Number(d.currentBalance||0);

@@ -12609,3 +12609,27 @@ body {
   grid-column:auto;
  }
 }
+
+/* FaivoPay driver authentication branding */
+.driverAuthBrandImage{
+ display:flex;
+ align-items:center;
+ justify-content:flex-start;
+ margin-bottom:22px;
+}
+
+.driverAuthBrandImage img{
+ display:block;
+ width:84px;
+ height:84px;
+ object-fit:contain;
+ border-radius:22px;
+}
+
+@media(max-width:430px){
+ .driverAuthBrandImage img{
+  width:76px;
+  height:76px;
+  border-radius:20px;
+ }
+}
