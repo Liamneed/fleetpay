@@ -11583,6 +11583,35 @@ function invoiceCandidateFees(
 }
 
 
+function defaultInvoicePreviewPeriod(companyId){
+ const completed=previousCompleteInvoiceWeek();
+
+ /*
+  * Prefer the most recently completed week whenever it still has
+  * uninvoiced effective fee records. This is particularly important
+  * on Monday, when currentInvoiceWeekToDate() would otherwise move the
+  * operator straight into the new week before the prior week is billed.
+  */
+ const completedCandidates=invoiceCandidateFees(
+  companyId,
+  completed.periodStart,
+  completed.periodEnd
+ );
+
+ if(completedCandidates.length){
+  return {
+   ...completed,
+   mode:'completed'
+  };
+ }
+
+ return {
+  ...currentInvoiceWeekToDate(),
+  mode:'current'
+ };
+}
+
+
 function feeInvoiceTotals(candidates){
  const totals=candidates.reduce(
   (a,row)=>{
@@ -12324,7 +12353,25 @@ app.post(
     });
    }
 
-   const fallback=currentInvoiceWeekToDate();
+   const requestedMode=String(
+    req.body?.periodMode||'auto'
+   ).toLowerCase();
+
+   let fallback;
+
+   if(requestedMode==='current'){
+    fallback={
+     ...currentInvoiceWeekToDate(),
+     mode:'current'
+    };
+   }else if(requestedMode==='completed'){
+    fallback={
+     ...previousCompleteInvoiceWeek(),
+     mode:'completed'
+    };
+   }else{
+    fallback=defaultInvoicePreviewPeriod(company.id);
+   }
 
    const periodStart=String(
     req.body?.periodStart||
@@ -12371,7 +12418,11 @@ app.post(
     preview:{
      ...preview,
      completePeriod,
-     finalInvoiceEligible:completePeriod
+     finalInvoiceEligible:completePeriod,
+     periodMode:
+      completePeriod
+       ?'completed'
+       :'current'
     }
    });
   }catch(e){

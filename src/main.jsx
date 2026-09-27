@@ -1887,7 +1887,7 @@ function AdminApp(){
 
 async function resendOutstanding(x){try{await api(`/api/admin/outstanding-payments/${x.id}/resend`,{method:'POST'});alert('Payment reminder sent.');await loadOutstanding()}catch(e){alert(e.message)}}
  async function createStripeLink(x){try{const j=await api(`/api/admin/payment-requests/${x.id}/stripe`,{method:'POST'});await loadOutstanding();if(j.paymentUrl)window.open(j.paymentUrl,'_blank')}catch(e){alert(e.message)}}
- async function previewWeeklyFeeInvoice(){
+ async function previewWeeklyFeeInvoice(periodMode='auto'){
   const billingEmail=
    companyFinance?.weeklyInvoicing?.billingEmail||
    companyFinance?.company?.supportEmail||
@@ -1900,7 +1900,8 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
     method:'POST',
     body:JSON.stringify({
      companyId:companyFinance?.company?.id||'',
-     billingEmail
+     billingEmail,
+     periodMode
     })
    });
 
@@ -5411,7 +5412,7 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
           feeInvoiceBusy||
           Number(fees?.summary?.uninvoiced||0)<=0
          }
-         onClick={previewWeeklyFeeInvoice}
+         onClick={()=>previewWeeklyFeeInvoice('auto')}
         >
          <FileClock/>
          {feeInvoicePreviewBusy
@@ -5586,6 +5587,22 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
            {feeInvoiceTestEmailBusy
             ?'Sending test…'
             :'Send test email'}
+          </button>
+         }
+
+         {feeInvoicePreview.completePeriod&&
+          <button
+           className="secondary"
+           disabled={
+            feeInvoicePreviewBusy||
+            feeInvoiceDraftPdfBusy||
+            feeInvoiceBusy||
+            feeInvoiceTestEmailBusy
+           }
+           onClick={()=>previewWeeklyFeeInvoice('current')}
+          >
+           <CalendarDays/>
+           View current week draft
           </button>
          }
 
