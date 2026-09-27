@@ -540,11 +540,14 @@ function LiveTestLab({
  liveTest,
  liveTestEvents,
  liveTestSnapshot,
+ liveTestSimulation,
  loadLiveTest,
  addDriver,
  toggleDriver,
  snapshotDriver,
  snapshotBusyDriver,
+ simulateMonday,
+ simulationBusyDriver,
  busy
 }){
  const[search,setSearch]=useState('');
@@ -852,6 +855,29 @@ function LiveTestLab({
                </button>
 
                <button
+                className="mini"
+                disabled={
+                 busy||
+                 !x.enabled||
+                 x.liveWriteEnabled||
+                 snapshotBusyDriver===String(x.driverId)||
+                 simulationBusyDriver===String(x.driverId)
+                }
+                onClick={()=>simulateMonday(x)}
+               >
+                <CalendarDays
+                 className={
+                  simulationBusyDriver===String(x.driverId)
+                   ?'spin'
+                   :''
+                 }
+                />
+                {simulationBusyDriver===String(x.driverId)
+                 ?'Calculating…'
+                 :'Simulate Monday'}
+               </button>
+
+               <button
                 className={`mini ${x.enabled?'danger':'success'}`}
                 disabled={
                  busy||
@@ -879,6 +905,218 @@ function LiveTestLab({
         </div>
       }
      </section>
+
+     {liveTestSimulation&&
+      <section className="panel liveTestSimulationPanel">
+       <div className="panelHead">
+        <div>
+         <span className="sectionKicker">MONDAY RUN SIMULATION</span>
+         <h3>
+          Callsign {liveTestSimulation.driver?.callsign||'—'}
+         </h3>
+         <p>
+          This uses a fresh live Autocab Previous Balance and the current
+          FaivoPay Monday rules. It has not created or changed any financial records.
+         </p>
+        </div>
+        <Pill tone="good">Nothing changed</Pill>
+       </div>
+
+       <div className="liveTestSimulationSafety">
+        <ShieldCheck/>
+        <div>
+         <b>SIMULATION ONLY — NOTHING WAS CHANGED</b>
+         <span>
+          No Autocab adjustment, payout, payment request, carried-charge update,
+          payment-plan change, provider payment or notification was created.
+         </span>
+        </div>
+       </div>
+
+       <div className="liveTestSimulationMeta">
+        <span>
+         Simulated run date
+         <b>{liveTestSimulation.simulation?.runDate||'—'}</b>
+        </span>
+
+        <span>
+         Settled activity week
+         <b>{liveTestSimulation.simulation?.settledWeekStart||'—'}</b>
+        </span>
+
+        <span>
+         Live balance fetched
+         <b>{dt(liveTestSimulation.simulation?.live?.fetchedAt)}</b>
+        </span>
+
+        <span>
+         Proposed action
+         <b>
+          {String(
+           liveTestSimulation.simulation?.outcome?.action||'none'
+          ).replaceAll('_',' ')}
+         </b>
+        </span>
+       </div>
+
+       <div className="liveTestMondayFlow">
+        <div>
+         <span>Live Previous Balance</span>
+         <b>
+          {money(
+           liveTestSimulation.simulation?.calculation?.previousBalance
+          )}
+         </b>
+        </div>
+
+        <div>
+         <span>Less weekly fee</span>
+         <b>
+          -{money(
+           liveTestSimulation.simulation?.calculation?.lessWeeklyFee
+          )}
+         </b>
+        </div>
+
+        <div>
+         <span>Less carried charges</span>
+         <b>
+          -{money(
+           liveTestSimulation.simulation?.calculation?.lessCarriedCharges
+          )}
+         </b>
+        </div>
+
+        <div>
+         <span>Balance before plan</span>
+         <b>
+          {money(
+           liveTestSimulation.simulation?.calculation?.adjustedBalance
+          )}
+         </b>
+        </div>
+
+        <div>
+         <span>Less plan allocation</span>
+         <b>
+          -{money(
+           liveTestSimulation.simulation?.calculation?.lessPlanAllocation
+          )}
+         </b>
+         <small>
+          {liveTestSimulation.simulation?.paymentPlan?.applies
+           ?'Due payment-plan instalment'
+           :'No payment-plan deduction'}
+         </small>
+        </div>
+
+        <div className="liveTestMondayOutcome">
+         <span>Available after deductions</span>
+         <b>
+          {money(
+           liveTestSimulation.simulation?.calculation?.payoutAvailable
+          )}
+         </b>
+        </div>
+       </div>
+
+       <div className="liveTestOutcomeGrid">
+        <div>
+         <span>Proposed action</span>
+         <b>
+          {String(
+           liveTestSimulation.simulation?.outcome?.action||'none'
+          ).replaceAll('_',' ')}
+         </b>
+        </div>
+
+        <div>
+         <span>Action amount</span>
+         <b>
+          {money(
+           liveTestSimulation.simulation?.outcome?.amount
+          )}
+         </b>
+        </div>
+
+        <div>
+         <span>Proposed carried charges</span>
+         <b>
+          {money(
+           liveTestSimulation.simulation?.outcome?.proposedCarryForward
+          )}
+         </b>
+        </div>
+
+        <div>
+         <span>Minimum payout</span>
+         <b>
+          {money(
+           liveTestSimulation.simulation?.inputs?.minimumPayoutThreshold
+          )}
+         </b>
+        </div>
+
+        <div>
+         <span>Negative threshold</span>
+         <b>
+          {money(
+           liveTestSimulation.simulation?.inputs?.negativeThreshold
+          )}
+         </b>
+        </div>
+
+        <div>
+         <span>Worked in settled week</span>
+         <b>
+          {liveTestSimulation.simulation?.inputs?.workedThisWeek
+           ?'Yes'
+           :'No'}
+         </b>
+        </div>
+       </div>
+
+       {liveTestSimulation.simulation?.paymentPlan?.applies&&
+        <div className="liveTestPlanSimulation">
+         <div>
+          <span>Plan scheduled</span>
+          <b>
+           {money(
+            liveTestSimulation.simulation?.paymentPlan?.scheduledAmount
+           )}
+          </b>
+         </div>
+
+         <div>
+          <span>Instalment remaining</span>
+          <b>
+           {money(
+            liveTestSimulation.simulation?.paymentPlan?.instalmentRemaining
+           )}
+          </b>
+         </div>
+
+         <div>
+          <span>Plan remaining</span>
+          <b>
+           {money(
+            liveTestSimulation.simulation?.paymentPlan?.planRemainingAmount
+           )}
+          </b>
+         </div>
+
+         <div>
+          <span>Would allocate Monday</span>
+          <b>
+           {money(
+            liveTestSimulation.simulation?.paymentPlan?.allocatedAmount
+           )}
+          </b>
+         </div>
+        </div>
+       }
+      </section>
+     }
 
      {liveTestSnapshot&&
       <section className="panel liveTestSnapshotPanel">
@@ -1229,6 +1467,7 @@ function AdminApp(){
  const[demo,setDemo]=useState(null),[demoEmail,setDemoEmail]=useState(''),[demoMobile,setDemoMobile]=useState('');
  const[liveTest,setLiveTest]=useState(null),[liveTestBusy,setLiveTestBusy]=useState(false);
  const[liveTestEvents,setLiveTestEvents]=useState([]),[liveTestSnapshot,setLiveTestSnapshot]=useState(null),[liveTestSnapshotBusy,setLiveTestSnapshotBusy]=useState('');
+ const[liveTestSimulation,setLiveTestSimulation]=useState(null),[liveTestSimulationBusy,setLiveTestSimulationBusy]=useState('');
  const[resetPhrase,setResetPhrase]=useState(''),[resetDrivers,setResetDrivers]=useState(false);
  const api=(u,o={})=>call(u,o,token);
  function logout(){localStorage.removeItem('fleetpay_admin');setToken('');setMe(null)}
@@ -2974,6 +3213,40 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
    }catch{}
   }finally{
    setLiveTestSnapshotBusy('');
+  }
+ }
+
+ async function simulateLiveTestMonday(driver){
+  if(!driver?.driverId || !driver?.enabled)return;
+
+  if(!confirm(
+   `Simulate the Monday Run for callsign ${driver.callsign||driver.driverId}?\n\n`+
+   'FaivoPay will fetch one fresh read-only Autocab driver-account record and '+
+   'calculate what the Monday Run would propose using current FaivoPay settings.\n\n'+
+   'NO payout, payment request, Autocab adjustment, payment-plan change or notification will be created.'
+  ))return;
+
+  setLiveTestSimulationBusy(String(driver.driverId));
+
+  try{
+   const result=await api(
+    `/api/admin/live-test/drivers/${driver.driverId}/simulate-monday`,
+    {method:'POST'}
+   );
+
+   setLiveTestSimulation(result);
+
+   const history=await api('/api/admin/live-test/events');
+   setLiveTestEvents(history.events||[]);
+  }catch(e){
+   alert(`Monday simulation failed: ${e.message}`);
+
+   try{
+    const history=await api('/api/admin/live-test/events');
+    setLiveTestEvents(history.events||[]);
+   }catch{}
+  }finally{
+   setLiveTestSimulationBusy('');
   }
  }
 
@@ -6482,7 +6755,7 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
      </section>
     </>}
     {view==='demo'&&<DemoLab demo={demo} loadDemo={loadDemo} resetDemo={resetDemo} action={demoAction} demoEmail={demoEmail} setDemoEmail={setDemoEmail} demoMobile={demoMobile} setDemoMobile={setDemoMobile} sendEmail={demoSendEmail} sendSms={demoSendSms}/>}
-    {view==='liveTest'&&isAdmin&&<LiveTestLab liveTest={liveTest} liveTestEvents={liveTestEvents} liveTestSnapshot={liveTestSnapshot} loadLiveTest={loadLiveTest} addDriver={addLiveTestDriver} toggleDriver={toggleLiveTestDriver} snapshotDriver={snapshotLiveTestDriver} snapshotBusyDriver={liveTestSnapshotBusy} busy={liveTestBusy}/>}
+    {view==='liveTest'&&isAdmin&&<LiveTestLab liveTest={liveTest} liveTestEvents={liveTestEvents} liveTestSnapshot={liveTestSnapshot} liveTestSimulation={liveTestSimulation} loadLiveTest={loadLiveTest} addDriver={addLiveTestDriver} toggleDriver={toggleLiveTestDriver} snapshotDriver={snapshotLiveTestDriver} snapshotBusyDriver={liveTestSnapshotBusy} simulateMonday={simulateLiveTestMonday} simulationBusyDriver={liveTestSimulationBusy} busy={liveTestBusy}/>}
     {view==='drivers'&&<><section className="officePageIntro"><div><span>AUTOCAB + PAYOUT READINESS</span><h2>Driver accounts</h2><p>Balances and payout-bank readiness in one place. Full bank account numbers are never exposed in the normal office view.</p></div><button className="secondary" onClick={syncNow}><RefreshCw className={loading?'spin':''}/>Sync Autocab</button></section><section className="officeStats three"><Stat icon={Banknote} label="Bank ready" value={meta.bankReady??drivers.filter(d=>d.bankAccount?.ready).length} sub="Payout details saved"/><Stat icon={AlertTriangle} label="Missing bank details" value={meta.bankMissing??drivers.filter(d=>!d.bankAccount?.ready).length} sub="Cannot be released for payout"/><Stat icon={Clock3} label="Recently changed" value={meta.bankRecentlyChanged??drivers.filter(d=>d.bankAccount?.changedRecently).length} sub="Changed in the last 7 days"/></section><div className="driverToolbar"><div className="searchBox"><Search/><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search callsign, name, mobile, email or bank ending…"/></div><select value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All drivers</option><option value="bank_ready">Bank ready</option><option value="bank_missing">Missing bank details</option><option value="bank_recent">Recently changed bank</option><option value="payout_excluded">Payout excluded</option><option value="positive">Positive balance</option><option value="negative">Negative balance</option><option value="unmatched">Unmatched</option></select></div><section className="panel driverPanel"><div className="tableWrap proTable"><table><thead><tr><th>Callsign</th><th>Driver</th><th>Previous</th><th>Current</th><th>Payout account</th><th>Payout status</th><th>Last processed</th></tr></thead><tbody>{filtered.map(d=>{const b=d.bankAccount||{};return <tr key={d.driverId} onClick={()=>setSelected(d)}><td><span className="callsign">{d.callsign}</span></td><td><b>{d.fullName}</b><small>{d.email||d.mobile||`Driver ${d.driverId}`}</small></td><td>{money(d.previousBalance)}</td><td><b className={(d.currentBalance??0)<0?'negative':''}>{money(d.currentBalance)}</b></td><td><div className="bankTableCell"><Pill tone={bankTone(b)}>{b.label||'Bank details missing'}</Pill>{b.ready&&<small>{b.accountNumberMasked} · {b.sortCodeMasked}</small>}</div></td><td><div className="bankTableCell"><Pill tone={d.payoutExcluded?'bad':'good'}>{d.payoutExcluded?'Excluded':'Enabled'}</Pill>{d.payoutExcluded&&<small>{d.payoutExclusionReason||'Persistent exclusion'}</small>}</div></td><td>{dt(d.lastProcessed)}</td></tr>})}</tbody></table></div></section></>}
     {view==='access'&&<><section className="officePageIntro"><div><span>IDENTITY & PERMISSIONS</span><h2>Users & access</h2><p>Office accounts use mandatory authenticator MFA. Roles limit who can move money or change settings.</p></div>{isAdmin&&<button className="primary" onClick={()=>setShowNewStaff(!showNewStaff)}><UserCheck/>Add office user</button>}</section>{isAdmin&&showNewStaff&&<section className="panel"><form className="staffForm" onSubmit={createStaff}><label>Name<input required value={newStaff.name} onChange={e=>setNewStaff({...newStaff,name:e.target.value})}/></label><label>Email<input type="email" required value={newStaff.email} onChange={e=>setNewStaff({...newStaff,email:e.target.value})}/></label><label>Role<select value={newStaff.role} onChange={e=>setNewStaff({...newStaff,role:e.target.value})}><option value="administrator">Administrator</option><option value="finance">Finance</option><option value="office">Office</option><option value="readonly">Read only</option></select></label><label>Temporary password<input type="password" minLength="10" required value={newStaff.password} onChange={e=>setNewStaff({...newStaff,password:e.target.value})}/></label><button className="primary">Create user</button></form></section>}<section className="panel"><div className="panelHead"><div><h3>Office users</h3><p>MFA and role status for each staff account.</p></div><button className="mini" onClick={loadStaff}>Refresh</button></div><div className="tableWrap proTable"><table><thead><tr><th>User</th><th>Role</th><th>MFA</th><th>Last login</th><th>Status</th><th/></tr></thead><tbody>{staff.map(u=><tr key={u.id}><td><b>{u.name}</b><small>{u.email}</small></td><td><select value={u.role} onChange={e=>updateStaff(u,{role:e.target.value})} disabled={u.id===me?.id}><option value="administrator">Administrator</option><option value="finance">Finance</option><option value="office">Office</option><option value="readonly">Read only</option></select></td><td><Pill tone={u.mfaEnabled?'good':'warn'}>{u.mfaEnabled?'Enabled':'Setup required'}</Pill></td><td>{dt(u.lastLoginAt)}</td><td><Pill tone={u.active?'good':'bad'}>{u.active?'Active':'Disabled'}</Pill></td><td>{u.id!==me?.id&&<button className="mini" onClick={()=>updateStaff(u,{active:!u.active})}>{u.active?'Disable':'Enable'}</button>}</td></tr>)}</tbody></table></div></section><section className="panel"><div className="panelHead"><div><h3>Driver app accounts</h3><p>Registration remains matched to active Autocab driver details.</p></div><button className="mini" onClick={loadDriverUsers}>Refresh</button></div><div className="tableWrap proTable"><table><thead><tr><th>Callsign</th><th>Email</th><th>Created</th><th>Last login</th><th>Status</th><th/></tr></thead><tbody>{driverUsers.map(u=><tr key={u.id}><td><span className="callsign">{u.callsign}</span></td><td>{u.email}</td><td>{dt(u.createdAt)}</td><td>{dt(u.lastLoginAt)}</td><td><Pill tone={u.approved?'good':'warn'}>{u.approved?'Approved':'Pending'}</Pill></td><td>{canOffice&&<button className="mini" onClick={()=>setApproval(u,!u.approved)}>{u.approved?'Suspend':'Approve'}</button>}</td></tr>)}</tbody></table></div></section></>}
 
