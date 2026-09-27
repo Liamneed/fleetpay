@@ -2696,10 +2696,99 @@ function feeSplitPercent(type,settings=getSettings()){
  if(type==='early_payout')return Math.min(100,Math.max(0,Number(settings.earlyPayoutFeeFleetPayPercent??100)));
  return Math.min(100,Math.max(0,Number(settings.weeklyFeeFleetPayPercent??100)));
 }
-function recordFee({feeType,sourceType,sourceId,driverId=null,callsign='',description='',amount=0,createdAt=null}){
- const gross=Math.max(0,Number(amount||0));if(gross<=0)return null;const pct=feeSplitPercent(feeType),fleet=Number((gross*pct/100).toFixed(2)),taxi=Number((gross-fleet).toFixed(2));
- const existing=db.prepare('SELECT * FROM fee_ledger WHERE fee_type=? AND source_type=? AND source_id=?').get(feeType,sourceType,String(sourceId));if(existing)return existing;
- const rowId=id('fee'),at=createdAt||new Date().toISOString();db.prepare('INSERT INTO fee_ledger(id,fee_type,source_type,source_id,driver_id,callsign,description,gross_fee,fleetpay_share,taxi_company_share,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(rowId,feeType,sourceType,String(sourceId),driverId,callsign||'',description||'',gross,fleet,taxi,'uninvoiced',at);return db.prepare('SELECT * FROM fee_ledger WHERE id=?').get(rowId)
+function resolveFeeCompanyId(companyId=null){
+ const requested=String(companyId||'').trim();
+
+ if(requested){
+  const company=db.prepare('SELECT id FROM companies WHERE id=?').get(requested);
+  return company?.id||null;
+ }
+
+ const companies=db.prepare(`
+  SELECT id
+  FROM companies
+  WHERE status='active'
+  ORDER BY created_at ASC
+ `).all();
+
+ /*
+  * Existing payment flows predate multi-company fee attribution.
+  * A missing company can only be inferred safely while exactly one
+  * active company exists.
+  */
+ return companies.length===1?companies[0].id:null;
+}
+
+function recordFee({
+ feeType,
+ sourceType,
+ sourceId,
+ driverId=null,
+ callsign='',
+ description='',
+ amount=0,
+ createdAt=null,
+ companyId=null
+}){
+ const gross=Math.max(0,Number(amount||0));
+ if(gross<=0)return null;
+
+ const pct=feeSplitPercent(feeType);
+ const fleet=Number((gross*pct/100).toFixed(2));
+ const taxi=Number((gross-fleet).toFixed(2));
+
+ const existing=db.prepare(`
+  SELECT *
+  FROM fee_ledger
+  WHERE fee_type=?
+    AND source_type=?
+    AND source_id=?
+ `).get(
+  feeType,
+  sourceType,
+  String(sourceId)
+ );
+
+ if(existing)return existing;
+
+ const resolvedCompanyId=resolveFeeCompanyId(companyId);
+ const rowId=id('fee');
+ const at=createdAt||new Date().toISOString();
+
+ db.prepare(`
+  INSERT INTO fee_ledger(
+   id,
+   fee_type,
+   source_type,
+   source_id,
+   driver_id,
+   callsign,
+   description,
+   gross_fee,
+   fleetpay_share,
+   taxi_company_share,
+   status,
+   created_at,
+   company_id
+  )
+  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+ `).run(
+  rowId,
+  feeType,
+  sourceType,
+  String(sourceId),
+  driverId,
+  callsign||'',
+  description||'',
+  gross,
+  fleet,
+  taxi,
+  'uninvoiced',
+  at,
+  resolvedCompanyId
+ );
+
+ return db.prepare('SELECT * FROM fee_ledger WHERE id=?').get(rowId);
 }
 function logCommunication({channel,recipient='',templateKey='',entityType='',entityId='',status='sent',providerRef='',error=''}){db.prepare('INSERT INTO communications_log(id,channel,recipient,template_key,entity_type,entity_id,status,provider_ref,error,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id('comm'),channel,recipient,templateKey,entityType,entityId?String(entityId):'',status,providerRef||'',error||'',new Date().toISOString())}
 function safeEmail(v=''){return String(v).trim().toLowerCase()}
@@ -6617,7 +6706,308 @@ app.patch('/api/admin/payment-requests/:id',adminAuth,requireStaffRole('administ
  audit(req,'admin',req.auth.email,'payment_request_updated','payment_request',item.id,{status,paymentUrl:Boolean(url)});res.json({ok:true,status,paymentUrl:url});
 });
 
-app.get('/api/admin/logs',adminAuth,(req,res)=>{const limit=Math.min(500,Math.max(1,Number(req.query.limit||200)));const rows=db.prepare('SELECT id,created_at as createdAt,actor_type as actorType,actor_id as actorId,action,entity_type as entityType,entity_id as entityId,details_json as detailsJson,ip FROM audit_logs ORDER BY id DESC LIMIT ?').all(limit).map(r=>{const details=JSON.parse(r.detailsJson||'{}');let actorId=r.actorId;if(r.actorType==='driver'&&/^\d+$/.test(String(actorId||''))){actorId=cachedDriver(Number(actorId))?.callsign||actorId}return {...r,actorId,details}});res.json({logs:rows})});
+app.get('/api/admin/logs',adminAuth,(req,res)=>{
+ const limit=Math.min(
+  500,
+  Math.max(1,Number(req.query.limit||200))
+ );
+
+ const rows=db.prepare(`
+  SELECT
+   id,
+   created_at as createdAt,
+   actor_type as actorType,
+   actor_id as actorId,
+   action,
+   entity_type as entityType,
+   entity_id as entityId,
+   details_json as detailsJson,
+   ip
+  FROM audit_logs
+  ORDER BY id DESC
+  LIMIT ?
+ `).all(limit).map(r=>{
+  const details=JSON.parse(r.detailsJson||'{}');
+
+  const originalActorId=r.actorId;
+  let actorId=originalActorId;
+  let actorName='';
+  let actorEmail='';
+
+  if(r.actorType==='driver'&&/^\d+$/.test(String(actorId||''))){
+   const driver=cachedDriver(Number(actorId));
+   actorName=driver?.fullName||'';
+   actorId=driver?.callsign||actorId;
+  }
+
+  if(['staff','admin'].includes(String(r.actorType||''))){
+   const byId=db.prepare(`
+    SELECT id,email,name
+    FROM staff_users
+    WHERE id=?
+   `).get(originalActorId);
+
+   const byEmail=!byId&&String(originalActorId||'').includes('@')
+    ?db.prepare(`
+      SELECT id,email,name
+      FROM staff_users
+      WHERE lower(email)=lower(?)
+     `).get(originalActorId)
+    :null;
+
+   const staff=byId||byEmail;
+
+   if(staff){
+    actorName=staff.name||staff.email||originalActorId;
+    actorEmail=staff.email||'';
+   }else{
+    actorName=String(originalActorId||'');
+    actorEmail=String(originalActorId||'').includes('@')
+     ?String(originalActorId)
+     :'';
+   }
+  }
+
+  if(r.actorType==='system'){
+   actorName=
+    String(originalActorId||'').trim()||
+    'FaivoPay system';
+  }
+
+  return {
+   ...r,
+   actorId,
+   actorRawId:originalActorId,
+   actorName:
+    actorName||
+    String(actorId||r.actorType||'FaivoPay'),
+   actorEmail,
+   details
+  };
+ });
+
+ res.json({logs:rows});
+});
+
+
+
+/* ============================================================
+   FaivoPay weekly invoicing / Live Data Test Lab foundation
+   ------------------------------------------------------------
+   IMPORTANT:
+   - Schema only.
+   - No automatic invoicing enabled here.
+   - No Autocab write capability enabled here.
+   ============================================================ */
+
+db.exec(`
+ CREATE TABLE IF NOT EXISTS fee_invoices (
+  id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL,
+  invoice_number TEXT NOT NULL,
+  period_start TEXT NOT NULL,
+  period_end TEXT NOT NULL,
+  billing_email TEXT NOT NULL DEFAULT '',
+  currency TEXT NOT NULL DEFAULT 'GBP',
+  gross_fee_total REAL NOT NULL DEFAULT 0,
+  faivopay_share_total REAL NOT NULL DEFAULT 0,
+  taxi_company_share_total REAL NOT NULL DEFAULT 0,
+  fee_count INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'created',
+  pdf_path TEXT,
+  email_status TEXT NOT NULL DEFAULT 'not_sent',
+  email_provider TEXT,
+  email_provider_ref TEXT,
+  emailed_at TEXT,
+  created_at TEXT NOT NULL,
+  created_by TEXT,
+  updated_at TEXT
+ );
+
+ CREATE UNIQUE INDEX IF NOT EXISTS idx_fee_invoices_company_number
+ ON fee_invoices(company_id,invoice_number);
+
+ CREATE UNIQUE INDEX IF NOT EXISTS idx_fee_invoices_company_period
+ ON fee_invoices(company_id,period_start,period_end);
+
+ CREATE TABLE IF NOT EXISTS fee_invoice_items (
+  invoice_id TEXT NOT NULL,
+  fee_id TEXT NOT NULL,
+  company_id TEXT NOT NULL,
+  gross_fee REAL NOT NULL DEFAULT 0,
+  faivopay_share REAL NOT NULL DEFAULT 0,
+  taxi_company_share REAL NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(invoice_id,fee_id)
+ );
+
+ CREATE UNIQUE INDEX IF NOT EXISTS idx_fee_invoice_items_fee
+ ON fee_invoice_items(fee_id);
+
+ CREATE INDEX IF NOT EXISTS idx_fee_invoice_items_company
+ ON fee_invoice_items(company_id,invoice_id);
+
+ CREATE TABLE IF NOT EXISTS live_test_drivers (
+  company_id TEXT NOT NULL,
+  driver_id TEXT NOT NULL,
+  callsign TEXT NOT NULL DEFAULT '',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  live_write_enabled INTEGER NOT NULL DEFAULT 0,
+  added_by TEXT,
+  added_at TEXT NOT NULL,
+  updated_at TEXT,
+  PRIMARY KEY(company_id,driver_id)
+ );
+
+ CREATE INDEX IF NOT EXISTS idx_live_test_drivers_company_enabled
+ ON live_test_drivers(company_id,enabled);
+
+ CREATE TABLE IF NOT EXISTS live_test_events (
+  id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL,
+  driver_id TEXT,
+  callsign TEXT,
+  mode TEXT NOT NULL,
+  action TEXT NOT NULL,
+  request_json TEXT,
+  before_json TEXT,
+  proposed_json TEXT,
+  result_json TEXT,
+  reversal_of TEXT,
+  status TEXT NOT NULL DEFAULT 'recorded',
+  actor_id TEXT,
+  actor_email TEXT,
+  actor_name TEXT,
+  created_at TEXT NOT NULL
+ );
+
+ CREATE INDEX IF NOT EXISTS idx_live_test_events_company_created
+ ON live_test_events(company_id,created_at);
+
+ CREATE INDEX IF NOT EXISTS idx_live_test_events_driver
+ ON live_test_events(company_id,driver_id,created_at);
+`);
+
+/*
+ * Existing fee_ledger rows predate full multi-company invoicing.
+ * Add nullable linkage columns safely, then backfill only when the
+ * application can unambiguously resolve the default company.
+ */
+function ensureTableColumn(table,column,definition){
+ const cols=db.prepare(`PRAGMA table_info(${table})`).all();
+ if(!cols.some(x=>String(x.name)===String(column))){
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+ }
+}
+
+ensureTableColumn('fee_ledger','company_id','TEXT');
+ensureTableColumn('fee_ledger','invoice_id','TEXT');
+ensureTableColumn('fee_ledger','invoiced_at','TEXT');
+
+db.exec(`
+ CREATE INDEX IF NOT EXISTS idx_fee_ledger_company_status_created
+ ON fee_ledger(company_id,status,created_at);
+
+ CREATE INDEX IF NOT EXISTS idx_fee_ledger_invoice
+ ON fee_ledger(invoice_id);
+`);
+
+function defaultCompanyRow(){
+ return db.prepare(`
+  SELECT *
+  FROM companies
+  WHERE status='active'
+  ORDER BY created_at ASC
+  LIMIT 1
+ `).get() || db.prepare(`
+  SELECT *
+  FROM companies
+  ORDER BY created_at ASC
+  LIMIT 1
+ `).get() || null;
+}
+
+function officeCompanyRow(req=null){
+ const requested=String(
+  req?.query?.companyId||
+  req?.body?.companyId||
+  req?.auth?.companyId||
+  ''
+ ).trim();
+
+ if(requested){
+  const company=db.prepare('SELECT * FROM companies WHERE id=?').get(requested);
+  if(company)return company;
+ }
+
+ const companies=db.prepare(`
+  SELECT *
+  FROM companies
+  WHERE status='active'
+  ORDER BY created_at ASC
+ `).all();
+
+ /*
+  * Until office sessions carry an explicit company membership,
+  * implicit selection is safe only when exactly one active company
+  * exists.
+  */
+ return companies.length===1?companies[0]:null;
+}
+
+function companyWeeklyInvoiceSettings(companyId){
+ const company=db.prepare('SELECT * FROM companies WHERE id=?').get(companyId);
+ if(!company)return null;
+
+ return {
+  enabled:Boolean(
+   getCompanySetting(companyId,'weeklyInvoicingEnabled',false)
+  ),
+  billingEmail:safeEmail(
+   getCompanySetting(
+    companyId,
+    'weeklyInvoicingEmail',
+    company.name==='Need-A-Cab'
+     ?'office@needacab247.com'
+     :(company.support_email||'')
+   )
+  ),
+  timezone:String(
+   company.timezone||
+   getCompanySetting(companyId,'timezone','Europe/London')||
+   'Europe/London'
+  ),
+  company:companyPublic(company)
+ };
+}
+
+function backfillLegacyFeeCompany(){
+ const companies=db.prepare(`
+  SELECT id
+  FROM companies
+  ORDER BY created_at ASC
+ `).all();
+
+ /*
+  * Legacy fee rows were created before fee_ledger was company-scoped.
+  *
+  * Auto-backfill only when the database contains exactly one company.
+  * If multiple companies exist, leave legacy rows unassigned so they
+  * cannot accidentally be invoiced to the wrong operator.
+  */
+ if(companies.length!==1)return 0;
+
+ const result=db.prepare(`
+  UPDATE fee_ledger
+  SET company_id=?
+  WHERE company_id IS NULL
+     OR TRIM(company_id)=''
+ `).run(companies[0].id);
+
+ return Number(result.changes||0);
+}
+
+backfillLegacyFeeCompany();
 
 
 /* =========================
@@ -6639,6 +7029,160 @@ function updateRunItem(runId,payoutId,approvalStatus,reason=''){
 function officeSettingsPayload(){const s=getSettings();return {...s,smsAuthConfigured:Boolean(getSecureSetting('smsAuthValue')),smtpPasswordConfigured:Boolean(getSecureSetting('smtpPassword')),smsAuthValue:'',smtpPassword:''}}
 
 app.get('/api/admin/operations-settings',adminAuth,(req,res)=>res.json(officeSettingsPayload()));
+
+app.get(
+ '/api/admin/company-finance-settings',
+ adminAuth,
+ (req,res)=>{
+  try{
+   const company=officeCompanyRow(req);
+
+   if(!company){
+    return res.status(409).json({
+     error:'Select a company before loading company-level finance settings.'
+    });
+   }
+
+   res.json({
+    company:companyPublic(company),
+    weeklyInvoicing:companyWeeklyInvoiceSettings(company.id)
+   });
+  }catch(e){
+   res.status(500).json({error:e.message});
+  }
+ }
+);
+
+app.put(
+ '/api/admin/company-finance-settings',
+ adminAuth,
+ requireStaffRole('administrator'),
+ (req,res)=>{
+  try{
+   const company=officeCompanyRow(req);
+
+   if(!company){
+    return res.status(409).json({
+     error:'Select a company before changing company-level finance settings.'
+    });
+   }
+
+   const enabled=Boolean(req.body?.weeklyInvoicingEnabled);
+   const billingEmail=safeEmail(
+    req.body?.weeklyInvoicingEmail||
+    (
+     company.name==='Need-A-Cab'
+      ?'office@needacab247.com'
+      :(company.support_email||'')
+    )
+   );
+
+   if(enabled&&!billingEmail){
+    return res.status(400).json({
+     error:'A billing email is required when weekly invoicing is enabled.'
+    });
+   }
+
+   setCompanySetting(
+    company.id,
+    'weeklyInvoicingEnabled',
+    enabled
+   );
+
+   setCompanySetting(
+    company.id,
+    'weeklyInvoicingEmail',
+    billingEmail
+   );
+
+   audit(
+    req,
+    'staff',
+    req.auth.email,
+    'weekly_invoicing_settings_updated',
+    'company',
+    company.id,
+    {
+     companyId:company.id,
+     weeklyInvoicingEnabled:enabled,
+     weeklyInvoicingEmail:billingEmail
+    }
+   );
+
+   res.json({
+    company:companyPublic(company),
+    weeklyInvoicing:companyWeeklyInvoiceSettings(company.id)
+   });
+  }catch(e){
+   res.status(500).json({error:e.message});
+  }
+ }
+);
+
+app.get(
+ '/api/admin/integration-status',
+ adminAuth,
+ async(req,res)=>{
+  try{
+   const settings=getSettings();
+   const twilioConfig=getTwilioConfig();
+
+   let twilioBalance={
+    configured:false,
+    balance:null,
+    currency:null
+   };
+
+   let twilioError='';
+
+   try{
+    twilioBalance=await getTwilioBalance();
+   }catch(e){
+    twilioError=String(e.message||'Unable to load Twilio balance');
+   }
+
+   const balance=
+    twilioBalance.balance==null
+     ?null
+     :Number(twilioBalance.balance);
+
+   const threshold=Number(
+    settings.twilioLowBalanceThreshold??20
+   );
+
+   res.json({
+    twilio:{
+     configured:Boolean(twilioBalance.configured),
+     connected:Boolean(twilioBalance.configured&&!twilioError),
+     enabled:Boolean(settings.twilioEnabled),
+     balance,
+     currency:twilioBalance.currency||null,
+     lowBalance:
+      balance!=null &&
+      Number.isFinite(balance) &&
+      balance<threshold,
+     lowBalanceThreshold:threshold,
+     lowBalanceAlertsEnabled:Boolean(
+      settings.twilioLowBalanceAlertsEnabled
+     ),
+     sender:
+      twilioConfig.messagingServiceSid
+       ?'Messaging Service'
+       :(twilioConfig.fromNumber||''),
+     senderType:
+      twilioConfig.messagingServiceSid
+       ?'messaging_service'
+       :(twilioConfig.fromNumber?'number':'none'),
+     error:twilioError||null
+    }
+   });
+  }catch(e){
+   res.status(500).json({error:e.message});
+  }
+ }
+);
+
+
 app.put('/api/admin/operations-settings',adminAuth,requireStaffRole('administrator'),(req,res)=>{
  const cur=getSettings(),x=req.body||{},num=(k,min=0,max=Infinity)=>Math.min(max,Math.max(min,Number(x[k]??cur[k]??0))),str=k=>String(x[k]??cur[k]??'');let cutoff=str('earlyPayoutCutoffTime');if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(cutoff))cutoff='11:00';let dueTime=str('outstandingDueTime');if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(dueTime))dueTime='17:00';
  const next={...cur,negativeThreshold:num('negativeThreshold'),minimumPayoutThreshold:num('minimumPayoutThreshold'),chargeWeeklyFeeWhenInactive:Boolean(x.chargeWeeklyFeeWhenInactive??cur.chargeWeeklyFeeWhenInactive??true),weeklyAppFee:num('weeklyAppFee'),earlyPayoutFee:num('earlyPayoutFee'),customerPaymentFeeType:['fixed','percentage'].includes(str('customerPaymentFeeType'))?str('customerPaymentFeeType'):'fixed',customerPaymentFeeValue:num('customerPaymentFeeValue'),earlyPayoutCutoffTime:cutoff,earlyPayoutCutoffHour:Number(cutoff.split(':')[0]),syncMinutes:num('syncMinutes',2,60),weeklyPayoutReasonTemplate:str('weeklyPayoutReasonTemplate'),earlyPayoutReasonTemplate:str('earlyPayoutReasonTemplate'),manualPayInReasonDefault:str('manualPayInReasonDefault'),manualPayoutReasonDefault:str('manualPayoutReasonDefault'),outstandingDueTime:dueTime,outstandingSmsTemplate:str('outstandingSmsTemplate'),outstandingEmailSubject:str('outstandingEmailSubject'),outstandingEmailBody:str('outstandingEmailBody'),customerPaymentSmsTemplate:str('customerPaymentSmsTemplate'),customerPaymentEmailSubject:str('customerPaymentEmailSubject'),smsEndpoint:str('smsEndpoint'),smsMethod:['POST','PUT','PATCH'].includes(str('smsMethod').toUpperCase())?str('smsMethod').toUpperCase():'POST',smsAuthHeader:str('smsAuthHeader'),smsBodyTemplate:str('smsBodyTemplate'),twilioEnabled:Boolean(x.twilioEnabled??cur.twilioEnabled),orionEnabled:Boolean(x.orionEnabled??cur.orionEnabled),paymentSmsProvider:['twilio','orion'].includes(str('paymentSmsProvider').toLowerCase())?str('paymentSmsProvider').toLowerCase():'twilio',generalSmsProvider:['twilio','orion'].includes(str('generalSmsProvider').toLowerCase())?str('generalSmsProvider').toLowerCase():'orion',smsFallbackEnabled:Boolean(x.smsFallbackEnabled??cur.smsFallbackEnabled),twilioLowBalanceAlertsEnabled:Boolean(x.twilioLowBalanceAlertsEnabled??cur.twilioLowBalanceAlertsEnabled),twilioLowBalanceThreshold:num('twilioLowBalanceThreshold',0),twilioLowBalanceEmail:safeEmail(str('twilioLowBalanceEmail')),smtpHost:str('smtpHost'),smtpPort:num('smtpPort',1,65535),smtpSecure:Boolean(x.smtpSecure??cur.smtpSecure),smtpUser:str('smtpUser'),smtpFromName:str('smtpFromName'),smtpFromEmail:str('smtpFromEmail'),officeNotificationEmail:safeEmail(str('officeNotificationEmail')),customerFeeFleetPayPercent:num('customerFeeFleetPayPercent',0,100),earlyPayoutFeeFleetPayPercent:num('earlyPayoutFeeFleetPayPercent',0,100),weeklyFeeFleetPayPercent:num('weeklyFeeFleetPayPercent',0,100),requireAdminApproval:Boolean(x.requireAdminApproval??cur.requireAdminApproval),companyName:str('companyName')||cur.companyName,productName:'FaivoPay'};

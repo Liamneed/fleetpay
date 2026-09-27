@@ -606,6 +606,7 @@ function AdminApp(){
  const[view,setView]=useState('dashboard');
  const[me,setMe]=useState(null),[overview,setOverview]=useState(null),[transactions,setTransactions]=useState([]);
  const[drivers,setDrivers]=useState([]),[meta,setMeta]=useState({}),[settings,setSettings]=useState(null),[integrations,setIntegrations]=useState(null),[twilioBalance,setTwilioBalance]=useState(null);
+ const[companyFinance,setCompanyFinance]=useState(null),[integrationStatus,setIntegrationStatus]=useState(null),[companyFinanceBusy,setCompanyFinanceBusy]=useState(false);
  const[mondayRuns,setMondayRuns]=useState([]),[sett,setSett]=useState({runs:[],payoutRuns:[],payouts:[],paymentRequests:[],earlyPayoutRequests:[]});
  const[planAllocations,setPlanAllocations]=useState([]);
  const[outstanding,setOutstanding]=useState([]),[fees,setFees]=useState({fees:[],summary:{}}),[earlySummary,setEarlySummary]=useState(null);
@@ -683,6 +684,8 @@ function AdminApp(){
  const loadSettings=()=>safeLoad(async()=>setSettings(await api('/api/admin/operations-settings')));
  const loadIntegrations=()=>safeLoad(async()=>setIntegrations(await api('/api/admin/integrations')));
  const loadTwilioBalance=()=>safeLoad(async()=>setTwilioBalance(await api('/api/admin/twilio/balance')));
+ const loadCompanyFinance=()=>safeLoad(async()=>setCompanyFinance(await api('/api/admin/company-finance-settings')));
+ const loadIntegrationStatus=()=>safeLoad(async()=>setIntegrationStatus(await api('/api/admin/integration-status')));
  const loadSett=()=>safeLoad(async()=>setSett(await api('/api/admin/settlements')));
  const loadMonday=()=>safeLoad(async()=>{
   const j=await api('/api/admin/monday-runs');
@@ -748,7 +751,7 @@ function AdminApp(){
   loadDriverTransactions(selected.driverId);
  },[selected?.driverId]);
 
- async function refreshCore(){await Promise.all([loadOverview(),loadTransactions(),loadDrivers(),loadSettings(),loadIntegrations(),loadTwilioBalance(),loadSett(),loadMonday(),loadOutstanding(),loadFees(),loadEarlySummary(),loadCustomerAdmin()])}
+ async function refreshCore(){await Promise.all([loadOverview(),loadTransactions(),loadDrivers(),loadSettings(),loadIntegrations(),loadTwilioBalance(),loadCompanyFinance(),loadIntegrationStatus(),loadSett(),loadMonday(),loadOutstanding(),loadFees(),loadEarlySummary(),loadCustomerAdmin()])}
  useEffect(()=>{
   let alive=true;
   if(!token){setSessionBooting(false);return()=>{alive=false}}
@@ -756,12 +759,39 @@ function AdminApp(){
   (async()=>{
    try{
     const profile=await call('/api/admin/me',{},token);if(!alive)return;setMe(profile);
-    await Promise.all([loadOverview(),loadTransactions(),loadDrivers(),loadSettings(),loadIntegrations(),loadTwilioBalance(),loadSett(),loadMonday(),loadOutstanding(),loadFees(),loadEarlySummary(),loadCustomerAdmin()]);
+    await Promise.all([loadOverview(),loadTransactions(),loadDrivers(),loadSettings(),loadIntegrations(),loadTwilioBalance(),loadCompanyFinance(),loadIntegrationStatus(),loadSett(),loadMonday(),loadOutstanding(),loadFees(),loadEarlySummary(),loadCustomerAdmin()]);
    }catch(e){if(alive){if(/authentication|office authentication/i.test(e.message))logout();else setErr(e.message)}}
    finally{if(alive)setSessionBooting(false)}
   })();
   return()=>{alive=false};
  },[token]);
+
+ async function saveCompanyFinance(){
+  if(!companyFinance?.weeklyInvoicing)return;
+
+  setCompanyFinanceBusy(true);
+
+  try{
+   const result=await api('/api/admin/company-finance-settings',{
+    method:'PUT',
+    body:JSON.stringify({
+     companyId:companyFinance.company?.id||'',
+     weeklyInvoicingEnabled:Boolean(
+      companyFinance.weeklyInvoicing.enabled
+     ),
+     weeklyInvoicingEmail:
+      companyFinance.weeklyInvoicing.billingEmail||''
+    })
+   });
+
+   setCompanyFinance(result);
+   alert('Weekly invoicing settings saved.');
+  }catch(e){
+   alert(e.message);
+  }finally{
+   setCompanyFinanceBusy(false);
+  }
+ }
 
  async function silentOfficeRefresh(){
   if(!token)return;
@@ -812,6 +842,13 @@ function AdminApp(){
 
   if(view==='fees'){
    jobs.push(api('/api/admin/fees').then(setFees));
+  }
+
+  if(view==='settings'){
+   jobs.push(
+    api('/api/admin/integration-status').then(setIntegrationStatus),
+    api('/api/admin/company-finance-settings').then(setCompanyFinance)
+   );
   }
 
   if(view==='transactions'){
@@ -5049,8 +5086,179 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
      }
     </>}
 
-    {view==='security'&&isAdmin&&<><section className="officePageIntro"><div><span>SECURITY CENTRE</span><h2>Authentication & audit</h2><p>Office access requires password plus authenticator verification. Sensitive actions are recorded against the signed-in user.</p></div><div className="secureBadge"><ShieldCheck/><div><b>MFA enforced</b><span>{me?.email}</span></div></div></section><section className="securityCards"><div className="securityCard"><ShieldCheck/><div><span>Current session</span><b>MFA verified</b><small>{me?.role}</small></div></div><div className="securityCard"><KeyRound/><div><span>Authentication</span><b>TOTP authenticator</b><small>Required for every office account</small></div></div><div className="securityCard"><Clock3/><div><span>Session lifetime</span><b>12 hours maximum</b><small>Sign out on shared devices</small></div></div></section><section className="panel"><div className="panelHead"><div><h3>Security history</h3><p>Recent login, MFA and security events.</p></div><button className="mini" onClick={loadSecurity}>Refresh</button></div><div className="securityLogList">{securityLogs.map(l=><div className="securityLog" key={l.id}><div className="logIcon"><ShieldCheck/></div><div><b>{String(l.action).replaceAll('_',' ')}</b><span>{l.actorId||'system'} · {dt(l.createdAt)}</span><small>{l.ip||'No IP recorded'}</small></div></div>)}</div></section></>}
-    {view==='settings'&&isAdmin&&settings&&<><section className="officePageIntro"><div><span>ADMINISTRATION</span><h2>FaivoPay settings</h2><p>Operational rules, payout descriptions, communications and fee splits. Secret values are stored encrypted and are never returned to the browser.</p></div><button className="primary" onClick={saveSettings}><Settings/>Save all settings</button></section><div className="settingsSections">
+    {view==='security'&&isAdmin&&<><section className="officePageIntro"><div><span>SECURITY CENTRE</span><h2>Authentication & audit</h2><p>Office access requires password plus authenticator verification. Sensitive actions are recorded against the signed-in user.</p></div><div className="secureBadge"><ShieldCheck/><div><b>MFA enforced</b><span>{me?.email}</span></div></div></section><section className="securityCards"><div className="securityCard"><ShieldCheck/><div><span>Current session</span><b>MFA verified</b><small>{me?.role}</small></div></div><div className="securityCard"><KeyRound/><div><span>Authentication</span><b>TOTP authenticator</b><small>Required for every office account</small></div></div><div className="securityCard"><Clock3/><div><span>Session lifetime</span><b>12 hours maximum</b><small>Sign out on shared devices</small></div></div></section><section className="panel"><div className="panelHead"><div><h3>Security history</h3><p>Recent login, MFA and security events.</p></div><button className="mini" onClick={loadSecurity}>Refresh</button></div><div className="securityLogList">{securityLogs.map(l=><div className="securityLog" key={l.id}><div className="logIcon"><ShieldCheck/></div><div><b>{String(l.action).replaceAll('_',' ')}</b><span>{l.actorName||l.actorId||'system'} · {dt(l.createdAt)}</span><small>{[l.actorEmail,l.actorRawId,l.ip].filter(Boolean).join(' · ')||'No additional identity data'}</small></div></div>)}</div></section></>}
+    {view==='settings'&&isAdmin&&settings&&<><section className="officePageIntro"><div><span>ADMINISTRATION</span><h2>FaivoPay settings</h2><p>Company configuration, driver and customer payments, invoicing, communications, testing and integrations. Secret values remain encrypted and are never returned to the browser.</p></div><button className="primary" onClick={saveSettings}><Settings/>Save all settings</button></section><div className="settingsSections">
+
+     <section className="panel settingsCardV2 integrationStatusPrimary">
+      <div className="settingsHead">
+       <Database/>
+       <div>
+        <span className="sectionKicker">INTEGRATION STATUS</span>
+        <h3>Connected services</h3>
+        <p>Live status of payment, messaging and Autocab services used by FaivoPay.</p>
+       </div>
+      </div>
+
+      <div className="integrationGrid">
+       <div>
+        <b>Autocab</b>
+        <span>{integrations?.autocab?.adjustmentsEnabled?'Writes enabled':'Safe mode'}</span>
+        <Pill tone={integrations?.autocab?.adjustmentsEnabled?'good':'warn'}>
+         {integrations?.autocab?.adjustmentsEnabled?'Connected':'Protected'}
+        </Pill>
+       </div>
+
+       <div>
+        <b>Stripe</b>
+        <span>{
+         integrations?.stripe?.configured
+          ?(integrations.stripe.testMode?'Test mode':'Live mode')
+          :'Not configured'
+        }</span>
+        <Pill tone={integrations?.stripe?.configured?'good':'warn'}>
+         {integrations?.stripe?.configured?'Connected':'Setup'}
+        </Pill>
+       </div>
+
+       <div>
+        <b>Wise</b>
+        <span>{integrations?.wise?.configured?integrations.wise.environment:'Not configured'}</span>
+        <Pill tone={integrations?.wise?.configured?'good':'warn'}>
+         {integrations?.wise?.configured?'Connected':'Setup'}
+        </Pill>
+       </div>
+
+       <div className={integrationStatus?.twilio?.lowBalance?'integrationLowBalance':''}>
+        <b>Twilio</b>
+        <span>{
+         integrationStatus?.twilio?.balance!=null
+          ?`${integrationStatus.twilio.currency==='GBP'?'£':''}${Number(integrationStatus.twilio.balance).toFixed(2)} ${integrationStatus.twilio.currency||''}`
+          :integrationStatus?.twilio?.configured
+           ?'Balance unavailable'
+           :'Not configured'
+        }</span>
+        <Pill tone={
+         integrationStatus?.twilio?.lowBalance
+          ?'bad'
+          :integrationStatus?.twilio?.connected
+           ?'good'
+           :'warn'
+        }>
+         {
+          integrationStatus?.twilio?.lowBalance
+           ?'Low balance'
+           :integrationStatus?.twilio?.connected
+            ?'Connected'
+            :'Setup'
+         }
+        </Pill>
+        <small>
+         Sender: {integrationStatus?.twilio?.sender||'Not configured'}
+        </small>
+       </div>
+      </div>
+
+      {integrationStatus?.twilio?.lowBalance&&
+       <div className="operatorWarning">
+        <AlertTriangle/>
+        <div>
+         <b>Twilio balance is low</b>
+         <span>
+          Current balance is below the configured warning level of {money(Number(integrationStatus.twilio.lowBalanceThreshold||0))}.
+         </span>
+        </div>
+       </div>
+      }
+     </section>
+
+     <div className="settingsSectionLabel">
+      <span>COMPANY</span>
+      <b>{companyFinance?.company?.name||settings.companyName||'Company settings'}</b>
+     </div>
+
+     <section className="panel settingsCardV2">
+      <div className="settingsHead">
+       <BadgePoundSterling/>
+       <div>
+        <span className="sectionKicker">WEEKLY INVOICING</span>
+        <h3>Automatic FaivoPay fee invoice</h3>
+        <p>Invoice recorded uninvoiced fees for this company each Monday. Automatic invoice generation is not enabled until the invoicing engine is completed.</p>
+       </div>
+      </div>
+
+      {companyFinance?.weeklyInvoicing
+       ?<>
+        <div className="formGrid2">
+         <label className="toggleRow">
+          <span className="toggleCopy">
+           <b>Enable weekly invoicing</b>
+           <small>Company-level switch. The scheduler will respect this setting once enabled in a later controlled step.</small>
+          </span>
+          <span className="toggleSwitch">
+           <input
+            type="checkbox"
+            checked={Boolean(companyFinance.weeklyInvoicing.enabled)}
+            onChange={e=>setCompanyFinance({
+             ...companyFinance,
+             weeklyInvoicing:{
+              ...companyFinance.weeklyInvoicing,
+              enabled:e.target.checked
+             }
+            })}
+           />
+           <span className="toggleSlider"/>
+          </span>
+         </label>
+
+         <label>
+          Billing email
+          <input
+           type="email"
+           value={companyFinance.weeklyInvoicing.billingEmail||''}
+           onChange={e=>setCompanyFinance({
+            ...companyFinance,
+            weeklyInvoicing:{
+             ...companyFinance.weeklyInvoicing,
+             billingEmail:e.target.value
+            }
+           })}
+           placeholder="office@needacab247.com"
+          />
+          <small>Invoices and PDF copies will be sent here.</small>
+         </label>
+        </div>
+
+        <div className="settingsInlineMeta">
+         <span>Company</span>
+         <b>{companyFinance.company?.name||'—'}</b>
+         <span>Timezone</span>
+         <b>{companyFinance.weeklyInvoicing.timezone||'Europe/London'}</b>
+        </div>
+
+        <button
+         className="secondary"
+         disabled={companyFinanceBusy}
+         onClick={saveCompanyFinance}
+        >
+         <Settings/>
+         {companyFinanceBusy?'Saving…':'Save weekly invoicing'}
+        </button>
+       </>
+       :<div className="operatorWarning blue">
+        <Info/>
+        <div>
+         <b>Company settings unavailable</b>
+         <span>FaivoPay could not safely resolve a single company for these settings.</span>
+        </div>
+       </div>
+      }
+     </section>
+
+     <div className="settingsSectionLabel">
+      <span>DRIVER PAYMENTS</span>
+      <b>Settlement, payout and fee rules</b>
+     </div>
+
      <section className="panel settingsCardV2"><div className="settingsHead"><CalendarDays/><div><h3>Settlement & payout rules</h3><p>Controls used for Monday and early payout processing.</p></div></div><div className="formGrid2"><label>Outstanding threshold<div className="moneyField"><span>£</span><input type="number" step="0.01" value={settings.negativeThreshold??0} onChange={e=>setSettings({...settings,negativeThreshold:e.target.value})}/></div><small>Amounts owed below this are carried forward.</small></label><label>Minimum payout threshold<div className="moneyField"><span>£</span><input type="number" min="0" step="0.01" value={settings.minimumPayoutThreshold??0} onChange={e=>setSettings({...settings,minimumPayoutThreshold:e.target.value})}/></div><small>Positive balances below this remain on the driver account until a future settlement.</small></label><label>Weekly FaivoPay fee<div className="moneyField"><span>£</span><input type="number" step="0.01" value={settings.weeklyAppFee??0} onChange={e=>setSettings({...settings,weeklyAppFee:e.target.value})}/></div></label><label className="toggleRow"><span className="toggleCopy"><b>Charge weekly fee when no work is recorded</b><small>Turn this off to waive the weekly fee for drivers with no recorded work during the week being settled.</small></span><span className="toggleSwitch"><input type="checkbox" checked={settings.chargeWeeklyFeeWhenInactive!==false} onChange={e=>setSettings({...settings,chargeWeeklyFeeWhenInactive:e.target.checked})}/><span className="toggleSlider"/></span></label><label>Early payout fee<div className="moneyField"><span>£</span><input type="number" step="0.01" value={settings.earlyPayoutFee??0} onChange={e=>setSettings({...settings,earlyPayoutFee:e.target.value})}/></div></label><label>Early payout cutoff<input type="time" value={settings.earlyPayoutCutoffTime||'11:00'} onChange={e=>setSettings({...settings,earlyPayoutCutoffTime:e.target.value})}/></label><label>Outstanding payment deadline<input type="time" value={settings.outstandingDueTime||'17:00'} onChange={e=>setSettings({...settings,outstandingDueTime:e.target.value})}/></label><label>Autocab sync interval<input type="number" min="2" max="60" value={settings.syncMinutes||10} onChange={e=>setSettings({...settings,syncMinutes:e.target.value})}/><small>Minutes between automatic syncs.</small></label></div><div className="formGrid1"><label>Weekly payout Autocab description<input value={settings.weeklyPayoutReasonTemplate||''} onChange={e=>setSettings({...settings,weeklyPayoutReasonTemplate:e.target.value})}/><small>Available: {'{date}'} {'{time}'} {'{callsign}'} {'{amount}'}</small></label><label>Early payout Autocab description<input value={settings.earlyPayoutReasonTemplate||''} onChange={e=>setSettings({...settings,earlyPayoutReasonTemplate:e.target.value})}/></label><div className="formGrid2"><label>Manual pay-in default reason<input value={settings.manualPayInReasonDefault||''} onChange={e=>setSettings({...settings,manualPayInReasonDefault:e.target.value})}/></label><label>Manual payout default reason<input value={settings.manualPayoutReasonDefault||''} onChange={e=>setSettings({...settings,manualPayoutReasonDefault:e.target.value})}/></label></div></div></section>
      <section className="panel settingsCardV2"><div className="settingsHead"><BadgePoundSterling/><div><h3>Fee pricing & split</h3><p>Define the gross fee and how each fee is split between FaivoPay and the taxi company.</p></div></div><div className="formGrid2"><label>Customer payment fee type<select value={settings.customerPaymentFeeType||'fixed'} onChange={e=>setSettings({...settings,customerPaymentFeeType:e.target.value})}><option value="fixed">Fixed amount</option><option value="percentage">Percentage</option></select></label><label>Customer payment fee<div className="moneyField"><span>{settings.customerPaymentFeeType==='percentage'?'%':'£'}</span><input type="number" min="0" step="0.01" value={settings.customerPaymentFeeValue??0} onChange={e=>setSettings({...settings,customerPaymentFeeValue:e.target.value})}/></div></label><label>FaivoPay share – customer fees<div className="moneyField"><span>%</span><input type="number" min="0" max="100" value={settings.customerFeeFleetPayPercent??100} onChange={e=>setSettings({...settings,customerFeeFleetPayPercent:e.target.value})}/></div><small>Taxi company receives the remaining percentage.</small></label><label>FaivoPay share – early payout fee<div className="moneyField"><span>%</span><input type="number" min="0" max="100" value={settings.earlyPayoutFeeFleetPayPercent??100} onChange={e=>setSettings({...settings,earlyPayoutFeeFleetPayPercent:e.target.value})}/></div></label><label>FaivoPay share – weekly fee<div className="moneyField"><span>%</span><input type="number" min="0" max="100" value={settings.weeklyFeeFleetPayPercent??100} onChange={e=>setSettings({...settings,weeklyFeeFleetPayPercent:e.target.value})}/></div></label></div></section>
      <section className="panel settingsCardV2"><div className="settingsHead"><Smartphone/><div><h3>SMS providers</h3><p>Choose how FaivoPay routes payment and general messages between Twilio and the taxi-company gateway.</p></div></div><div className="formGrid2"><label className="toggleRow"><span className="toggleCopy"><b>Enable Twilio</b><small>Allow FaivoPay to send SMS through Twilio.</small></span><span className="toggleSwitch"><input type="checkbox" checked={Boolean(settings.twilioEnabled)} onChange={e=>setSettings({...settings,twilioEnabled:e.target.checked})}/><span className="toggleSlider"/></span></label><label className="toggleRow"><span className="toggleCopy"><b>Enable Orion gateway</b><small>Allow FaivoPay to send SMS through the taxi-company gateway.</small></span><span className="toggleSwitch"><input type="checkbox" checked={Boolean(settings.orionEnabled)} onChange={e=>setSettings({...settings,orionEnabled:e.target.checked})}/><span className="toggleSlider"/></span></label><label>Payment-link SMS provider<select value={settings.paymentSmsProvider||'twilio'} onChange={e=>setSettings({...settings,paymentSmsProvider:e.target.value})}><option value="twilio">Twilio</option><option value="orion">Orion gateway</option></select></label><label>General SMS provider<select value={settings.generalSmsProvider||'orion'} onChange={e=>setSettings({...settings,generalSmsProvider:e.target.value})}><option value="orion">Orion gateway</option><option value="twilio">Twilio</option></select></label><label className="toggleRow"><span className="toggleCopy"><b>Use fallback SMS provider</b><small>Try the secondary provider automatically if the primary provider fails.</small></span><span className="toggleSwitch"><input type="checkbox" checked={Boolean(settings.smsFallbackEnabled)} onChange={e=>setSettings({...settings,smsFallbackEnabled:e.target.checked})}/><span className="toggleSlider"/></span></label></div><div className="formGrid2"><label>Low Twilio balance warning (£)<input type="number" min="0" step="1" value={settings.twilioLowBalanceThreshold??20} onChange={e=>setSettings({...settings,twilioLowBalanceThreshold:e.target.value})}/></label><label>Low balance email<input type="email" value={settings.twilioLowBalanceEmail||''} onChange={e=>setSettings({...settings,twilioLowBalanceEmail:e.target.value})}/></label><label className="toggleRow"><span className="toggleCopy"><b>Enable low-balance alerts</b><small>Email a warning when the Twilio balance falls below the configured threshold.</small></span><span className="toggleSwitch"><input type="checkbox" checked={Boolean(settings.twilioLowBalanceAlertsEnabled)} onChange={e=>setSettings({...settings,twilioLowBalanceAlertsEnabled:e.target.checked})}/><span className="toggleSlider"/></span></label></div><div className="formGrid2"><label>Orion endpoint URL<input value={settings.smsEndpoint||''} onChange={e=>setSettings({...settings,smsEndpoint:e.target.value})} placeholder="https://..."/></label><label>HTTP method<select value={settings.smsMethod||'POST'} onChange={e=>setSettings({...settings,smsMethod:e.target.value})}><option>POST</option><option>PUT</option><option>PATCH</option></select></label><label>Authentication header<input value={settings.smsAuthHeader||''} onChange={e=>setSettings({...settings,smsAuthHeader:e.target.value})} placeholder="Authorization"/></label><label>Authentication/API value<input type="password" value={settings.smsAuthValue||''} onChange={e=>setSettings({...settings,smsAuthValue:e.target.value})} placeholder={settings.smsAuthConfigured?'Configured – enter only to replace':'Enter secret value'}/></label></div><label>Orion JSON body template<textarea rows="4" value={settings.smsBodyTemplate||''} onChange={e=>setSettings({...settings,smsBodyTemplate:e.target.value})}/><small>Use {'{mobile}'} and {'{message}'}. The final result must be valid JSON.</small></label><div className="testStrip"><input value={testSms.to} onChange={e=>setTestSms({...testSms,to:e.target.value})} placeholder="Test mobile number"/><input value={testSms.message} onChange={e=>setTestSms({...testSms,message:e.target.value})}/><button className="secondary" onClick={testSmsNow}>Send test SMS</button></div></section>
@@ -5064,7 +5272,7 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
      </section>
      <section className="panel settingsCardV2"><div className="settingsHead"><Mail/><div><h3>Outstanding-payment messages</h3><p>Edit the exact wording drivers receive after the Monday run.</p></div></div><label>Email subject<input value={settings.outstandingEmailSubject||''} onChange={e=>setSettings({...settings,outstandingEmailSubject:e.target.value})}/></label><label>Email message<textarea rows="7" value={settings.outstandingEmailBody||''} onChange={e=>setSettings({...settings,outstandingEmailBody:e.target.value})}/></label><label>SMS message<textarea rows="5" value={settings.outstandingSmsTemplate||''} onChange={e=>setSettings({...settings,outstandingSmsTemplate:e.target.value})}/></label><small>Available variables: {'{driver}'}, {'{callsign}'}, {'{amount}'}, {'{dueDate}'}, {'{dueTime}'}, {'{paymentLink}'}</small></section>
      <section className="panel settingsCardV2 dangerZone"><div className="settingsHead"><AlertTriangle/><div><h3>Pre-launch data reset</h3><p>Use once before the live launch. FaivoPay creates a timestamped SQLite backup first, then clears operational test data while keeping office users, MFA, settings and integrations.</p></div></div><div className="launchResetInfo"><b>Cleared:</b><span>payments, payment plans, payout runs, settlement runs, fee records, notifications, communication history, adjustments and demo data.</span></div><label className="toggleRow"><span className="toggleCopy"><b>Also clear driver app registrations</b><small>Include driver logins and push subscriptions in the pre-launch reset.</small></span><span className="toggleSwitch"><input type="checkbox" checked={resetDrivers} onChange={e=>setResetDrivers(e.target.checked)}/><span className="toggleSlider"/></span></label><label>Confirmation phrase<input value={resetPhrase} onChange={e=>setResetPhrase(e.target.value)} placeholder="RESET FAIVOPAY FOR LIVE LAUNCH"/></label><button className="dangerAction" disabled={resetPhrase!=='RESET FAIVOPAY FOR LIVE LAUNCH'} onClick={launchReset}><AlertTriangle/>Create backup & reset operational data</button></section>
-     <section className="panel settingsCardV2"><div className="settingsHead"><Database/><div><h3>Integration status</h3><p>Secrets from environment variables remain server-side.</p></div></div>{integrations&&<div className="integrationGrid"><div><b>Stripe</b><span>{integrations.stripe.configured?(integrations.stripe.testMode?'Test mode':'Live mode'):'Not configured'}</span><Pill tone={integrations.stripe.configured?'good':'warn'}>{integrations.stripe.configured?'Ready':'Setup'}</Pill></div><div><b>Wise</b><span>{integrations.wise.configured?integrations.wise.environment:'Not configured'}</span><Pill tone={integrations.wise.configured?'good':'warn'}>{integrations.wise.configured?'Ready':'Setup'}</Pill></div><div><b>Autocab writes</b><span>{integrations.autocab.adjustmentsEnabled?'Enabled':'Safe mode'}</span><Pill tone={integrations.autocab.adjustmentsEnabled?'good':'warn'}>{integrations.autocab.adjustmentsEnabled?'Enabled':'Disabled'}</Pill></div><div><b>Twilio SMS</b><span>{twilioBalance?.configured?`${twilioBalance.currency==='GBP'?'£':''}${Number(twilioBalance.balance||0).toFixed(2)} ${twilioBalance.currency||''}`:'Not configured'}</span><Pill tone={twilioBalance?.configured?'good':'warn'}>{twilioBalance?.configured?'Ready':'Setup'}</Pill></div></div>}</section>
+
     </div></>}
    </div>
   </main>
@@ -8026,7 +8234,7 @@ function DriverApp(){
  return <div className={`driverApp modernDriverApp driverVNext mockDriverApp theme-${theme}`} style={{'--driver-text-scale':textScale}}>
   <header className="mockAppHeader">
    <div className="mockHeaderTop">
-    <div className="mockWordmark">Faivo<span>Pay</span></div>
+    <div className="mockWordmark mockWordmarkImage"><img src={faivopayMark} alt="FaivoPay"/></div>
     <button className="mockHeaderBell" type="button" onClick={openNotifications} aria-label="Notifications"><Bell/>{unreadNotifications.length>0&&<i/>}</button>
    </div>
    <div className="mockHeaderTitle">
