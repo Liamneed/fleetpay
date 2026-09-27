@@ -11742,3 +11742,198 @@ body {
   grid-template-columns:1fr;
  }
 }
+
+/* =========================================================
+   Live Data Test Lab — Phase 1 allow-list management
+   ========================================================= */
+
+.liveTestStack{
+ display:flex;
+ flex-direction:column;
+ gap:18px;
+}
+
+.liveTestSafetyBanner{
+ display:flex;
+ align-items:center;
+ gap:14px;
+ padding:17px 20px;
+ border:1px solid rgba(34,197,94,.28);
+ border-radius:16px;
+ background:rgba(34,197,94,.07);
+ margin-bottom:18px;
+}
+
+.liveTestSafetyBanner>svg{
+ width:28px;
+ height:28px;
+ flex:0 0 auto;
+}
+
+.liveTestSafetyBanner>div{
+ flex:1;
+ display:flex;
+ flex-direction:column;
+ gap:3px;
+}
+
+.liveTestSafetyBanner b{
+ font-size:14px;
+ letter-spacing:.035em;
+}
+
+.liveTestSafetyBanner span{
+ font-size:13px;
+ line-height:1.45;
+ opacity:.82;
+}
+
+.liveTestSummaryGrid{
+ display:grid;
+ grid-template-columns:repeat(4,minmax(0,1fr));
+ gap:14px;
+}
+
+.liveTestSummaryGrid>div{
+ min-width:0;
+ padding:18px;
+ border-radius:16px;
+ border:1px solid var(--border);
+ background:var(--panel);
+ display:flex;
+ flex-direction:column;
+ gap:5px;
+}
+
+.liveTestSummaryGrid span{
+ font-size:12px;
+ opacity:.68;
+}
+
+.liveTestSummaryGrid b{
+ font-size:19px;
+}
+
+.liveTestSummaryGrid small{
+ opacity:.62;
+ overflow:hidden;
+ text-overflow:ellipsis;
+}
+
+.liveTestSafeText{
+ color:#16a34a;
+}
+
+.liveTestPicker{
+ display:grid;
+ grid-template-columns:minmax(260px,1.3fr) minmax(300px,1.5fr) auto;
+ gap:12px;
+ align-items:center;
+ margin-top:18px;
+}
+
+.liveTestPicker select{
+ width:100%;
+ min-height:44px;
+}
+
+.liveTestCandidatePreview{
+ margin-top:16px;
+ display:grid;
+ grid-template-columns:1.3fr repeat(3,minmax(0,1fr));
+ gap:12px;
+ padding:14px;
+ border:1px solid var(--border);
+ border-radius:14px;
+ background:rgba(127,127,127,.035);
+}
+
+.liveTestCandidatePreview>div{
+ min-width:0;
+ display:flex;
+ flex-direction:column;
+ gap:3px;
+}
+
+.liveTestCandidatePreview>div:first-child{
+ flex-direction:row;
+ align-items:center;
+ gap:10px;
+}
+
+.liveTestCandidatePreview span{
+ font-size:12px;
+ opacity:.68;
+}
+
+.liveTestCandidatePreview b{
+ overflow:hidden;
+ text-overflow:ellipsis;
+}
+
+.liveTestBalanceCell,
+.liveTestAddedCell{
+ display:flex;
+ flex-direction:column;
+ gap:3px;
+ white-space:nowrap;
+}
+
+.liveTestBalanceCell span,
+.liveTestAddedCell small{
+ font-size:12px;
+ opacity:.65;
+}
+
+.liveTestPhaseNotice{
+ display:flex;
+ align-items:flex-start;
+ gap:12px;
+ padding:16px 18px;
+ border-radius:14px;
+ border:1px solid var(--border);
+ background:rgba(59,130,246,.05);
+}
+
+.liveTestPhaseNotice svg{
+ flex:0 0 auto;
+ margin-top:1px;
+}
+
+.liveTestPhaseNotice>div{
+ display:flex;
+ flex-direction:column;
+ gap:3px;
+}
+
+.liveTestPhaseNotice span{
+ font-size:13px;
+ line-height:1.45;
+ opacity:.75;
+}
+
+@media (max-width:1100px){
+ .liveTestSummaryGrid{
+  grid-template-columns:repeat(2,minmax(0,1fr));
+ }
+
+ .liveTestPicker{
+  grid-template-columns:1fr;
+ }
+
+ .liveTestCandidatePreview{
+  grid-template-columns:repeat(2,minmax(0,1fr));
+ }
+}
+
+@media (max-width:680px){
+ .liveTestSafetyBanner{
+  align-items:flex-start;
+  flex-wrap:wrap;
+ }
+
+ .liveTestSummaryGrid,
+ .liveTestCandidatePreview{
+  grid-template-columns:1fr;
+ }
+}

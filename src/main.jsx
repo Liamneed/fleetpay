@@ -535,6 +535,329 @@ function DemoLab({demo,loadDemo,resetDemo,action,demoEmail,setDemoEmail,demoMobi
 
  return <><section className="demoWarning"><ShieldCheck/><div><b>DEMO MODE — NO REAL MONEY OR AUTOCAB CHANGES</b><span>This is the planned live operator workflow. Demo balances, Wise details and payment results are made-up.</span></div><button className="secondary" onClick={resetDemo}>Reset demo data</button></section><section className="officePageIntro"><div><span>OPERATOR TRAINING</span><h2>FaivoPay Payment Process Demo Lab</h2><p>Every operator follows the same gated process. FaivoPay will block the next step until the previous control has been completed.</p></div></section>{!demo?<section className="emptyState"><PlayCircle/><h3>Load training scenario</h3><p>Load isolated made-up drivers and balances.</p><button className="primary" onClick={loadDemo}>Load Demo Lab</button></section>:<div className="demoV22Stack"><PaymentPlanCard plan={demo.paymentPlan}/><RunCard kind="monday" run={demo.monday}/><RunCard kind="early" run={demo.early} early/><section className="panel demoComms"><div className="panelHead"><div><span className="sectionKicker">COMMUNICATION TEST</span><h3>Send clearly marked demo messages</h3><p>These are the only Demo Lab actions that can leave FaivoPay. Use your own test address or mobile number.</p></div></div><div className="demoCommsGrid"><label>Test email address<input type="email" value={demoEmail} onChange={e=>setDemoEmail(e.target.value)} placeholder="your@email.co.uk"/><button className="secondary" onClick={sendEmail}><Mail/>Send demo email</button></label><label>Test mobile number<input value={demoMobile} onChange={e=>setDemoMobile(e.target.value)} placeholder="07..."/><button className="secondary" onClick={sendSms}><Smartphone/>Send demo SMS</button></label></div></section></div>}</>;
 }
+
+function LiveTestLab({
+ liveTest,
+ loadLiveTest,
+ addDriver,
+ toggleDriver,
+ busy
+}){
+ const[search,setSearch]=useState('');
+ const[selectedDriverId,setSelectedDriverId]=useState('');
+
+ const candidates=liveTest?.candidates||[];
+ const allowList=liveTest?.allowList||[];
+
+ const filteredCandidates=useMemo(()=>{
+  const term=String(search||'').trim().toLowerCase();
+
+  return candidates
+   .filter(x=>!x.allowListed)
+   .filter(x=>{
+    if(!term)return true;
+    return [
+     x.callsign,
+     x.driverName,
+     x.driverId
+    ].some(v=>String(v||'').toLowerCase().includes(term));
+   })
+   .slice(0,80);
+ },[candidates,search]);
+
+ const selectedCandidate=candidates.find(
+  x=>String(x.driverId)===String(selectedDriverId)
+ );
+
+ async function submit(e){
+  e.preventDefault();
+
+  if(!selectedDriverId)return;
+
+  await addDriver(selectedDriverId);
+  setSelectedDriverId('');
+  setSearch('');
+ }
+
+ return <>
+  <section className="liveTestSafetyBanner">
+   <ShieldCheck/>
+   <div>
+    <b>SIMULATION ONLY — LIVE WRITES DISABLED</b>
+    <span>
+     This area can select real Autocab drivers for controlled testing,
+     but this phase cannot alter Autocab balances, release payouts,
+     send payments or change live driver accounts.
+    </span>
+   </div>
+   <Pill tone="good">READ ONLY</Pill>
+  </section>
+
+  <section className="officePageIntro liveTestIntro">
+   <div>
+    <span>CONTROLLED LIVE-DATA TESTING</span>
+    <h2>Live Data Test Lab</h2>
+    <p>
+     Use real cached Autocab driver records inside a tightly restricted
+     test allow-list. Only explicitly selected drivers can participate
+     in future simulations.
+    </p>
+   </div>
+
+   <button
+    className="secondary"
+    onClick={loadLiveTest}
+    disabled={busy}
+   >
+    <RefreshCw className={busy?'spin':''}/>
+    Refresh
+   </button>
+  </section>
+
+  {!liveTest
+   ?<section className="emptyState">
+     <Database/>
+     <h3>Load Live Data Test Lab</h3>
+     <p>
+      Load the current test-driver allow-list and cached Autocab driver
+      records. No Autocab request is triggered by opening this page.
+     </p>
+     <button
+      className="primary"
+      onClick={loadLiveTest}
+      disabled={busy}
+     >
+      <ShieldCheck/>
+      {busy?'Loading…':'Load test controls'}
+     </button>
+    </section>
+
+   :<div className="liveTestStack">
+
+     <section className="liveTestSummaryGrid">
+      <div>
+       <span>Company</span>
+       <b>{liveTest.company?.name||'—'}</b>
+       <small>{liveTest.company?.id||'No company selected'}</small>
+      </div>
+
+      <div>
+       <span>Mode</span>
+       <b>Simulation</b>
+       <small>Real driver data · no live mutations</small>
+      </div>
+
+      <div>
+       <span>Enabled test drivers</span>
+       <b>{allowList.filter(x=>x.enabled).length}</b>
+       <small>{allowList.length} total allow-list record{allowList.length===1?'':'s'}</small>
+      </div>
+
+      <div>
+       <span>Live writes</span>
+       <b className="liveTestSafeText">Disabled</b>
+       <small>Server-enforced in Phase 1</small>
+      </div>
+     </section>
+
+     <section className="panel liveTestAddPanel">
+      <div className="panelHead">
+       <div>
+        <span className="sectionKicker">TEST DRIVER ALLOW-LIST</span>
+        <h3>Add a controlled test driver</h3>
+        <p>
+         Search the existing FaivoPay Autocab cache. Adding a driver
+         only places that driver on the test allow-list.
+        </p>
+       </div>
+       <Pill tone="good">Live writes off</Pill>
+      </div>
+
+      <form className="liveTestPicker" onSubmit={submit}>
+       <div className="searchBox">
+        <Search/>
+        <input
+         value={search}
+         onChange={e=>setSearch(e.target.value)}
+         placeholder="Search callsign, driver name or Autocab driver ID…"
+        />
+       </div>
+
+       <select
+        value={selectedDriverId}
+        onChange={e=>setSelectedDriverId(e.target.value)}
+       >
+        <option value="">
+         {filteredCandidates.length
+          ?'Select test driver…'
+          :'No matching drivers'}
+        </option>
+
+        {filteredCandidates.map(x=>
+         <option key={x.driverId} value={x.driverId}>
+          {x.callsign} · {x.driverName||`Driver ${x.driverId}`} · ID {x.driverId}
+         </option>
+        )}
+       </select>
+
+       <button
+        className="primary"
+        disabled={!selectedDriverId||busy}
+       >
+        <ShieldCheck/>
+        {busy?'Saving…':'Add to test allow-list'}
+       </button>
+      </form>
+
+      {selectedCandidate&&
+       <div className="liveTestCandidatePreview">
+        <div>
+         <span className="callsign">{selectedCandidate.callsign}</span>
+         <div>
+          <b>{selectedCandidate.driverName||`Driver ${selectedCandidate.driverId}`}</b>
+          <small>Autocab driver ID {selectedCandidate.driverId}</small>
+         </div>
+        </div>
+
+        <div>
+         <span>Previous balance</span>
+         <b>{money(selectedCandidate.previousBalance)}</b>
+        </div>
+
+        <div>
+         <span>Current balance</span>
+         <b>{money(selectedCandidate.currentBalance)}</b>
+        </div>
+
+        <div>
+         <span>Cache synced</span>
+         <b>{dt(selectedCandidate.syncedAt)}</b>
+        </div>
+       </div>
+      }
+     </section>
+
+     <section className="panel">
+      <div className="panelHead">
+       <div>
+        <span className="sectionKicker">CONTROLLED DRIVERS</span>
+        <h3>Live Test Lab allow-list</h3>
+        <p>
+         Disabled drivers remain in the history but cannot participate
+         in test actions.
+        </p>
+       </div>
+      </div>
+
+      {allowList.length
+       ?<div className="tableWrap proTable">
+         <table>
+          <thead>
+           <tr>
+            <th>Driver</th>
+            <th>Cached balance</th>
+            <th>Cache status</th>
+            <th>Test access</th>
+            <th>Live writes</th>
+            <th>Added</th>
+            <th>Action</th>
+           </tr>
+          </thead>
+
+          <tbody>
+           {allowList.map(x=>
+            <tr key={`${x.companyId}-${x.driverId}`}>
+             <td>
+              <div className="driverCell">
+               <span className="callsign">{x.callsign||'—'}</span>
+               <div>
+                <b>{x.driverName||`Driver ${x.driverId}`}</b>
+                <small>Autocab ID {x.driverId}</small>
+               </div>
+              </div>
+             </td>
+
+             <td>
+              <div className="liveTestBalanceCell">
+               <span>Previous {money(x.cached?.previousBalance)}</span>
+               <b>Current {money(x.cached?.currentBalance)}</b>
+              </div>
+             </td>
+
+             <td>
+              {x.cached
+               ?<>
+                 <Pill tone={x.cached.suspended?'warn':x.cached.active?'good':'neutral'}>
+                  {x.cached.suspended?'Suspended':x.cached.active?'Active':'Inactive'}
+                 </Pill>
+                 <small>{dt(x.cached.syncedAt)}</small>
+                </>
+               :<Pill tone="warn">Not in cache</Pill>
+              }
+             </td>
+
+             <td>
+              <Pill tone={x.enabled?'good':'neutral'}>
+               {x.enabled?'Enabled':'Disabled'}
+              </Pill>
+             </td>
+
+             <td>
+              <Pill tone={x.liveWriteEnabled?'bad':'good'}>
+               {x.liveWriteEnabled?'ENABLED':'Disabled'}
+              </Pill>
+             </td>
+
+             <td>
+              <div className="liveTestAddedCell">
+               <span>{dt(x.addedAt)}</span>
+               <small>{x.addedBy||'Administrator'}</small>
+              </div>
+             </td>
+
+             <td>
+              <button
+               className={`mini ${x.enabled?'danger':'success'}`}
+               disabled={busy}
+               onClick={()=>toggleDriver(x,!x.enabled)}
+              >
+               {x.enabled?'Disable':'Enable'}
+              </button>
+             </td>
+            </tr>
+           )}
+          </tbody>
+         </table>
+        </div>
+
+       :<div className="emptyState compact">
+         <ShieldCheck/>
+         <h3>No test drivers selected</h3>
+         <p>
+          Add only drivers that are intentionally approved for controlled
+          testing.
+         </p>
+        </div>
+      }
+     </section>
+
+     <section className="liveTestPhaseNotice">
+      <Info/>
+      <div>
+       <b>Phase 1 boundary</b>
+       <span>
+        This screen manages the driver allow-list only. There are no
+        simulation actions, direct Autocab reads, Autocab adjustments,
+        payment-provider calls or payout controls on this page yet.
+       </span>
+      </div>
+     </section>
+
+    </div>
+  }
+ </>;
+}
+
 function AdminLogin({onLogin}){
  const[phase,setPhase]=useState('password');
  const[f,setF]=useState({email:'',password:'',code:''});
@@ -650,6 +973,7 @@ function AdminApp(){
  const[testSms,setTestSms]=useState({to:'',message:'FaivoPay test SMS – communications are configured correctly.'});
  const[testEmail,setTestEmail]=useState('');
  const[demo,setDemo]=useState(null),[demoEmail,setDemoEmail]=useState(''),[demoMobile,setDemoMobile]=useState('');
+ const[liveTest,setLiveTest]=useState(null),[liveTestBusy,setLiveTestBusy]=useState(false);
  const[resetPhrase,setResetPhrase]=useState(''),[resetDrivers,setResetDrivers]=useState(false);
  const api=(u,o={})=>call(u,o,token);
  function logout(){localStorage.removeItem('fleetpay_admin');setToken('');setMe(null)}
@@ -743,6 +1067,14 @@ function AdminApp(){
   }catch(e){alert(e.message)}
  };
  const loadDemo=()=>safeLoad(async()=>setDemo(await api('/api/admin/demo')));
+ const loadLiveTest=()=>safeLoad(async()=>{
+  setLiveTestBusy(true);
+  try{
+   setLiveTest(await api('/api/admin/live-test'));
+  }finally{
+   setLiveTestBusy(false);
+  }
+ });
 
  useEffect(()=>{
   if(!selected?.driverId){
@@ -909,7 +1241,7 @@ function AdminApp(){
  useEffect(()=>{if(token&&view==='transactions')loadTransactions()},[txType,txStatus,txCategory,txDateFrom,txDateTo]);
  const isAdmin=me?.role==='administrator',isPlatformAdmin=Boolean(me?.platformAdmin),canMoney=['administrator','finance'].includes(me?.role),canOffice=['administrator','finance','office'].includes(me?.role);
  const nav=[
-  ['dashboard',LayoutDashboard,'Dashboard'],['transactions',CreditCard,'Transactions'],['customerPayments',Send,'Customer Payments'],['monday',CalendarDays,'Monday Run'],['early',ArrowUpRight,'Early Payouts'],['outstanding',AlertTriangle,'Outstanding'],['paymentPlans',CalendarDays,'Payment Plans'],['fees',BadgePoundSterling,'Fees & Billing'],['demo',PlayCircle,'Demo Lab'],['drivers',Users,'Drivers'],['access',UserCheck,'Users & Access'],...(isPlatformAdmin?[['platform',KeyRound,'Platform Admin']]:[]),...(isAdmin?[['security',ShieldCheck,'Security'],['settings',Settings,'Settings']]:[])
+  ['dashboard',LayoutDashboard,'Dashboard'],['transactions',CreditCard,'Transactions'],['customerPayments',Send,'Customer Payments'],['monday',CalendarDays,'Monday Run'],['early',ArrowUpRight,'Early Payouts'],['outstanding',AlertTriangle,'Outstanding'],['paymentPlans',CalendarDays,'Payment Plans'],['fees',BadgePoundSterling,'Fees & Billing'],['demo',PlayCircle,'Demo Lab'],...(isAdmin?[['liveTest',Database,'Live Test Lab']]:[]),['drivers',Users,'Drivers'],['access',UserCheck,'Users & Access'],...(isPlatformAdmin?[['platform',KeyRound,'Platform Admin']]:[]),...(isAdmin?[['security',ShieldCheck,'Security'],['settings',Settings,'Settings']]:[])
  ];
  const filtered=useMemo(()=>drivers.filter(d=>{const h=`${d.callsign} ${d.fullName} ${d.mobile} ${d.email} ${d.driverId} ${d.bankAccount?.accountHolder||''} ${d.bankAccount?.accountNumberMasked||''}`.toLowerCase();if(!h.includes(q.toLowerCase()))return false;if(filter==='negative')return(d.currentBalance??0)<0;if(filter==='positive')return(d.currentBalance??0)>0;if(filter==='unmatched')return d.currentBalance==null;if(filter==='bank_ready')return Boolean(d.bankAccount?.ready)&&!d.bankAccount?.changedRecently;if(filter==='bank_missing')return !d.bankAccount?.ready;if(filter==='bank_recent')return Boolean(d.bankAccount?.changedRecently);if(filter==='payout_excluded')return Boolean(d.payoutExcluded);return true}).sort((a,b)=>String(a.callsign??'').localeCompare(String(b.callsign??''),'en-GB',{numeric:true})),[drivers,q,filter]);
 
@@ -1174,7 +1506,7 @@ function AdminApp(){
  );
  const dueEarly=earlySummary?.requests?.filter(x=>['requested','approved','batched'].includes(x.status))||[];
  const recentTx=transactions.slice(0,7);
- function go(k){setView(k);setMobileNav(false);setErr('');if(k==='customerPayments')loadCustomerAdmin();if(k==='monday'){loadMonday();loadSett()}if(k==='early'){loadEarlySummary();loadSett()}if(k==='outstanding'){loadOutstanding();loadPaymentPlans();}if(k==='paymentPlans')loadPaymentPlans();if(k==='fees')loadFees();if(k==='demo')loadDemo();if(k==='drivers')loadDrivers();if(k==='access'){loadStaff();loadDriverUsers()}if(k==='security')loadSecurity();if(k==='platform'){loadPlatformCompanies();setPlatformCompany(null)}if(k==='settings'){loadSettings();loadIntegrations()}}
+ function go(k){setView(k);setMobileNav(false);setErr('');if(k==='customerPayments')loadCustomerAdmin();if(k==='monday'){loadMonday();loadSett()}if(k==='early'){loadEarlySummary();loadSett()}if(k==='outstanding'){loadOutstanding();loadPaymentPlans();}if(k==='paymentPlans')loadPaymentPlans();if(k==='fees')loadFees();if(k==='demo')loadDemo();if(k==='liveTest')loadLiveTest();if(k==='drivers')loadDrivers();if(k==='access'){loadStaff();loadDriverUsers()}if(k==='security')loadSecurity();if(k==='platform'){loadPlatformCompanies();setPlatformCompany(null)}if(k==='settings'){loadSettings();loadIntegrations()}}
  async function createOfficeCustomerPayment(e){
   e?.preventDefault();setCustomerCreateBusy(true);
   try{
@@ -2306,6 +2638,51 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
   s==='approved'||s==='paid'?'good':
   s==='review'||s==='held'?'warn':
   'neutral';
+ async function addLiveTestDriver(driverId){
+  if(!driverId)return;
+
+  setLiveTestBusy(true);
+
+  try{
+   await api('/api/admin/live-test/drivers',{
+    method:'POST',
+    body:JSON.stringify({driverId:String(driverId)})
+   });
+
+   setLiveTest(await api('/api/admin/live-test'));
+  }catch(e){
+   alert(e.message);
+  }finally{
+   setLiveTestBusy(false);
+  }
+ }
+
+ async function toggleLiveTestDriver(driver,enabled){
+  if(!driver?.driverId)return;
+
+  const verb=enabled?'enable':'disable';
+
+  if(!confirm(
+   `${enabled?'Enable':'Disable'} callsign ${driver.callsign||driver.driverId} for Live Data Test Lab?\n\n`+
+   'Live Autocab writes will remain disabled.'
+  ))return;
+
+  setLiveTestBusy(true);
+
+  try{
+   await api(`/api/admin/live-test/drivers/${driver.driverId}`,{
+    method:'PATCH',
+    body:JSON.stringify({enabled:Boolean(enabled)})
+   });
+
+   setLiveTest(await api('/api/admin/live-test'));
+  }catch(e){
+   alert(`Could not ${verb} test driver: ${e.message}`);
+  }finally{
+   setLiveTestBusy(false);
+  }
+ }
+
  async function resetDemo(){if(!confirm('Reset Demo Lab back to its original made-up data?'))return;try{setDemo(await api('/api/admin/demo/reset',{method:'POST'}))}catch(e){alert(e.message)}}
  async function demoMondayDecision(x,status){try{setDemo(await api(`/api/admin/demo/monday/${x.id}`,{method:'POST',body:JSON.stringify({status,reason:status==='excluded'?'Excluded during demonstration':''})}))}catch(e){alert(e.message)}}
  async function demoApproveAll(){try{setDemo(await api('/api/admin/demo/monday/approve-all',{method:'POST'}))}catch(e){alert(e.message)}}
@@ -5811,6 +6188,7 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
      </section>
     </>}
     {view==='demo'&&<DemoLab demo={demo} loadDemo={loadDemo} resetDemo={resetDemo} action={demoAction} demoEmail={demoEmail} setDemoEmail={setDemoEmail} demoMobile={demoMobile} setDemoMobile={setDemoMobile} sendEmail={demoSendEmail} sendSms={demoSendSms}/>}
+    {view==='liveTest'&&isAdmin&&<LiveTestLab liveTest={liveTest} loadLiveTest={loadLiveTest} addDriver={addLiveTestDriver} toggleDriver={toggleLiveTestDriver} busy={liveTestBusy}/>}
     {view==='drivers'&&<><section className="officePageIntro"><div><span>AUTOCAB + PAYOUT READINESS</span><h2>Driver accounts</h2><p>Balances and payout-bank readiness in one place. Full bank account numbers are never exposed in the normal office view.</p></div><button className="secondary" onClick={syncNow}><RefreshCw className={loading?'spin':''}/>Sync Autocab</button></section><section className="officeStats three"><Stat icon={Banknote} label="Bank ready" value={meta.bankReady??drivers.filter(d=>d.bankAccount?.ready).length} sub="Payout details saved"/><Stat icon={AlertTriangle} label="Missing bank details" value={meta.bankMissing??drivers.filter(d=>!d.bankAccount?.ready).length} sub="Cannot be released for payout"/><Stat icon={Clock3} label="Recently changed" value={meta.bankRecentlyChanged??drivers.filter(d=>d.bankAccount?.changedRecently).length} sub="Changed in the last 7 days"/></section><div className="driverToolbar"><div className="searchBox"><Search/><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search callsign, name, mobile, email or bank ending…"/></div><select value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All drivers</option><option value="bank_ready">Bank ready</option><option value="bank_missing">Missing bank details</option><option value="bank_recent">Recently changed bank</option><option value="payout_excluded">Payout excluded</option><option value="positive">Positive balance</option><option value="negative">Negative balance</option><option value="unmatched">Unmatched</option></select></div><section className="panel driverPanel"><div className="tableWrap proTable"><table><thead><tr><th>Callsign</th><th>Driver</th><th>Previous</th><th>Current</th><th>Payout account</th><th>Payout status</th><th>Last processed</th></tr></thead><tbody>{filtered.map(d=>{const b=d.bankAccount||{};return <tr key={d.driverId} onClick={()=>setSelected(d)}><td><span className="callsign">{d.callsign}</span></td><td><b>{d.fullName}</b><small>{d.email||d.mobile||`Driver ${d.driverId}`}</small></td><td>{money(d.previousBalance)}</td><td><b className={(d.currentBalance??0)<0?'negative':''}>{money(d.currentBalance)}</b></td><td><div className="bankTableCell"><Pill tone={bankTone(b)}>{b.label||'Bank details missing'}</Pill>{b.ready&&<small>{b.accountNumberMasked} · {b.sortCodeMasked}</small>}</div></td><td><div className="bankTableCell"><Pill tone={d.payoutExcluded?'bad':'good'}>{d.payoutExcluded?'Excluded':'Enabled'}</Pill>{d.payoutExcluded&&<small>{d.payoutExclusionReason||'Persistent exclusion'}</small>}</div></td><td>{dt(d.lastProcessed)}</td></tr>})}</tbody></table></div></section></>}
     {view==='access'&&<><section className="officePageIntro"><div><span>IDENTITY & PERMISSIONS</span><h2>Users & access</h2><p>Office accounts use mandatory authenticator MFA. Roles limit who can move money or change settings.</p></div>{isAdmin&&<button className="primary" onClick={()=>setShowNewStaff(!showNewStaff)}><UserCheck/>Add office user</button>}</section>{isAdmin&&showNewStaff&&<section className="panel"><form className="staffForm" onSubmit={createStaff}><label>Name<input required value={newStaff.name} onChange={e=>setNewStaff({...newStaff,name:e.target.value})}/></label><label>Email<input type="email" required value={newStaff.email} onChange={e=>setNewStaff({...newStaff,email:e.target.value})}/></label><label>Role<select value={newStaff.role} onChange={e=>setNewStaff({...newStaff,role:e.target.value})}><option value="administrator">Administrator</option><option value="finance">Finance</option><option value="office">Office</option><option value="readonly">Read only</option></select></label><label>Temporary password<input type="password" minLength="10" required value={newStaff.password} onChange={e=>setNewStaff({...newStaff,password:e.target.value})}/></label><button className="primary">Create user</button></form></section>}<section className="panel"><div className="panelHead"><div><h3>Office users</h3><p>MFA and role status for each staff account.</p></div><button className="mini" onClick={loadStaff}>Refresh</button></div><div className="tableWrap proTable"><table><thead><tr><th>User</th><th>Role</th><th>MFA</th><th>Last login</th><th>Status</th><th/></tr></thead><tbody>{staff.map(u=><tr key={u.id}><td><b>{u.name}</b><small>{u.email}</small></td><td><select value={u.role} onChange={e=>updateStaff(u,{role:e.target.value})} disabled={u.id===me?.id}><option value="administrator">Administrator</option><option value="finance">Finance</option><option value="office">Office</option><option value="readonly">Read only</option></select></td><td><Pill tone={u.mfaEnabled?'good':'warn'}>{u.mfaEnabled?'Enabled':'Setup required'}</Pill></td><td>{dt(u.lastLoginAt)}</td><td><Pill tone={u.active?'good':'bad'}>{u.active?'Active':'Disabled'}</Pill></td><td>{u.id!==me?.id&&<button className="mini" onClick={()=>updateStaff(u,{active:!u.active})}>{u.active?'Disable':'Enable'}</button>}</td></tr>)}</tbody></table></div></section><section className="panel"><div className="panelHead"><div><h3>Driver app accounts</h3><p>Registration remains matched to active Autocab driver details.</p></div><button className="mini" onClick={loadDriverUsers}>Refresh</button></div><div className="tableWrap proTable"><table><thead><tr><th>Callsign</th><th>Email</th><th>Created</th><th>Last login</th><th>Status</th><th/></tr></thead><tbody>{driverUsers.map(u=><tr key={u.id}><td><span className="callsign">{u.callsign}</span></td><td>{u.email}</td><td>{dt(u.createdAt)}</td><td>{dt(u.lastLoginAt)}</td><td><Pill tone={u.approved?'good':'warn'}>{u.approved?'Approved':'Pending'}</Pill></td><td>{canOffice&&<button className="mini" onClick={()=>setApproval(u,!u.approved)}>{u.approved?'Suspend':'Approve'}</button>}</td></tr>)}</tbody></table></div></section></>}
 
