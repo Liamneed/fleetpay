@@ -38,6 +38,7 @@ const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || `http://localhost:5173`).replace(/\/$/, '');
 const AUTOCAB_ADJUSTMENTS_ENABLED = String(process.env.AUTOCAB_ADJUSTMENTS_ENABLED || 'false').toLowerCase()==='true';
+const LIVE_TEST_AUTOCAB_WRITES_ENABLED = String(process.env.LIVE_TEST_AUTOCAB_WRITES_ENABLED || 'false').toLowerCase()==='true';
 
 const AUTOCAB_FLEETPAY_CUSTOMER_ID = Number(process.env.AUTOCAB_FLEETPAY_CUSTOMER_ID || 2203);
 const AUTOCAB_FLEETPAY_CUSTOMER_NAME = String(process.env.AUTOCAB_FLEETPAY_CUSTOMER_NAME || 'FleetPay UK');
@@ -3566,8 +3567,35 @@ async function syncAutocab(){
 }
 function notify(driverId,title,message,type='info',referenceId=null){db.prepare('INSERT INTO driver_notifications(id,driver_id,title,message,type,reference_id,created_at) VALUES(?,?,?,?,?,?,?)').run(id('note'),driverId,title,message,type,referenceId,new Date().toISOString());sendPush(driverId,title,message).catch(()=>{})}
 
-async function postAutocabAdjustment({driverId,callsign,amount,isCredit,description,adjustmentReason,eventKey,force=false}){
- if(!AUTOCAB_ADJUSTMENTS_ENABLED && !force) throw new Error('Autocab adjustments are disabled. Set AUTOCAB_ADJUSTMENTS_ENABLED=true to enable writes.');
+async function postAutocabAdjustment({driverId,callsign,amount,isCredit,description,adjustmentReason,eventKey,force=false,liveTestWrite=false}){
+ const approvedLiveTestWrite=
+  Boolean(liveTestWrite) &&
+  LIVE_TEST_AUTOCAB_WRITES_ENABLED &&
+  Number(driverId)===1112 &&
+  String(callsign)==='9997' &&
+  Number(amount)===1 &&
+  Boolean(isCredit)===true &&
+  String(description)==='FaivoPay Live Test Credit' &&
+  String(adjustmentReason)==='FleetPay Live Test' &&
+  String(eventKey)==='live-test:1112:first-credit-1gbp';
+
+ if(liveTestWrite && !approvedLiveTestWrite){
+  throw new Error(
+   'Controlled Live Test Autocab write gate rejected this adjustment.'
+  );
+ }
+
+ if(
+  !AUTOCAB_ADJUSTMENTS_ENABLED &&
+  !approvedLiveTestWrite &&
+  !force
+ ){
+  throw new Error(
+   'Autocab adjustments are disabled. '+
+   'Set AUTOCAB_ADJUSTMENTS_ENABLED=true to enable production writes.'
+  );
+ }
+
  const existing=db.prepare('SELECT * FROM autocab_adjustments WHERE event_key=?').get(eventKey);
  if(existing?.status==='completed') return {duplicate:true,existing};
  const adjustmentId=existing?.id||id('adj'),now=new Date().toISOString();
@@ -8791,6 +8819,14 @@ app.post(
     });
    }
 
+   if(!LIVE_TEST_AUTOCAB_WRITES_ENABLED){
+    return res.status(409).json({
+     error:
+      'Controlled Live Test Autocab writes are disabled at server level. '+
+      'LIVE_TEST_AUTOCAB_WRITES_ENABLED must be explicitly enabled.'
+    });
+   }
+
    const confirmation=String(
     req.body?.confirmation||''
    ).trim();
@@ -9007,7 +9043,8 @@ app.post(
      isCredit:true,
      description:'FaivoPay Live Test Credit',
      adjustmentReason:'FleetPay Live Test',
-     eventKey:'live-test:1112:first-credit-1gbp'
+     eventKey:'live-test:1112:first-credit-1gbp',
+     liveTestWrite:true
     });
 
    /*
