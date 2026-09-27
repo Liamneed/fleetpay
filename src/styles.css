@@ -12284,3 +12284,24 @@ body {
   grid-template-columns:1fr;
  }
 }
+
+/* Live Test Lab Phase 2C - prevent preview summary clipping */
+.liveTestWritePreviewPanel{
+ padding-bottom:24px;
+ overflow:visible;
+}
+
+.liveTestWritePreviewSummary{
+ align-items:start;
+ margin-bottom:4px;
+}
+
+.liveTestWritePreviewSummary span{
+ min-width:0;
+}
+
+.liveTestWritePreviewSummary b{
+ display:block;
+ line-height:1.35;
+ overflow-wrap:anywhere;
+}
