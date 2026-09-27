@@ -7264,10 +7264,147 @@ function updateRunItem(runId,payoutId,approvalStatus,reason=''){
 }
 function officeSettingsPayload(){const s=getSettings();return {...s,smsAuthConfigured:Boolean(getSecureSetting('smsAuthValue')),smtpPasswordConfigured:Boolean(getSecureSetting('smtpPassword')),smsAuthValue:'',smtpPassword:''}}
 
+/*
+ * Live Test Lab Autocab account lookup.
+ *
+ * IMPORTANT:
+ * - This is intentionally NOT built on the generic postJson() helper.
+ * - Autocab exposes DriversAccounts as a POST search endpoint even though
+ *   the operation is read-only.
+ * - The URL is fixed and cannot be supplied by the caller.
+ * - The request body contains search fields only.
+ * - This helper performs no local database updates.
+ */
+async function liveTestReadDriverAccount(driverId){
+ const numericDriverId=Number(driverId);
+
+ if(!Number.isInteger(numericDriverId) || numericDriverId<=0){
+  throw new Error('A valid Autocab driver ID is required.');
+ }
+
+ if(!getAutocabApiKey()){
+  throw new Error('AUTOCAB_API_KEY is not configured');
+ }
+
+ const url=
+  `${BASE_URL}/accounts/v1/DriversAccounts?pageno=1&pagesize=50`;
+
+ const response=await fetch(url,{
+  method:'POST',
+  headers:headers(),
+  body:JSON.stringify({
+   companyId:null,
+   driverId:numericDriverId
+  })
+ });
+
+ const text=await response.text();
+
+ if(!response.ok){
+  throw new Error(
+   `Autocab ${response.status}: ${text.slice(0,500)}`
+  );
+ }
+
+ let payload={};
+
+ try{
+  payload=text?JSON.parse(text):{};
+ }catch{
+  throw new Error(
+   `Autocab returned invalid JSON: ${text.slice(0,300)}`
+  );
+ }
+
+ const summaries=Array.isArray(payload?.summaries)
+  ?payload.summaries
+  :[];
+
+ /*
+  * Do not trust the remote search endpoint to filter perfectly.
+  * Resolve the exact requested driver again locally.
+  */
+ const account=summaries.find(
+  x=>Number(x?.driverId)===numericDriverId
+ );
+
+ if(!account){
+  throw new Error(
+   `Autocab returned no driver-account summary for driver ${numericDriverId}`
+  );
+ }
+
+ return {
+  driverId:numericDriverId,
+  previousBalance:
+   account.previousBalance==null
+    ?null
+    :Number(account.previousBalance),
+  currentBalance:
+   account.currentBalance==null
+    ?null
+    :Number(account.currentBalance),
+  lastProcessed:account.lastProcessed??null,
+  lastProcessedBy:account.lastProcessedBy??null,
+  notes:String(account.notes||''),
+  totals:{
+   allJobsTotal:Number(account.allJobsTotal||0),
+   cashJobsTotal:Number(account.cashJobsTotal||0),
+   accountJobsTotal:Number(account.accountJobsTotal||0),
+   cardJobsTotal:Number(account.cardJobsTotal||0),
+   driverTransactionsTotal:Number(account.driverTransactionsTotal||0),
+   groupTransactionsTotal:Number(account.groupTransactionsTotal||0),
+   pendingTransactionsTotal:Number(account.pendingTransactionsTotal||0),
+   paidInTotal:Number(account.paidInTotal||0),
+   paidOutTotal:Number(account.paidOutTotal||0),
+   vatAmount:Number(account.vatAmount||0),
+   allJobsCommission:Number(account.allJobsCommission||0)
+  },
+  fetchedAt:new Date().toISOString()
+ };
+}
+
+function liveTestJson(value){
+ if(value===undefined || value===null)return null;
+ return JSON.stringify(value);
+}
+
+function liveTestEventPayload(row){
+ if(!row)return null;
+
+ const parse=value=>{
+  if(value===undefined || value===null || value==='')return null;
+  try{return JSON.parse(value)}
+  catch{return null}
+ };
+
+ return {
+  id:row.id,
+  companyId:row.company_id,
+  driverId:row.driver_id?String(row.driver_id):null,
+  callsign:row.callsign||'',
+  mode:row.mode,
+  action:row.action,
+  request:parse(row.request_json),
+  before:parse(row.before_json),
+  proposed:parse(row.proposed_json),
+  result:parse(row.result_json),
+  reversalOf:row.reversal_of||null,
+  status:row.status,
+  actorId:row.actor_id||'',
+  actorEmail:row.actor_email||'',
+  actorName:row.actor_name||'',
+  createdAt:row.created_at
+ };
+}
+
 /* =========================
    Live Data Test Lab
-   Phase 1: allow-list only.
-   No Autocab writes are reachable from these routes.
+   Phase 2A:
+   - administrator-only real Autocab account reads
+   - allow-listed drivers only
+   - immutable simulation event records
+   - no Autocab writes
    ========================= */
 
 function liveTestActor(req){
@@ -7550,6 +7687,399 @@ app.patch(
    });
   }catch(e){
    res.status(500).json({error:e.message});
+  }
+ }
+);
+
+
+app.get(
+ '/api/admin/live-test/events',
+ adminAuth,
+ requireStaffRole('administrator'),
+ (req,res)=>{
+  try{
+   const company=officeCompanyRow(req);
+
+   if(!company){
+    return res.status(409).json({
+     error:'Select a company before viewing Live Data Test Lab history.'
+    });
+   }
+
+   const driverId=String(req.query?.driverId||'').trim();
+
+   let rows;
+
+   if(driverId){
+    rows=db.prepare(`
+     SELECT *
+     FROM live_test_events
+     WHERE company_id=?
+       AND driver_id=?
+     ORDER BY created_at DESC
+     LIMIT 100
+    `).all(company.id,driverId);
+   }else{
+    rows=db.prepare(`
+     SELECT *
+     FROM live_test_events
+     WHERE company_id=?
+     ORDER BY created_at DESC
+     LIMIT 100
+    `).all(company.id);
+   }
+
+   res.json({
+    company:companyPublic(company),
+    events:rows.map(liveTestEventPayload)
+   });
+  }catch(e){
+   res.status(500).json({error:e.message});
+  }
+ }
+);
+
+app.post(
+ '/api/admin/live-test/drivers/:driverId/snapshot',
+ adminAuth,
+ requireStaffRole('administrator'),
+ async(req,res)=>{
+  const createdAt=new Date().toISOString();
+  let eventId=null;
+
+  try{
+   const company=officeCompanyRow(req);
+
+   if(!company){
+    return res.status(409).json({
+     error:'Select a company before running a Live Data Test Lab snapshot.'
+    });
+   }
+
+   /*
+    * Phase 2A deliberately remains single-Autocab-tenant only.
+    *
+    * Internal FaivoPay company IDs are not yet mapped to a specific
+    * Autocab company ID for this search endpoint. Refuse to perform
+    * a live account read when more than one active FaivoPay company
+    * exists rather than risk returning another company's driver data.
+    */
+   const activeCompanyCount=Number(
+    db.prepare(`
+     SELECT COUNT(*) c
+     FROM companies
+     WHERE status='active'
+    `).get()?.c||0
+   );
+
+   if(activeCompanyCount!==1){
+    return res.status(409).json({
+     error:
+      'Live Data Test Lab account snapshots are temporarily restricted '+
+      'to installations with exactly one active company.'
+    });
+   }
+
+   const driverId=String(req.params.driverId||'').trim();
+
+   if(!driverId || !/^\d+$/.test(driverId)){
+    return res.status(400).json({
+     error:'A valid Autocab driver ID is required.'
+    });
+   }
+
+   const allowRow=db.prepare(`
+    SELECT *
+    FROM live_test_drivers
+    WHERE company_id=?
+      AND driver_id=?
+   `).get(company.id,driverId);
+
+   if(!allowRow){
+    return res.status(404).json({
+     error:'This driver is not in the Live Data Test Lab allow-list.'
+    });
+   }
+
+   if(!Boolean(allowRow.enabled)){
+    return res.status(409).json({
+     error:'This Live Data Test Lab driver is currently disabled.'
+    });
+   }
+
+   /*
+    * Extra invariant: Phase 2A refuses to operate if this row ever
+    * somehow has live-write permission enabled.
+    */
+   if(Boolean(allowRow.live_write_enabled)){
+    return res.status(409).json({
+     error:
+      'Safety lock: live-write permission must be disabled before '+
+      'running a simulation snapshot.'
+    });
+   }
+
+   const cached=cachedDriver(Number(driverId));
+
+   if(!cached){
+    return res.status(404).json({
+     error:'Driver not found in the FaivoPay Autocab cache.'
+    });
+   }
+
+   const actor=liveTestActor(req);
+
+   const before={
+    driverId:String(cached.driverId),
+    callsign:cached.callsign||allowRow.callsign||'',
+    driverName:cached.fullName||'',
+    active:Boolean(cached.active),
+    suspended:Boolean(cached.suspended),
+    previousBalance:cached.previousBalance,
+    currentBalance:cached.currentBalance,
+    lastProcessed:cached.lastProcessed,
+    lastProcessedBy:cached.lastProcessedBy,
+    totals:cached.totals||null,
+    syncedAt:cached.syncedAt
+   };
+
+   const requestMeta={
+    source:'autocab',
+    operation:'driver_account_snapshot',
+    endpoint:'/accounts/v1/DriversAccounts',
+    transportMethod:'POST',
+    semanticOperation:'read',
+    driverId,
+    companyFilter:null,
+    simulationOnly:true,
+    liveWriteEnabled:false
+   };
+
+   eventId=id('livetestevt');
+
+   /*
+    * Insert the attempt BEFORE the external read.
+    * The row is append-only: this route never updates or deletes it.
+    *
+    * Success/failure is represented by inserting a final event below,
+    * rather than mutating the first record.
+    */
+   db.prepare(`
+    INSERT INTO live_test_events(
+     id,
+     company_id,
+     driver_id,
+     callsign,
+     mode,
+     action,
+     request_json,
+     before_json,
+     proposed_json,
+     result_json,
+     reversal_of,
+     status,
+     actor_id,
+     actor_email,
+     actor_name,
+     created_at
+    )
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+   `).run(
+    eventId,
+    company.id,
+    driverId,
+    String(allowRow.callsign||cached.callsign||''),
+    'simulation',
+    'live_account_snapshot_requested',
+    liveTestJson(requestMeta),
+    liveTestJson(before),
+    null,
+    null,
+    null,
+    'requested',
+    actor.id||'',
+    actor.email||'',
+    actor.name||'',
+    createdAt
+   );
+
+   const live=await liveTestReadDriverAccount(driverId);
+
+   const sameBalance=(a,b)=>{
+    if(a==null || b==null)return a==null && b==null;
+    return Number(a)===Number(b);
+   };
+
+   const comparison={
+    previousBalance:{
+     cached:before.previousBalance,
+     live:live.previousBalance,
+     changed:!sameBalance(
+      before.previousBalance,
+      live.previousBalance
+     )
+    },
+    currentBalance:{
+     cached:before.currentBalance,
+     live:live.currentBalance,
+     changed:!sameBalance(
+      before.currentBalance,
+      live.currentBalance
+     )
+    },
+    cacheSyncedAt:before.syncedAt,
+    liveFetchedAt:live.fetchedAt
+   };
+
+   const result={
+    live,
+    comparison,
+    localCacheChanged:false,
+    autocabChanged:false,
+    paymentProviderChanged:false
+   };
+
+   const completedId=id('livetestevt');
+
+   db.prepare(`
+    INSERT INTO live_test_events(
+     id,
+     company_id,
+     driver_id,
+     callsign,
+     mode,
+     action,
+     request_json,
+     before_json,
+     proposed_json,
+     result_json,
+     reversal_of,
+     status,
+     actor_id,
+     actor_email,
+     actor_name,
+     created_at
+    )
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+   `).run(
+    completedId,
+    company.id,
+    driverId,
+    String(allowRow.callsign||cached.callsign||''),
+    'simulation',
+    'live_account_snapshot_completed',
+    liveTestJson({
+     ...requestMeta,
+     requestEventId:eventId
+    }),
+    liveTestJson(before),
+    null,
+    liveTestJson(result),
+    eventId,
+    'recorded',
+    actor.id||'',
+    actor.email||'',
+    actor.name||'',
+    new Date().toISOString()
+   );
+
+   audit(
+    req,
+    'staff',
+    actor.email||actor.id,
+    'live_test_account_snapshot',
+    'driver',
+    allowRow.callsign||driverId,
+    {
+     companyId:company.id,
+     driverId,
+     callsign:allowRow.callsign||cached.callsign||'',
+     requestEventId:eventId,
+     resultEventId:completedId,
+     simulationOnly:true,
+     liveWriteEnabled:false
+    }
+   );
+
+   res.json({
+    ok:true,
+    mode:'simulation',
+    liveWritesAvailable:false,
+    driver:liveTestDriverPayload(allowRow),
+    eventId:completedId,
+    snapshot:result
+   });
+  }catch(e){
+   /*
+    * If an attempt event was already inserted, record a second immutable
+    * failure event. Never modify the original requested event.
+    */
+   try{
+    if(eventId){
+     const requestEvent=db.prepare(`
+      SELECT *
+      FROM live_test_events
+      WHERE id=?
+     `).get(eventId);
+
+     if(requestEvent){
+      db.prepare(`
+       INSERT INTO live_test_events(
+        id,
+        company_id,
+        driver_id,
+        callsign,
+        mode,
+        action,
+        request_json,
+        before_json,
+        proposed_json,
+        result_json,
+        reversal_of,
+        status,
+        actor_id,
+        actor_email,
+        actor_name,
+        created_at
+       )
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      `).run(
+       id('livetestevt'),
+       requestEvent.company_id,
+       requestEvent.driver_id,
+       requestEvent.callsign,
+       'simulation',
+       'live_account_snapshot_failed',
+       requestEvent.request_json,
+       requestEvent.before_json,
+       null,
+       liveTestJson({
+        error:String(e.message||'Snapshot failed'),
+        localCacheChanged:false,
+        autocabChanged:false,
+        paymentProviderChanged:false
+       }),
+       requestEvent.id,
+       'failed',
+       requestEvent.actor_id,
+       requestEvent.actor_email,
+       requestEvent.actor_name,
+       new Date().toISOString()
+      );
+     }
+    }
+   }catch(logError){
+    console.error(
+     'Live Test Lab failure-event logging failed:',
+     logError.message
+    );
+   }
+
+   res.status(500).json({
+    error:e.message,
+    simulationOnly:true,
+    liveWritesAvailable:false
+   });
   }
  }
 );
