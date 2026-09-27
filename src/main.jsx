@@ -611,6 +611,7 @@ function AdminApp(){
  const[planAllocations,setPlanAllocations]=useState([]);
  const[outstanding,setOutstanding]=useState([]),[fees,setFees]=useState({fees:[],summary:{}}),[earlySummary,setEarlySummary]=useState(null);
  const[feeInvoices,setFeeInvoices]=useState([]),[feeInvoiceBusy,setFeeInvoiceBusy]=useState(false);
+ const[feeInvoicePreview,setFeeInvoicePreview]=useState(null),[feeInvoicePreviewBusy,setFeeInvoicePreviewBusy]=useState(false),[feeInvoiceDraftPdfBusy,setFeeInvoiceDraftPdfBusy]=useState(false);
  const[paymentPlans,setPaymentPlans]=useState({plans:[],summary:{}}),[selectedPaymentPlan,setSelectedPaymentPlan]=useState(null);
  const[paymentPlanQ,setPaymentPlanQ]=useState(''),[paymentPlanStatus,setPaymentPlanStatus]=useState('all');
  const[planCreateSource,setPlanCreateSource]=useState(null),[planCreate,setPlanCreate]=useState({frequency:'weekly',instalmentAmount:'',startDate:'',notes:''}),[planCreateBusy,setPlanCreateBusy]=useState(false),[planActivateBusy,setPlanActivateBusy]=useState(false),[planActionBusy,setPlanActionBusy]=useState(false);
@@ -1885,15 +1886,46 @@ function AdminApp(){
 
 async function resendOutstanding(x){try{await api(`/api/admin/outstanding-payments/${x.id}/resend`,{method:'POST'});alert('Payment reminder sent.');await loadOutstanding()}catch(e){alert(e.message)}}
  async function createStripeLink(x){try{const j=await api(`/api/admin/payment-requests/${x.id}/stripe`,{method:'POST'});await loadOutstanding();if(j.paymentUrl)window.open(j.paymentUrl,'_blank')}catch(e){alert(e.message)}}
- async function createWeeklyFeeInvoice(){
+ async function previewWeeklyFeeInvoice(){
   const billingEmail=
    companyFinance?.weeklyInvoicing?.billingEmail||
    companyFinance?.company?.supportEmail||
    '';
 
+  setFeeInvoicePreviewBusy(true);
+
+  try{
+   const j=await api('/api/admin/fee-invoices/preview',{
+    method:'POST',
+    body:JSON.stringify({
+     companyId:companyFinance?.company?.id||'',
+     billingEmail
+    })
+   });
+
+   setFeeInvoicePreview(j.preview);
+  }catch(e){
+   setFeeInvoicePreview(null);
+   alert(e.message);
+  }finally{
+   setFeeInvoicePreviewBusy(false);
+  }
+ }
+
+ async function createWeeklyFeeInvoice(){
+  const preview=feeInvoicePreview;
+
+  if(!preview){
+   return alert('Preview the draft invoice before creating the final invoice.');
+  }
+
   if(!confirm(
-   'Create the invoice for the most recent fully completed Monday–Sunday week?\n\n'+
-   'FaivoPay will permanently snapshot the eligible uninvoiced fee records into one invoice.\n\n'+
+   `Create the FINAL invoice for ${preview.periodStart} to ${preview.periodEnd}?\n\n`+
+   `${preview.feeCount} fee records\n`+
+   `Gross fees: ${money(preview.grossFeeTotal)}\n`+
+   `FaivoPay due: ${money(preview.faivopayShareTotal)}\n`+
+   `Taxi company share: ${money(preview.taxiCompanyShareTotal)}\n\n`+
+   'This will allocate the reviewed fee records to an official invoice number.\n\n'+
    'No email will be sent yet.'
   ))return;
 
@@ -1904,9 +1936,14 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
     method:'POST',
     body:JSON.stringify({
      companyId:companyFinance?.company?.id||'',
-     billingEmail
+     periodStart:preview.periodStart,
+     periodEnd:preview.periodEnd,
+     billingEmail:preview.billingEmail,
+     previewKey:preview.previewKey
     })
    });
+
+   setFeeInvoicePreview(null);
 
    await Promise.all([
     loadFees(),
@@ -1927,9 +1964,72 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
     );
    }
   }catch(e){
+   if(/draft has changed/i.test(e.message)){
+    setFeeInvoicePreview(null);
+   }
+
    alert(e.message);
   }finally{
    setFeeInvoiceBusy(false);
+  }
+ }
+
+ async function downloadDraftFeeInvoicePdf(){
+  const preview=feeInvoicePreview;
+
+  if(!preview){
+   return alert('Preview the draft invoice first.');
+  }
+
+  setFeeInvoiceDraftPdfBusy(true);
+
+  try{
+   const r=await fetch(
+    `${API_BASE}/api/admin/fee-invoices/preview/pdf`,
+    {
+     method:'POST',
+     headers:{
+      Authorization:`Bearer ${token}`,
+      'Content-Type':'application/json'
+     },
+     body:JSON.stringify({
+      companyId:companyFinance?.company?.id||'',
+      periodStart:preview.periodStart,
+      periodEnd:preview.periodEnd,
+      billingEmail:preview.billingEmail,
+      previewKey:preview.previewKey
+     })
+    }
+   );
+
+   if(!r.ok){
+    let message='Could not download draft invoice PDF';
+
+    try{
+     const j=await r.json();
+     message=j.error||message;
+    }catch{}
+
+    if(/draft has changed/i.test(message)){
+     setFeeInvoicePreview(null);
+    }
+
+    throw new Error(message);
+   }
+
+   const blob=await r.blob();
+   const url=URL.createObjectURL(blob);
+   const a=document.createElement('a');
+
+   a.href=url;
+   a.download=`FaivoPay-DRAFT-${preview.periodStart}-${preview.periodEnd}.pdf`;
+   a.click();
+
+   URL.revokeObjectURL(url);
+  }catch(e){
+   alert(e.message);
+  }finally{
+   setFeeInvoiceDraftPdfBusy(false);
   }
  }
 
@@ -5184,11 +5284,19 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
        {canMoney&&
         <button
          className="primary"
-         disabled={feeInvoiceBusy||Number(fees?.summary?.uninvoiced||0)<=0}
-         onClick={createWeeklyFeeInvoice}
+         disabled={
+          feeInvoicePreviewBusy||
+          feeInvoiceBusy||
+          Number(fees?.summary?.uninvoiced||0)<=0
+         }
+         onClick={previewWeeklyFeeInvoice}
         >
          <FileClock/>
-         {feeInvoiceBusy?'Creating invoice…':'Create weekly invoice'}
+         {feeInvoicePreviewBusy
+          ?'Preparing draft…'
+          :feeInvoicePreview
+           ?'Refresh draft'
+           :'Preview draft invoice'}
         </button>
        }
       </div>
@@ -5227,8 +5335,8 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
         <span className="sectionKicker">WEEKLY INVOICING</span>
         <h3>Invoice control</h3>
         <p>
-         Manual mode is active while the workflow is being validated.
-         Creating an invoice snapshots the completed week's fee records.
+         Preview the completed week first. Final creation is only available
+         after the exact fee totals have been reviewed.
         </p>
        </div>
        <Pill tone="warn">Manual mode</Pill>
@@ -5258,11 +5366,90 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
        <div>
         <b>Safe validation mode</b>
         <span>
-         Invoices can currently be created and downloaded only.
-         Nothing is emailed automatically and there is no weekly scheduler yet.
+         Drafts do not create an invoice, allocate fee records or send email.
+         Final creation remains a separate confirmed action.
         </span>
        </div>
       </div>
+
+      {feeInvoicePreview&&
+       <div className="invoiceDraftReview">
+        <div className="invoiceDraftHead">
+         <div>
+          <span className="sectionKicker">DRAFT REVIEW</span>
+          <h3>Previous completed week</h3>
+          <p>
+           {feeInvoicePreview.periodStart} to {feeInvoicePreview.periodEnd}
+          </p>
+         </div>
+
+         <Pill tone="warn">DRAFT — NOT AN INVOICE</Pill>
+        </div>
+
+        <div className="invoiceDraftMetrics">
+         <div>
+          <span>Fee records</span>
+          <b>{feeInvoicePreview.feeCount}</b>
+         </div>
+         <div>
+          <span>Gross fees</span>
+          <b>{money(feeInvoicePreview.grossFeeTotal)}</b>
+         </div>
+         <div>
+          <span>FaivoPay due</span>
+          <b>{money(feeInvoicePreview.faivopayShareTotal)}</b>
+         </div>
+         <div>
+          <span>Taxi company share</span>
+          <b>{money(feeInvoicePreview.taxiCompanyShareTotal)}</b>
+         </div>
+        </div>
+
+        <div className="invoiceDraftDetails">
+         <div>
+          <span>Billing company</span>
+          <b>{companyFinance?.company?.name||'—'}</b>
+         </div>
+         <div>
+          <span>Billing email</span>
+          <b>{feeInvoicePreview.billingEmail||'—'}</b>
+         </div>
+        </div>
+
+        <div className="operatorWarning">
+         <Info/>
+         <div>
+          <b>No accounting records have changed</b>
+          <span>
+           If a fee or refund changes after this preview, FaivoPay will block
+           final creation and require a fresh draft.
+          </span>
+         </div>
+        </div>
+
+        <div className="invoiceDraftActions">
+         <button
+          className="secondary"
+          disabled={feeInvoiceDraftPdfBusy||feeInvoiceBusy}
+          onClick={downloadDraftFeeInvoicePdf}
+         >
+          <FileClock/>
+          {feeInvoiceDraftPdfBusy?'Preparing PDF…':'Download draft PDF'}
+         </button>
+
+         {canMoney&&
+          <button
+           className="primary"
+           disabled={feeInvoiceBusy||feeInvoiceDraftPdfBusy}
+           onClick={createWeeklyFeeInvoice}
+          >
+           <ShieldCheck/>
+           {feeInvoiceBusy?'Creating final invoice…':'Create final invoice'}
+          </button>
+         }
+        </div>
+       </div>
+      }
      </section>
 
      <section className="panel invoiceHistoryPanel">

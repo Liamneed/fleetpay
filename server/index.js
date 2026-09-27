@@ -11397,6 +11397,150 @@ function invoiceCandidateFees(
   );
 }
 
+
+function feeInvoiceTotals(candidates){
+ const totals=candidates.reduce(
+  (a,row)=>{
+   a.gross+=Number(row.effectiveGrossFee||0);
+   a.faivopay+=Number(row.effectiveFaivopayShare||0);
+   a.taxi+=Number(row.effectiveTaxiCompanyShare||0);
+   return a;
+  },
+  {gross:0,faivopay:0,taxi:0}
+ );
+
+ for(const key of Object.keys(totals)){
+  totals[key]=Number(totals[key].toFixed(2));
+ }
+
+ return totals;
+}
+
+function feeInvoicePreviewKey({
+ companyId,
+ periodStart,
+ periodEnd,
+ billingEmail,
+ candidates
+}){
+ /*
+  * Compact fingerprint of the exact draft reviewed by Finance.
+  *
+  * No invoice number is allocated and nothing is persisted here.
+  * Final creation recalculates this fingerprint under the write lock.
+  */
+ const payload={
+  companyId:String(companyId||''),
+  periodStart:String(periodStart||''),
+  periodEnd:String(periodEnd||''),
+  billingEmail:safeEmail(billingEmail||''),
+  fees:candidates.map(row=>[
+   String(row.id||''),
+   Number(row.effectiveGrossFee||0).toFixed(2),
+   Number(row.effectiveFaivopayShare||0).toFixed(2),
+   Number(row.effectiveTaxiCompanyShare||0).toFixed(2),
+   String(row.fee_type||''),
+   String(row.source_type||''),
+   String(row.source_id||''),
+   String(row.callsign||''),
+   String(row.created_at||'')
+  ])
+ };
+
+ return crypto
+  .createHash('sha256')
+  .update(JSON.stringify(payload))
+  .digest('hex');
+}
+
+function buildFeeInvoicePreview({
+ companyId,
+ periodStart,
+ periodEnd,
+ billingEmail
+}){
+ validateInvoicePeriod(periodStart,periodEnd);
+
+ const company=db.prepare(`
+  SELECT *
+  FROM companies
+  WHERE id=?
+ `).get(companyId);
+
+ if(!company){
+  throw new Error('Company not found');
+ }
+
+ const existing=db.prepare(`
+  SELECT invoice_number
+  FROM fee_invoices
+  WHERE company_id=?
+    AND period_start=?
+    AND period_end=?
+ `).get(
+  companyId,
+  periodStart,
+  periodEnd
+ );
+
+ if(existing){
+  throw new Error(
+   `Invoice ${existing.invoice_number} already exists for ${periodStart} to ${periodEnd}`
+  );
+ }
+
+ const candidates=invoiceCandidateFees(
+  companyId,
+  periodStart,
+  periodEnd
+ );
+
+ if(!candidates.length){
+  throw new Error(
+   `No uninvoiced fees exist for ${periodStart} to ${periodEnd}`
+  );
+ }
+
+ const totals=feeInvoiceTotals(candidates);
+
+ return {
+  isDraft:true,
+  companyId,
+  invoiceNumber:'DRAFT',
+  periodStart,
+  periodEnd,
+  billingEmail:billingEmail||'',
+  currency:'GBP',
+  grossFeeTotal:totals.gross,
+  faivopayShareTotal:totals.faivopay,
+  taxiCompanyShareTotal:totals.taxi,
+  feeCount:candidates.length,
+  status:'draft',
+  emailStatus:'not_sent',
+  createdAt:new Date().toISOString(),
+  previewKey:feeInvoicePreviewKey({
+   companyId,
+   periodStart,
+   periodEnd,
+   billingEmail,
+   candidates
+  }),
+  items:candidates.map(row=>({
+   feeId:row.id,
+   companyId,
+   feeType:row.fee_type||'',
+   sourceType:row.source_type||'',
+   sourceId:row.source_id||'',
+   callsign:row.callsign||'',
+   description:row.description||'',
+   grossFee:Number(row.effectiveGrossFee||0),
+   faivopayShare:Number(row.effectiveFaivopayShare||0),
+   taxiCompanyShare:Number(row.effectiveTaxiCompanyShare||0),
+   feeCreatedAt:row.created_at||''
+  }))
+ };
+}
+
 function nextFeeInvoiceNumber(periodEnd){
  const year=String(periodEnd).slice(0,4);
  const prefix=`FP-${year}-`;
@@ -11499,7 +11643,8 @@ function createManualFeeInvoice({
  periodStart,
  periodEnd,
  billingEmail,
- createdBy
+ createdBy,
+ previewKey
 }){
  validateInvoicePeriod(periodStart,periodEnd);
 
@@ -11575,19 +11720,24 @@ function createManualFeeInvoice({
    );
   }
 
-  const totals=candidates.reduce(
-   (a,row)=>{
-    a.gross+=row.effectiveGrossFee;
-    a.faivopay+=row.effectiveFaivopayShare;
-    a.taxi+=row.effectiveTaxiCompanyShare;
-    return a;
-   },
-   {gross:0,faivopay:0,taxi:0}
-  );
+  const currentPreviewKey=feeInvoicePreviewKey({
+   companyId,
+   periodStart,
+   periodEnd,
+   billingEmail,
+   candidates
+  });
 
-  for(const key of Object.keys(totals)){
-   totals[key]=Number(totals[key].toFixed(2));
+  if(
+   !String(previewKey||'') ||
+   String(previewKey)!==currentPreviewKey
+  ){
+   throw new Error(
+    'Invoice draft has changed. Refresh the draft before creating the final invoice.'
+   );
   }
+
+  const totals=feeInvoiceTotals(candidates);
 
   const now=new Date().toISOString();
   const invoiceId=id('invoice');
@@ -11735,6 +11885,8 @@ function invoiceDateLabel(value){
 }
 
 async function feeInvoicePdfBuffer(invoice){
+ const isDraft=Boolean(invoice?.isDraft);
+
  const company=db.prepare(`
   SELECT *
   FROM companies
@@ -11751,7 +11903,9 @@ async function feeInvoicePdfBuffer(invoice){
     right:48
    },
    info:{
-    Title:`FaivoPay invoice ${invoice.invoiceNumber}`,
+    Title:isDraft
+     ?'FaivoPay DRAFT weekly fee statement'
+     :`FaivoPay invoice ${invoice.invoiceNumber}`,
     Author:'FaivoPay'
    }
   });
@@ -11771,7 +11925,7 @@ async function feeInvoicePdfBuffer(invoice){
    .font('Helvetica')
    .fontSize(10)
    .fillColor('#667085')
-   .text('Weekly fee invoice');
+   .text(isDraft?'DRAFT WEEKLY FEE STATEMENT':'Weekly fee invoice');
 
   doc.moveDown(1.3);
 
@@ -11779,7 +11933,11 @@ async function feeInvoicePdfBuffer(invoice){
    .fillColor('#111827')
    .font('Helvetica-Bold')
    .fontSize(18)
-   .text(`Invoice ${invoice.invoiceNumber}`);
+   .text(
+    isDraft
+     ?'DRAFT — NOT AN INVOICE'
+     :`Invoice ${invoice.invoiceNumber}`
+   );
 
   doc.moveDown(.6);
 
@@ -11799,7 +11957,9 @@ async function feeInvoicePdfBuffer(invoice){
   doc
    .font('Helvetica')
    .fontSize(10)
-   .text(`Invoice date: ${invoiceDate}`)
+   .text(
+    `${isDraft?'Draft generated':'Invoice date'}: ${invoiceDate}`
+   )
    .text(`Company: ${company?.name||invoice.companyId}`)
    .text(
     `Fee period: ${invoiceDateLabel(invoice.periodStart)} – ${invoiceDateLabel(invoice.periodEnd)}`
@@ -11900,7 +12060,9 @@ async function feeInvoicePdfBuffer(invoice){
    .fontSize(8)
    .fillColor('#667085')
    .text(
-    'This invoice was generated from immutable FaivoPay fee records for the stated accounting period.'
+    isDraft
+     ?'DRAFT ONLY — no invoice has been created, no fee records have been marked invoiced and no email has been sent.'
+     :'This invoice was generated from immutable FaivoPay fee records for the stated accounting period.'
    );
 
   doc.end();
@@ -11964,6 +12126,144 @@ app.get(
 );
 
 app.post(
+ '/api/admin/fee-invoices/preview',
+ adminAuth,
+ requireStaffRole('administrator','finance','office','readonly'),
+ (req,res)=>{
+  try{
+   const company=officeCompanyRow(req);
+
+   if(!company){
+    return res.status(409).json({
+     error:'Select a company before previewing an invoice.'
+    });
+   }
+
+   const fallback=previousCompleteInvoiceWeek();
+
+   const periodStart=String(
+    req.body?.periodStart||
+    fallback.periodStart
+   );
+
+   const periodEnd=String(
+    req.body?.periodEnd||
+    fallback.periodEnd
+   );
+
+   const invoiceSettings=
+    companyWeeklyInvoiceSettings(company.id);
+
+   const billingEmail=safeEmail(
+    req.body?.billingEmail||
+    invoiceSettings?.billingEmail||
+    company.support_email||
+    ''
+   );
+
+   if(!billingEmail){
+    return res.status(400).json({
+     error:'A billing email is required before previewing the invoice.'
+    });
+   }
+
+   const preview=buildFeeInvoicePreview({
+    companyId:company.id,
+    periodStart,
+    periodEnd,
+    billingEmail
+   });
+
+   res.json({
+    ok:true,
+    company:companyPublic(company),
+    preview
+   });
+  }catch(e){
+   const code=
+    /already exists|draft has changed/i.test(e.message)
+     ?409
+     :/No uninvoiced fees|Invoice period|Weekly invoice|fully completed|Invalid invoice/i.test(
+       e.message
+      )
+      ?400
+      :500;
+
+   res.status(code).json({error:e.message});
+  }
+ }
+);
+
+app.post(
+ '/api/admin/fee-invoices/preview/pdf',
+ adminAuth,
+ requireStaffRole('administrator','finance','office','readonly'),
+ async(req,res)=>{
+  try{
+   const company=officeCompanyRow(req);
+
+   if(!company){
+    return res.status(409).json({
+     error:'Select a company before downloading a draft invoice.'
+    });
+   }
+
+   const periodStart=String(req.body?.periodStart||'');
+   const periodEnd=String(req.body?.periodEnd||'');
+   const billingEmail=safeEmail(req.body?.billingEmail||'');
+   const expectedPreviewKey=String(req.body?.previewKey||'');
+
+   if(!billingEmail){
+    return res.status(400).json({
+     error:'A billing email is required before downloading the draft.'
+    });
+   }
+
+   if(!expectedPreviewKey){
+    return res.status(400).json({
+     error:'Refresh the invoice draft before downloading it.'
+    });
+   }
+
+   const preview=buildFeeInvoicePreview({
+    companyId:company.id,
+    periodStart,
+    periodEnd,
+    billingEmail
+   });
+
+   if(preview.previewKey!==expectedPreviewKey){
+    return res.status(409).json({
+     error:'Invoice draft has changed. Refresh the draft before downloading it.'
+    });
+   }
+
+   const pdf=await feeInvoicePdfBuffer(preview);
+
+   res.setHeader('Content-Type','application/pdf');
+   res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="FaivoPay-DRAFT-${periodStart}-${periodEnd}.pdf"`
+   );
+   res.setHeader('Content-Length',String(pdf.length));
+
+   res.send(pdf);
+  }catch(e){
+   const code=
+    /already exists|draft has changed/i.test(e.message)
+     ?409
+     :/No uninvoiced fees|Invoice period|Weekly invoice|fully completed|Invalid invoice/i.test(
+       e.message
+      )
+      ?400
+      :500;
+
+   res.status(code).json({error:e.message});
+  }
+ }
+);
+
+app.post(
  '/api/admin/fee-invoices/manual-create',
  adminAuth,
  requireStaffRole('administrator','finance'),
@@ -12010,7 +12310,8 @@ app.post(
     periodStart,
     periodEnd,
     billingEmail,
-    createdBy:req.auth.email
+    createdBy:req.auth.email,
+    previewKey:String(req.body?.previewKey||'')
    });
 
    if(!result.alreadyExists){
@@ -12042,11 +12343,13 @@ app.post(
 
   }catch(e){
    const code=
-    /No uninvoiced fees|Invoice period|Weekly invoice|fully completed|Invalid invoice/i.test(
-     e.message
-    )
-     ?400
-     :500;
+    /draft has changed/i.test(e.message)
+     ?409
+     :/No uninvoiced fees|Invoice period|Weekly invoice|fully completed|Invalid invoice/i.test(
+       e.message
+      )
+      ?400
+      :500;
 
    res.status(code).json({error:e.message});
   }
