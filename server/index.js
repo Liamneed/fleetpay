@@ -7264,6 +7264,296 @@ function updateRunItem(runId,payoutId,approvalStatus,reason=''){
 }
 function officeSettingsPayload(){const s=getSettings();return {...s,smsAuthConfigured:Boolean(getSecureSetting('smsAuthValue')),smtpPasswordConfigured:Boolean(getSecureSetting('smtpPassword')),smsAuthValue:'',smtpPassword:''}}
 
+/* =========================
+   Live Data Test Lab
+   Phase 1: allow-list only.
+   No Autocab writes are reachable from these routes.
+   ========================= */
+
+function liveTestActor(req){
+ const staff=req.auth?.staffId
+  ?db.prepare(`
+    SELECT id,email,name
+    FROM staff_users
+    WHERE id=?
+    LIMIT 1
+   `).get(req.auth.staffId)
+  :null;
+
+ return {
+  id:String(staff?.id||req.auth?.staffId||''),
+  email:String(staff?.email||req.auth?.email||''),
+  name:String(staff?.name||'')
+ };
+}
+
+function liveTestDriverPayload(row){
+ if(!row)return null;
+
+ const cached=cachedDriver(Number(row.driver_id));
+
+ return {
+  companyId:row.company_id,
+  driverId:String(row.driver_id),
+  callsign:row.callsign||cached?.callsign||'',
+  driverName:cached?.fullName||'',
+  enabled:Boolean(row.enabled),
+
+  /*
+   * Phase 1 is simulation/read-only only.
+   * This remains visible so the safety state is explicit, but there
+   * is deliberately no Phase 1 route that can turn it on.
+   */
+  liveWriteEnabled:Boolean(row.live_write_enabled),
+
+  addedBy:row.added_by||'',
+  addedAt:row.added_at||null,
+  updatedAt:row.updated_at||null,
+
+  cached:cached
+   ?{
+     active:Boolean(cached.active),
+     suspended:Boolean(cached.suspended),
+     previousBalance:cached.previousBalance,
+     currentBalance:cached.currentBalance,
+     syncedAt:cached.syncedAt
+    }
+   :null
+ };
+}
+
+app.get(
+ '/api/admin/live-test',
+ adminAuth,
+ requireStaffRole('administrator'),
+ (req,res)=>{
+  try{
+   const company=officeCompanyRow(req);
+
+   if(!company){
+    return res.status(409).json({
+     error:'Select a company before using Live Data Test Lab.'
+    });
+   }
+
+   const allowList=db.prepare(`
+    SELECT *
+    FROM live_test_drivers
+    WHERE company_id=?
+    ORDER BY
+     enabled DESC,
+     CAST(callsign AS INTEGER),
+     callsign,
+     driver_id
+   `).all(company.id).map(liveTestDriverPayload);
+
+   /*
+    * Candidate list comes only from FaivoPay's existing Autocab cache.
+    * This endpoint does not trigger an Autocab sync or make a live API call.
+    */
+   const candidates=cacheRows().map(d=>({
+    driverId:String(d.driverId),
+    callsign:d.callsign||'',
+    driverName:d.fullName||'',
+    active:Boolean(d.active),
+    suspended:Boolean(d.suspended),
+    previousBalance:d.previousBalance,
+    currentBalance:d.currentBalance,
+    syncedAt:d.syncedAt,
+    allowListed:allowList.some(
+     x=>String(x.driverId)===String(d.driverId) && x.enabled
+    )
+   }));
+
+   res.json({
+    company:companyPublic(company),
+    mode:'simulation',
+    liveWritesAvailable:false,
+    allowList,
+    candidates
+   });
+  }catch(e){
+   res.status(500).json({error:e.message});
+  }
+ }
+);
+
+app.post(
+ '/api/admin/live-test/drivers',
+ adminAuth,
+ requireStaffRole('administrator'),
+ (req,res)=>{
+  try{
+   const company=officeCompanyRow(req);
+
+   if(!company){
+    return res.status(409).json({
+     error:'Select a company before changing the Live Data Test Lab allow-list.'
+    });
+   }
+
+   const driverId=String(req.body?.driverId||'').trim();
+
+   if(!driverId || !/^\d+$/.test(driverId)){
+    return res.status(400).json({
+     error:'A valid Autocab driver ID is required.'
+    });
+   }
+
+   const driver=cachedDriver(Number(driverId));
+
+   if(!driver){
+    return res.status(404).json({
+     error:'Driver not found in the FaivoPay Autocab cache.'
+    });
+   }
+
+   const now=new Date().toISOString();
+   const actor=liveTestActor(req);
+
+   db.prepare(`
+    INSERT INTO live_test_drivers(
+     company_id,
+     driver_id,
+     callsign,
+     enabled,
+     live_write_enabled,
+     added_by,
+     added_at,
+     updated_at
+    )
+    VALUES(?,?,?,?,?,?,?,?)
+    ON CONFLICT(company_id,driver_id) DO UPDATE SET
+     callsign=excluded.callsign,
+     enabled=1,
+     live_write_enabled=0,
+     updated_at=excluded.updated_at
+   `).run(
+    company.id,
+    driverId,
+    String(driver.callsign||''),
+    1,
+    0,
+    actor.email||actor.id||'administrator',
+    now,
+    now
+   );
+
+   const row=db.prepare(`
+    SELECT *
+    FROM live_test_drivers
+    WHERE company_id=? AND driver_id=?
+   `).get(company.id,driverId);
+
+   audit(
+    req,
+    'staff',
+    actor.email||actor.id,
+    'live_test_driver_enabled',
+    'driver',
+    driver.callsign||driverId,
+    {
+     companyId:company.id,
+     driverId,
+     callsign:driver.callsign||'',
+     simulationOnly:true,
+     liveWriteEnabled:false
+    }
+   );
+
+   res.json({
+    ok:true,
+    driver:liveTestDriverPayload(row)
+   });
+  }catch(e){
+   res.status(500).json({error:e.message});
+  }
+ }
+);
+
+app.patch(
+ '/api/admin/live-test/drivers/:driverId',
+ adminAuth,
+ requireStaffRole('administrator'),
+ (req,res)=>{
+  try{
+   const company=officeCompanyRow(req);
+
+   if(!company){
+    return res.status(409).json({
+     error:'Select a company before changing the Live Data Test Lab allow-list.'
+    });
+   }
+
+   const driverId=String(req.params.driverId||'').trim();
+
+   const existing=db.prepare(`
+    SELECT *
+    FROM live_test_drivers
+    WHERE company_id=? AND driver_id=?
+   `).get(company.id,driverId);
+
+   if(!existing){
+    return res.status(404).json({
+     error:'This driver is not in the Live Data Test Lab allow-list.'
+    });
+   }
+
+   /*
+    * Phase 1 permits enable/disable only.
+    * live_write_enabled is always forced OFF.
+    */
+   const enabled=Boolean(req.body?.enabled);
+   const now=new Date().toISOString();
+   const actor=liveTestActor(req);
+
+   db.prepare(`
+    UPDATE live_test_drivers
+    SET enabled=?,
+        live_write_enabled=0,
+        updated_at=?
+    WHERE company_id=? AND driver_id=?
+   `).run(
+    enabled?1:0,
+    now,
+    company.id,
+    driverId
+   );
+
+   const row=db.prepare(`
+    SELECT *
+    FROM live_test_drivers
+    WHERE company_id=? AND driver_id=?
+   `).get(company.id,driverId);
+
+   audit(
+    req,
+    'staff',
+    actor.email||actor.id,
+    enabled
+     ?'live_test_driver_enabled'
+     :'live_test_driver_disabled',
+    'driver',
+    row.callsign||driverId,
+    {
+     companyId:company.id,
+     driverId,
+     callsign:row.callsign||'',
+     simulationOnly:true,
+     liveWriteEnabled:false
+    }
+   );
+
+   res.json({
+    ok:true,
+    driver:liveTestDriverPayload(row)
+   });
+  }catch(e){
+   res.status(500).json({error:e.message});
+  }
+ }
+);
+
 app.get('/api/admin/operations-settings',adminAuth,(req,res)=>res.json(officeSettingsPayload()));
 
 app.get(
