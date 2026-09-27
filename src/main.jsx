@@ -612,6 +612,7 @@ function AdminApp(){
  const[outstanding,setOutstanding]=useState([]),[fees,setFees]=useState({fees:[],summary:{}}),[earlySummary,setEarlySummary]=useState(null);
  const[feeInvoices,setFeeInvoices]=useState([]),[feeInvoiceBusy,setFeeInvoiceBusy]=useState(false);
  const[feeInvoicePreview,setFeeInvoicePreview]=useState(null),[feeInvoicePreviewBusy,setFeeInvoicePreviewBusy]=useState(false),[feeInvoiceDraftPdfBusy,setFeeInvoiceDraftPdfBusy]=useState(false);
+ const[feeInvoiceSendBusy,setFeeInvoiceSendBusy]=useState(null);
  const[paymentPlans,setPaymentPlans]=useState({plans:[],summary:{}}),[selectedPaymentPlan,setSelectedPaymentPlan]=useState(null);
  const[paymentPlanQ,setPaymentPlanQ]=useState(''),[paymentPlanStatus,setPaymentPlanStatus]=useState('all');
  const[planCreateSource,setPlanCreateSource]=useState(null),[planCreate,setPlanCreate]=useState({frequency:'weekly',instalmentAmount:'',startDate:'',notes:''}),[planCreateBusy,setPlanCreateBusy]=useState(false),[planActivateBusy,setPlanActivateBusy]=useState(false),[planActionBusy,setPlanActionBusy]=useState(false);
@@ -2074,6 +2075,62 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
    alert(e.message);
   }
  }
+ async function sendFeeInvoice(invoice){
+  if(!invoice?.id)return;
+
+  if(invoice.emailStatus==='sent'){
+   return alert(
+    `Invoice ${invoice.invoiceNumber} has already been emailed.`
+   );
+  }
+
+  if(invoice.emailStatus==='failed'){
+   return alert(
+    'The previous email attempt failed. Retry is intentionally blocked until the failed delivery has been reviewed.'
+   );
+  }
+
+  const recipient=invoice.billingEmail||'';
+
+  if(!recipient){
+   return alert('This invoice has no billing email.');
+  }
+
+  if(!confirm(
+   `Send invoice ${invoice.invoiceNumber}?\n\n`+
+   `To: ${recipient}\n`+
+   `Period: ${invoice.periodStart} to ${invoice.periodEnd}\n`+
+   `Amount due: ${money(invoice.faivopayShareTotal)}\n\n`+
+   'The final invoice PDF will be attached.\n\n'+
+   'This action will be recorded and the same invoice cannot be sent again accidentally.'
+  ))return;
+
+  setFeeInvoiceSendBusy(invoice.id);
+
+  try{
+   const j=await api(
+    `/api/admin/fee-invoices/${invoice.id}/send`,
+    {
+     method:'POST',
+     body:JSON.stringify({
+      companyId:companyFinance?.company?.id||''
+     })
+    }
+   );
+
+   await loadFeeInvoices();
+
+   alert(
+    `Invoice ${j.invoice.invoiceNumber} was sent successfully to ${j.invoice.billingEmail}.`
+   );
+  }catch(e){
+   await loadFeeInvoices();
+   alert(e.message);
+  }finally{
+   setFeeInvoiceSendBusy(null);
+  }
+ }
+
  async function downloadFeesCsv(){try{const r=await fetch(`${API_BASE}/api/admin/fees/csv?status=all`,{headers:{Authorization:`Bearer ${token}`}});if(!r.ok)throw new Error('Could not export fees');const b=await r.blob(),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download='FaivoPay-fees.csv';a.click();URL.revokeObjectURL(u)}catch(e){alert(e.message)}}
  async function downloadPaymentPlansCsv(){try{const r=await fetch(`${API_BASE}/api/admin/payment-plans/csv`,{headers:{Authorization:`Bearer ${token}`}});if(!r.ok)throw new Error('Could not export payment plans');const b=await r.blob(),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download='FaivoPay-payment-plans.csv';a.click();URL.revokeObjectURL(u)}catch(e){alert(e.message)}}
  async function downloadOfficeCsv(dataset,filename){try{const r=await fetch(`${API_BASE}/api/admin/exports/${dataset}.csv`,{headers:{Authorization:`Bearer ${token}`}});if(!r.ok){let message='Could not export CSV';try{const j=await r.json();message=j.error||message}catch{}throw new Error(message)}const b=await r.blob(),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download=filename||`FaivoPay-${dataset}.csv`;a.click();URL.revokeObjectURL(u)}catch(e){alert(e.message)}}
@@ -5529,9 +5586,42 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
               </Pill>
              </td>
              <td>
-              <Pill tone={invoice.emailStatus==='sent'?'good':'neutral'}>
-               {String(invoice.emailStatus||'not_sent').replaceAll('_',' ')}
-              </Pill>
+              <div className="bankTableCell">
+               <Pill
+                tone={
+                 invoice.emailStatus==='sent'
+                  ?'good'
+                  :invoice.emailStatus==='failed'
+                   ?'bad'
+                   :invoice.emailStatus==='sending'
+                    ?'warn'
+                    :'neutral'
+                }
+               >
+                {String(invoice.emailStatus||'not_sent').replaceAll('_',' ')}
+               </Pill>
+
+               {invoice.emailedAt&&
+                <small>{dt(invoice.emailedAt)}</small>
+               }
+
+               {canMoney&&invoice.emailStatus==='not_sent'&&
+                <button
+                 className="mini"
+                 disabled={feeInvoiceSendBusy===invoice.id}
+                 onClick={()=>sendFeeInvoice(invoice)}
+                >
+                 <Send/>
+                 {feeInvoiceSendBusy===invoice.id
+                  ?'Sending…'
+                  :'Send invoice'}
+                </button>
+               }
+
+               {invoice.emailStatus==='failed'&&
+                <small>Retry blocked pending review</small>
+               }
+              </div>
              </td>
              <td>
               <button

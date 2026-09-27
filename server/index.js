@@ -2993,11 +2993,25 @@ function getStripeClient(){
  return stripeClientCache;
 }
 
-function getSendGridConfig(){
+function getSendGridConfig(companyId=''){
+ const resolvedCompanyId=String(companyId||runtimeCompanyId()||'').trim();
+
+ const companyApiKey=resolvedCompanyId
+  ?getCompanySecureSetting(resolvedCompanyId,'sendgridApiKey')
+  :'';
+
+ const companyFromEmail=resolvedCompanyId
+  ?getCompanySetting(resolvedCompanyId,'sendgridFromEmail','')
+  :'';
+
+ const companyFromName=resolvedCompanyId
+  ?getCompanySetting(resolvedCompanyId,'sendgridFromName','')
+  :'';
+
  return {
-  apiKey:String(runtimeCompanySecret('sendgridApiKey',SENDGRID_API_KEY)||'').trim(),
-  fromEmail:String(runtimeCompanySetting('sendgridFromEmail',SENDGRID_FROM_EMAIL)||'').trim(),
-  fromName:String(runtimeCompanySetting('sendgridFromName',SENDGRID_FROM_NAME)||'FaivoPay').trim()||'FaivoPay'
+  apiKey:String(companyApiKey||SENDGRID_API_KEY||'').trim(),
+  fromEmail:String(companyFromEmail||SENDGRID_FROM_EMAIL||'').trim(),
+  fromName:String(companyFromName||SENDGRID_FROM_NAME||'FaivoPay').trim()||'FaivoPay'
  };
 }
 
@@ -3909,16 +3923,38 @@ async function markPayoutPaid(item, req, source='manual'){
  try{await settlePayoutInAutocab(item);audit(req,'system','autocab','autocab_payout_adjusted','payout',item.id,{callsign:item.callsign});}catch(e){audit(req,'system','autocab','autocab_adjustment_failed','payout',item.id,{callsign:item.callsign,error:e.message});}
  audit(req,'admin',req?.auth?.email||source,'payout_paid','payout',item.id,{callsign:item.callsign,amount:Number(item.net_amount||item.amount||0),source});
 }
-async function sendEmail(to,subject,html){
- const sendgridConfig=getSendGridConfig();
+async function sendEmail(
+ to,
+ subject,
+ html,
+ {
+  attachments=[],
+  companyId=''
+ }={}
+){
+ const normalizedAttachments=(
+  Array.isArray(attachments)?attachments:[]
+ ).map(item=>({
+  filename:String(item?.filename||'attachment').trim()||'attachment',
+  content:Buffer.isBuffer(item?.content)
+   ?item.content
+   :Buffer.from(item?.content||''),
+  contentType:String(
+   item?.contentType||
+   'application/octet-stream'
+  )
+ }));
+
+ const sendgridConfig=getSendGridConfig(companyId);
 
  if(sendgridConfig.apiKey && sendgridConfig.fromEmail){
   try{
    const mod=await import('@sendgrid/mail');
    const sendgrid=mod.default||mod;
+
    sendgrid.setApiKey(sendgridConfig.apiKey);
 
-   const [response]=await sendgrid.send({
+   const payload={
     to,
     from:{
      email:sendgridConfig.fromEmail,
@@ -3926,7 +3962,18 @@ async function sendEmail(to,subject,html){
     },
     subject,
     html
-   });
+   };
+
+   if(normalizedAttachments.length){
+    payload.attachments=normalizedAttachments.map(item=>({
+     content:item.content.toString('base64'),
+     filename:item.filename,
+     type:item.contentType,
+     disposition:'attachment'
+    }));
+   }
+
+   const [response]=await sendgrid.send(payload);
 
    return {
     sent:true,
@@ -3938,12 +3985,98 @@ async function sendEmail(to,subject,html){
   }
  }
 
- const settings=getSettings(),smtpHost=String(settings.smtpHost||'').trim(),smtpUser=String(settings.smtpUser||'').trim(),smtpPassword=getSecureSetting('smtpPassword');
+ const settings=getSettings();
+ const smtpHost=String(settings.smtpHost||'').trim();
+ const smtpUser=String(settings.smtpUser||'').trim();
+ const smtpPassword=getSecureSetting('smtpPassword');
+
  if(smtpHost){
-  try{const nodemailer=await import('nodemailer');const transporter=nodemailer.default.createTransport({host:smtpHost,port:Number(settings.smtpPort||587),secure:Boolean(settings.smtpSecure),auth:smtpUser?{user:smtpUser,pass:smtpPassword}:undefined});const info=await transporter.sendMail({from:`${settings.smtpFromName||'FaivoPay'} <${settings.smtpFromEmail||smtpUser}>`,to,subject,html});return {sent:true,provider:'smtp',id:info.messageId||''}}catch(e){throw new Error(`SMTP email failed: ${e.message}. If nodemailer is not installed, run npm install nodemailer.`)}
+  try{
+   const nodemailer=await import('nodemailer');
+
+   const transporter=nodemailer.default.createTransport({
+    host:smtpHost,
+    port:Number(settings.smtpPort||587),
+    secure:Boolean(settings.smtpSecure),
+    auth:smtpUser
+     ?{user:smtpUser,pass:smtpPassword}
+     :undefined
+   });
+
+   const mail={
+    from:`${settings.smtpFromName||'FaivoPay'} <${settings.smtpFromEmail||smtpUser}>`,
+    to,
+    subject,
+    html
+   };
+
+   if(normalizedAttachments.length){
+    mail.attachments=normalizedAttachments.map(item=>({
+     filename:item.filename,
+     content:item.content,
+     contentType:item.contentType
+    }));
+   }
+
+   const info=await transporter.sendMail(mail);
+
+   return {
+    sent:true,
+    provider:'smtp',
+    id:info.messageId||''
+   };
+  }catch(e){
+   throw new Error(`SMTP email failed: ${e.message}`);
+  }
  }
- if(!RESEND_API_KEY||!RESEND_FROM_EMAIL)return {sent:false,provider:'none'};const r=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${RESEND_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({from:RESEND_FROM_EMAIL,to:[to],subject,html})});if(!r.ok)throw new Error(`Email provider error ${r.status}`);const out=await r.json().catch(()=>({}));return {sent:true,provider:'resend',id:out.id||''}
+
+ if(!RESEND_API_KEY||!RESEND_FROM_EMAIL){
+  return {
+   sent:false,
+   provider:'none',
+   id:''
+  };
+ }
+
+ const resendPayload={
+  from:RESEND_FROM_EMAIL,
+  to:[to],
+  subject,
+  html
+ };
+
+ if(normalizedAttachments.length){
+  resendPayload.attachments=normalizedAttachments.map(item=>({
+   filename:item.filename,
+   content:item.content.toString('base64')
+  }));
+ }
+
+ const r=await fetch(
+  'https://api.resend.com/emails',
+  {
+   method:'POST',
+   headers:{
+    Authorization:`Bearer ${RESEND_API_KEY}`,
+    'Content-Type':'application/json'
+   },
+   body:JSON.stringify(resendPayload)
+  }
+ );
+
+ if(!r.ok){
+  throw new Error(`Email provider error ${r.status}`);
+ }
+
+ const out=await r.json().catch(()=>({}));
+
+ return {
+  sent:true,
+  provider:'resend',
+  id:out.id||''
+ };
 }
+
 let twilioClientPromise=null;
 let twilioClientCacheKey='';
 
@@ -12414,6 +12547,250 @@ app.post(
       :500;
 
    res.status(code).json({error:e.message});
+  }
+ }
+);
+
+app.post(
+ '/api/admin/fee-invoices/:id/send',
+ adminAuth,
+ requireStaffRole('administrator','finance'),
+ async(req,res)=>{
+  let invoice=null;
+  let claimed=false;
+
+  try{
+   const company=officeCompanyRow(req);
+
+   if(!company){
+    return res.status(409).json({
+     error:'Select a company before sending this invoice.'
+    });
+   }
+
+   invoice=feeInvoiceById(
+    req.params.id,
+    {
+     items:true,
+     companyId:company.id
+    }
+   );
+
+   if(!invoice){
+    return res.status(404).json({
+     error:'Invoice not found'
+    });
+   }
+
+   if(!invoice.billingEmail){
+    return res.status(400).json({
+     error:'This invoice has no billing email.'
+    });
+   }
+
+   if(invoice.emailStatus==='sent'){
+    return res.status(409).json({
+     error:`Invoice ${invoice.invoiceNumber} has already been emailed.`
+    });
+   }
+
+   if(invoice.emailStatus==='sending'){
+    return res.status(409).json({
+     error:`Invoice ${invoice.invoiceNumber} is already being sent.`
+    });
+   }
+
+   if(invoice.emailStatus==='failed'){
+    return res.status(409).json({
+     error:'The previous invoice email attempt failed. Automatic retry is blocked until the failed delivery has been reviewed.'
+    });
+   }
+
+   /*
+    * Generate the immutable invoice PDF before taking the send lock.
+    * A PDF failure therefore cannot leave the invoice stuck in sending.
+    */
+   const pdf=await feeInvoicePdfBuffer(invoice);
+
+   const claimAt=new Date().toISOString();
+
+   const claim=db.prepare(`
+    UPDATE fee_invoices
+    SET email_status='sending',
+        updated_at=?
+    WHERE id=?
+      AND company_id=?
+      AND COALESCE(email_status,'not_sent')='not_sent'
+   `).run(
+    claimAt,
+    invoice.id,
+    company.id
+   );
+
+   if(Number(claim.changes||0)!==1){
+    const current=feeInvoiceById(
+     invoice.id,
+     {companyId:company.id}
+    );
+
+    return res.status(409).json({
+     error:
+      current?.emailStatus==='sent'
+       ?`Invoice ${invoice.invoiceNumber} has already been emailed.`
+       :'Invoice email status changed. Refresh the invoice list before trying again.'
+    });
+   }
+
+   claimed=true;
+
+   const companyName=String(company.name||'Taxi company');
+
+   const subject=
+    `FaivoPay invoice ${invoice.invoiceNumber}`;
+
+   const html=`
+    <div style="font-family:Arial,sans-serif;line-height:1.55;color:#18212f">
+     <h2 style="margin:0 0 16px">FaivoPay weekly fee invoice</h2>
+     <p>Hello ${companyName},</p>
+     <p>
+      Please find attached invoice <strong>${invoice.invoiceNumber}</strong>
+      for FaivoPay fees covering
+      <strong>${invoice.periodStart}</strong> to
+      <strong>${invoice.periodEnd}</strong>.
+     </p>
+     <p>
+      Amount due to FaivoPay:
+      <strong>£${Number(invoice.faivopayShareTotal||0).toFixed(2)}</strong>
+     </p>
+     <p>
+      The attached PDF contains the invoice summary and transaction detail.
+     </p>
+     <p>Kind regards,<br><strong>FaivoPay</strong></p>
+    </div>
+   `;
+
+   const result=await sendEmail(
+    invoice.billingEmail,
+    subject,
+    html,
+    {
+     companyId:company.id,
+     attachments:[
+      {
+       filename:`${invoice.invoiceNumber}.pdf`,
+       content:pdf,
+       contentType:'application/pdf'
+      }
+     ]
+    }
+   );
+
+   if(!result?.sent){
+    throw new Error(
+     'No email provider is configured for invoice delivery.'
+    );
+   }
+
+   const sentAt=new Date().toISOString();
+
+   db.prepare(`
+    UPDATE fee_invoices
+    SET email_status='sent',
+        email_provider=?,
+        email_provider_ref=?,
+        emailed_at=?,
+        updated_at=?
+    WHERE id=?
+      AND company_id=?
+      AND email_status='sending'
+   `).run(
+    result.provider||'',
+    result.id||'',
+    sentAt,
+    sentAt,
+    invoice.id,
+    company.id
+   );
+
+   logCommunication({
+    channel:'email',
+    recipient:invoice.billingEmail,
+    templateKey:'weekly_fee_invoice',
+    entityType:'fee_invoice',
+    entityId:invoice.id,
+    status:'sent',
+    providerRef:result.id||''
+   });
+
+   audit(
+    req,
+    'staff',
+    req.auth.email,
+    'fee_invoice_emailed',
+    'fee_invoice',
+    invoice.id,
+    {
+     companyId:company.id,
+     invoiceNumber:invoice.invoiceNumber,
+     recipient:invoice.billingEmail,
+     provider:result.provider||'',
+     providerRef:result.id||''
+    }
+   );
+
+   const updated=feeInvoiceById(
+    invoice.id,
+    {
+     items:true,
+     companyId:company.id
+    }
+   );
+
+   res.json({
+    ok:true,
+    invoice:updated
+   });
+  }catch(e){
+   if(claimed && invoice){
+    const failedAt=new Date().toISOString();
+
+    db.prepare(`
+     UPDATE fee_invoices
+     SET email_status='failed',
+         updated_at=?
+     WHERE id=?
+       AND email_status='sending'
+    `).run(
+     failedAt,
+     invoice.id
+    );
+
+    logCommunication({
+     channel:'email',
+     recipient:invoice.billingEmail||'',
+     templateKey:'weekly_fee_invoice',
+     entityType:'fee_invoice',
+     entityId:invoice.id,
+     status:'failed',
+     error:e.message
+    });
+
+    audit(
+     req,
+     'staff',
+     req.auth.email,
+     'fee_invoice_email_failed',
+     'fee_invoice',
+     invoice.id,
+     {
+      invoiceNumber:invoice.invoiceNumber,
+      recipient:invoice.billingEmail||'',
+      error:e.message
+     }
+    );
+   }
+
+   res.status(500).json({error:e.message});
   }
  }
 );
