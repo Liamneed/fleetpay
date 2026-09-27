@@ -11503,3 +11503,67 @@ body {
   max-width:138px;
  }
 }
+
+/* FaivoPay weekly invoice controls */
+.invoiceControlPanel,
+.invoiceHistoryPanel{
+ padding:24px;
+ margin-bottom:20px;
+}
+
+.invoiceControlGrid{
+ display:grid;
+ grid-template-columns:repeat(4,minmax(0,1fr));
+ gap:12px;
+ margin:4px 0 18px;
+}
+
+.invoiceControlGrid>div{
+ padding:14px 15px;
+ border:1px solid #e5eaf0;
+ background:#fafbfc;
+ border-radius:12px;
+ min-width:0;
+}
+
+.invoiceControlGrid span{
+ display:block;
+ color:#7b8796;
+ font-size:12px;
+ margin-bottom:5px;
+}
+
+.invoiceControlGrid b{
+ display:block;
+ color:#172033;
+ font-size:14px;
+ overflow:hidden;
+ text-overflow:ellipsis;
+}
+
+.invoiceHistoryPanel .panelHead{
+ display:flex;
+ justify-content:space-between;
+ align-items:flex-start;
+ gap:18px;
+}
+
+.invoiceEmptyState{
+ margin:6px 0 0;
+}
+
+@media(max-width:1100px){
+ .invoiceControlGrid{
+  grid-template-columns:1fr 1fr;
+ }
+}
+
+@media(max-width:700px){
+ .invoiceControlGrid{
+  grid-template-columns:1fr;
+ }
+
+ .invoiceHistoryPanel .panelHead{
+  flex-direction:column;
+ }
+}

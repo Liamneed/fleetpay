@@ -610,6 +610,7 @@ function AdminApp(){
  const[mondayRuns,setMondayRuns]=useState([]),[sett,setSett]=useState({runs:[],payoutRuns:[],payouts:[],paymentRequests:[],earlyPayoutRequests:[]});
  const[planAllocations,setPlanAllocations]=useState([]);
  const[outstanding,setOutstanding]=useState([]),[fees,setFees]=useState({fees:[],summary:{}}),[earlySummary,setEarlySummary]=useState(null);
+ const[feeInvoices,setFeeInvoices]=useState([]),[feeInvoiceBusy,setFeeInvoiceBusy]=useState(false);
  const[paymentPlans,setPaymentPlans]=useState({plans:[],summary:{}}),[selectedPaymentPlan,setSelectedPaymentPlan]=useState(null);
  const[paymentPlanQ,setPaymentPlanQ]=useState(''),[paymentPlanStatus,setPaymentPlanStatus]=useState('all');
  const[planCreateSource,setPlanCreateSource]=useState(null),[planCreate,setPlanCreate]=useState({frequency:'weekly',instalmentAmount:'',startDate:'',notes:''}),[planCreateBusy,setPlanCreateBusy]=useState(false),[planActivateBusy,setPlanActivateBusy]=useState(false),[planActionBusy,setPlanActionBusy]=useState(false);
@@ -713,6 +714,10 @@ function AdminApp(){
 
  const loadPaymentPlans=()=>safeLoad(async()=>setPaymentPlans(await api('/api/admin/payment-plans')));
  const loadFees=()=>safeLoad(async()=>setFees(await api('/api/admin/fees')));
+ const loadFeeInvoices=()=>safeLoad(async()=>{
+  const j=await api('/api/admin/fee-invoices');
+  setFeeInvoices(j.invoices||[]);
+ });
  const loadEarlySummary=()=>safeLoad(async()=>setEarlySummary(await api('/api/admin/early-summary')));
  const applyCustomerAdminData=j=>{
   setCustomerAdmin(j);
@@ -751,7 +756,7 @@ function AdminApp(){
   loadDriverTransactions(selected.driverId);
  },[selected?.driverId]);
 
- async function refreshCore(){await Promise.all([loadOverview(),loadTransactions(),loadDrivers(),loadSettings(),loadIntegrations(),loadTwilioBalance(),loadCompanyFinance(),loadIntegrationStatus(),loadSett(),loadMonday(),loadOutstanding(),loadFees(),loadEarlySummary(),loadCustomerAdmin()])}
+ async function refreshCore(){await Promise.all([loadOverview(),loadTransactions(),loadDrivers(),loadSettings(),loadIntegrations(),loadTwilioBalance(),loadCompanyFinance(),loadIntegrationStatus(),loadSett(),loadMonday(),loadOutstanding(),loadFees(),loadFeeInvoices(),loadEarlySummary(),loadCustomerAdmin()])}
  useEffect(()=>{
   let alive=true;
   if(!token){setSessionBooting(false);return()=>{alive=false}}
@@ -759,7 +764,7 @@ function AdminApp(){
   (async()=>{
    try{
     const profile=await call('/api/admin/me',{},token);if(!alive)return;setMe(profile);
-    await Promise.all([loadOverview(),loadTransactions(),loadDrivers(),loadSettings(),loadIntegrations(),loadTwilioBalance(),loadCompanyFinance(),loadIntegrationStatus(),loadSett(),loadMonday(),loadOutstanding(),loadFees(),loadEarlySummary(),loadCustomerAdmin()]);
+    await Promise.all([loadOverview(),loadTransactions(),loadDrivers(),loadSettings(),loadIntegrations(),loadTwilioBalance(),loadCompanyFinance(),loadIntegrationStatus(),loadSett(),loadMonday(),loadOutstanding(),loadFees(),loadFeeInvoices(),loadEarlySummary(),loadCustomerAdmin()]);
    }catch(e){if(alive){if(/authentication|office authentication/i.test(e.message))logout();else setErr(e.message)}}
    finally{if(alive)setSessionBooting(false)}
   })();
@@ -841,7 +846,10 @@ function AdminApp(){
   }
 
   if(view==='fees'){
-   jobs.push(api('/api/admin/fees').then(setFees));
+   jobs.push(
+    api('/api/admin/fees').then(setFees),
+    api('/api/admin/fee-invoices').then(j=>setFeeInvoices(j.invoices||[]))
+   );
   }
 
   if(view==='settings'){
@@ -1877,7 +1885,89 @@ function AdminApp(){
 
 async function resendOutstanding(x){try{await api(`/api/admin/outstanding-payments/${x.id}/resend`,{method:'POST'});alert('Payment reminder sent.');await loadOutstanding()}catch(e){alert(e.message)}}
  async function createStripeLink(x){try{const j=await api(`/api/admin/payment-requests/${x.id}/stripe`,{method:'POST'});await loadOutstanding();if(j.paymentUrl)window.open(j.paymentUrl,'_blank')}catch(e){alert(e.message)}}
- async function markFeesInvoiced(){const invoiceRef=prompt('Enter the invoice reference/number:');if(!invoiceRef?.trim())return;try{const j=await api('/api/admin/fees/mark-invoiced',{method:'POST',body:JSON.stringify({invoiceRef})});alert(`${j.count} fee records marked invoiced.`);await loadFees()}catch(e){alert(e.message)}}
+ async function createWeeklyFeeInvoice(){
+  const billingEmail=
+   companyFinance?.weeklyInvoicing?.billingEmail||
+   companyFinance?.company?.supportEmail||
+   '';
+
+  if(!confirm(
+   'Create the invoice for the most recent fully completed Monday–Sunday week?\n\n'+
+   'FaivoPay will permanently snapshot the eligible uninvoiced fee records into one invoice.\n\n'+
+   'No email will be sent yet.'
+  ))return;
+
+  setFeeInvoiceBusy(true);
+
+  try{
+   const j=await api('/api/admin/fee-invoices/manual-create',{
+    method:'POST',
+    body:JSON.stringify({
+     companyId:companyFinance?.company?.id||'',
+     billingEmail
+    })
+   });
+
+   await Promise.all([
+    loadFees(),
+    loadFeeInvoices()
+   ]);
+
+   if(j.alreadyExists){
+    alert(
+     `Invoice ${j.invoice.invoiceNumber} already exists for ${j.invoice.periodStart} to ${j.invoice.periodEnd}.\n\n`+
+     'No duplicate invoice was created.'
+    );
+   }else{
+    alert(
+     `Invoice ${j.invoice.invoiceNumber} created successfully.\n\n`+
+     `${j.invoice.feeCount} fee records\n`+
+     `FaivoPay amount: ${money(j.invoice.faivopayShareTotal)}\n\n`+
+     'No email has been sent.'
+    );
+   }
+  }catch(e){
+   alert(e.message);
+  }finally{
+   setFeeInvoiceBusy(false);
+  }
+ }
+
+ async function downloadFeeInvoicePdf(invoice){
+  try{
+   const r=await fetch(
+    `${API_BASE}/api/admin/fee-invoices/${invoice.id}/pdf`,
+    {
+     headers:{
+      Authorization:`Bearer ${token}`
+     }
+    }
+   );
+
+   if(!r.ok){
+    let message='Could not download invoice PDF';
+
+    try{
+     const j=await r.json();
+     message=j.error||message;
+    }catch{}
+
+    throw new Error(message);
+   }
+
+   const blob=await r.blob();
+   const url=URL.createObjectURL(blob);
+   const a=document.createElement('a');
+
+   a.href=url;
+   a.download=`${invoice.invoiceNumber}.pdf`;
+   a.click();
+
+   URL.revokeObjectURL(url);
+  }catch(e){
+   alert(e.message);
+  }
+ }
  async function downloadFeesCsv(){try{const r=await fetch(`${API_BASE}/api/admin/fees/csv?status=all`,{headers:{Authorization:`Bearer ${token}`}});if(!r.ok)throw new Error('Could not export fees');const b=await r.blob(),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download='FaivoPay-fees.csv';a.click();URL.revokeObjectURL(u)}catch(e){alert(e.message)}}
  async function downloadPaymentPlansCsv(){try{const r=await fetch(`${API_BASE}/api/admin/payment-plans/csv`,{headers:{Authorization:`Bearer ${token}`}});if(!r.ok)throw new Error('Could not export payment plans');const b=await r.blob(),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download='FaivoPay-payment-plans.csv';a.click();URL.revokeObjectURL(u)}catch(e){alert(e.message)}}
  async function downloadOfficeCsv(dataset,filename){try{const r=await fetch(`${API_BASE}/api/admin/exports/${dataset}.csv`,{headers:{Authorization:`Bearer ${token}`}});if(!r.ok){let message='Could not export CSV';try{const j=await r.json();message=j.error||message}catch{}throw new Error(message)}const b=await r.blob(),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download=filename||`FaivoPay-${dataset}.csv`;a.click();URL.revokeObjectURL(u)}catch(e){alert(e.message)}}
@@ -5075,7 +5165,235 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
      </section>
     </>}
 
-{view==='fees'&&<><section className="officePageIntro"><div><span>REVENUE & RECONCILIATION</span><h2>Fees & billing</h2><p>Every FaivoPay fee is recorded separately so you can invoice the taxi company accurately and see the agreed split.</p></div><div className="rowActions"><button className="secondary" onClick={downloadFeesCsv}>Export CSV</button>{canMoney&&<button className="primary" onClick={markFeesInvoiced}>Mark uninvoiced as invoiced</button>}</div></section><section className="officeStats four"><Stat icon={BadgePoundSterling} label="Gross fees" value={money(fees?.summary?.gross||0)} sub="All recorded fees"/><Stat icon={WalletCards} label="FaivoPay share" value={money(fees?.summary?.fleetpay||0)} sub="Your share"/><Stat icon={Users} label="Taxi company share" value={money(fees?.summary?.taxi||0)} sub="Their share"/><Stat icon={FileClock} label="FaivoPay uninvoiced" value={money(fees?.summary?.uninvoiced||0)} sub="Ready to invoice"/></section><section className="panel"><div className="tableWrap proTable"><table><thead><tr><th>Date</th><th>Fee</th><th>Driver</th><th>Gross</th><th>FaivoPay</th><th>Taxi company</th><th>Status</th><th>Invoice</th></tr></thead><tbody>{fees.fees.map(x=><tr key={x.id}><td>{dt(x.createdAt)}</td><td><b>{String(x.feeType).replaceAll('_',' ')}</b><small>{x.description}</small></td><td>{x.callsign||'—'}</td><td>{money(x.grossFee)}</td><td><b>{money(x.fleetpayShare)}</b></td><td>{money(x.taxiCompanyShare)}</td><td><Pill tone={statusTone(x.status)}>{x.status}</Pill></td><td>{x.invoiceRef||'—'}</td></tr>)}</tbody></table></div></section></>}
+{view==='fees'&&<>
+     <section className="officePageIntro">
+      <div>
+       <span>REVENUE & RECONCILIATION</span>
+       <h2>Fees & billing</h2>
+       <p>
+        Every FaivoPay fee is recorded separately and invoiced through
+        a durable weekly invoice so fee records cannot be billed twice.
+       </p>
+      </div>
+
+      <div className="rowActions">
+       <button className="secondary" onClick={downloadFeesCsv}>
+        Export CSV
+       </button>
+
+       {canMoney&&
+        <button
+         className="primary"
+         disabled={feeInvoiceBusy||Number(fees?.summary?.uninvoiced||0)<=0}
+         onClick={createWeeklyFeeInvoice}
+        >
+         <FileClock/>
+         {feeInvoiceBusy?'Creating invoice…':'Create weekly invoice'}
+        </button>
+       }
+      </div>
+     </section>
+
+     <section className="officeStats four">
+      <Stat
+       icon={BadgePoundSterling}
+       label="Gross fees"
+       value={money(fees?.summary?.gross||0)}
+       sub="All recorded fees"
+      />
+      <Stat
+       icon={WalletCards}
+       label="FaivoPay share"
+       value={money(fees?.summary?.fleetpay||0)}
+       sub="Your share"
+      />
+      <Stat
+       icon={Users}
+       label="Taxi company share"
+       value={money(fees?.summary?.taxi||0)}
+       sub="Their share"
+      />
+      <Stat
+       icon={FileClock}
+       label="FaivoPay uninvoiced"
+       value={money(fees?.summary?.uninvoiced||0)}
+       sub="Eligible fees not yet invoiced"
+      />
+     </section>
+
+     <section className="panel invoiceControlPanel">
+      <div className="panelHead">
+       <div>
+        <span className="sectionKicker">WEEKLY INVOICING</span>
+        <h3>Invoice control</h3>
+        <p>
+         Manual mode is active while the workflow is being validated.
+         Creating an invoice snapshots the completed week's fee records.
+        </p>
+       </div>
+       <Pill tone="warn">Manual mode</Pill>
+      </div>
+
+      <div className="invoiceControlGrid">
+       <div>
+        <span>Billing company</span>
+        <b>{companyFinance?.company?.name||'—'}</b>
+       </div>
+       <div>
+        <span>Billing email</span>
+        <b>{companyFinance?.weeklyInvoicing?.billingEmail||'Not configured'}</b>
+       </div>
+       <div>
+        <span>Automation</span>
+        <b>Not active</b>
+       </div>
+       <div>
+        <span>Email delivery</span>
+        <b>Not active</b>
+       </div>
+      </div>
+
+      <div className="operatorWarning blue">
+       <Info/>
+       <div>
+        <b>Safe validation mode</b>
+        <span>
+         Invoices can currently be created and downloaded only.
+         Nothing is emailed automatically and there is no weekly scheduler yet.
+        </span>
+       </div>
+      </div>
+     </section>
+
+     <section className="panel invoiceHistoryPanel">
+      <div className="panelHead">
+       <div>
+        <span className="sectionKicker">INVOICE HISTORY</span>
+        <h3>Weekly fee invoices</h3>
+        <p>
+         Each invoice contains an immutable snapshot of the fee records
+         included when it was created.
+        </p>
+       </div>
+
+       <button className="mini" onClick={loadFeeInvoices}>
+        <RefreshCw/>
+        Refresh
+       </button>
+      </div>
+
+      {feeInvoices.length
+       ?<div className="tableWrap proTable">
+         <table>
+          <thead>
+           <tr>
+            <th>Invoice</th>
+            <th>Period</th>
+            <th>Fee records</th>
+            <th>Gross fees</th>
+            <th>FaivoPay due</th>
+            <th>Taxi company</th>
+            <th>Status</th>
+            <th>Email</th>
+            <th>PDF</th>
+           </tr>
+          </thead>
+          <tbody>
+           {feeInvoices.map(invoice=>
+            <tr key={invoice.id}>
+             <td>
+              <b>{invoice.invoiceNumber}</b>
+              <small>{dt(invoice.createdAt)}</small>
+             </td>
+             <td>
+              <b>{invoice.periodStart}</b>
+              <small>to {invoice.periodEnd}</small>
+             </td>
+             <td>{invoice.feeCount}</td>
+             <td><b>{money(invoice.grossFeeTotal)}</b></td>
+             <td><b>{money(invoice.faivopayShareTotal)}</b></td>
+             <td>{money(invoice.taxiCompanyShareTotal)}</td>
+             <td>
+              <Pill tone={statusTone(invoice.status)}>
+               {String(invoice.status||'created').replaceAll('_',' ')}
+              </Pill>
+             </td>
+             <td>
+              <Pill tone={invoice.emailStatus==='sent'?'good':'neutral'}>
+               {String(invoice.emailStatus||'not_sent').replaceAll('_',' ')}
+              </Pill>
+             </td>
+             <td>
+              <button
+               className="mini"
+               onClick={()=>downloadFeeInvoicePdf(invoice)}
+              >
+               <FileClock/>
+               Download
+              </button>
+             </td>
+            </tr>
+           )}
+          </tbody>
+         </table>
+        </div>
+       :<div className="emptyState compact invoiceEmptyState">
+         <FileClock/>
+         <h3>No invoices created yet</h3>
+         <p>
+          Create the first weekly invoice when you are ready to test
+          the invoice workflow.
+         </p>
+        </div>
+      }
+     </section>
+
+     <section className="panel">
+      <div className="panelHead">
+       <div>
+        <span className="sectionKicker">FEE LEDGER</span>
+        <h3>Fee transactions</h3>
+        <p>Source fee records and their invoice allocation.</p>
+       </div>
+      </div>
+
+      <div className="tableWrap proTable">
+       <table>
+        <thead>
+         <tr>
+          <th>Date</th>
+          <th>Fee</th>
+          <th>Driver</th>
+          <th>Gross</th>
+          <th>FaivoPay</th>
+          <th>Taxi company</th>
+          <th>Status</th>
+          <th>Invoice</th>
+         </tr>
+        </thead>
+        <tbody>
+         {fees.fees.map(x=>
+          <tr key={x.id}>
+           <td>{dt(x.createdAt)}</td>
+           <td>
+            <b>{String(x.feeType).replaceAll('_',' ')}</b>
+            <small>{x.description}</small>
+           </td>
+           <td>{x.callsign||'—'}</td>
+           <td>{money(x.grossFee)}</td>
+           <td><b>{money(x.fleetpayShare)}</b></td>
+           <td>{money(x.taxiCompanyShare)}</td>
+           <td>
+            <Pill tone={statusTone(x.status)}>{x.status}</Pill>
+           </td>
+           <td>{x.invoiceRef||'—'}</td>
+          </tr>
+         )}
+        </tbody>
+       </table>
+      </div>
+     </section>
+    </>}
     {view==='demo'&&<DemoLab demo={demo} loadDemo={loadDemo} resetDemo={resetDemo} action={demoAction} demoEmail={demoEmail} setDemoEmail={setDemoEmail} demoMobile={demoMobile} setDemoMobile={setDemoMobile} sendEmail={demoSendEmail} sendSms={demoSendSms}/>}
     {view==='drivers'&&<><section className="officePageIntro"><div><span>AUTOCAB + PAYOUT READINESS</span><h2>Driver accounts</h2><p>Balances and payout-bank readiness in one place. Full bank account numbers are never exposed in the normal office view.</p></div><button className="secondary" onClick={syncNow}><RefreshCw className={loading?'spin':''}/>Sync Autocab</button></section><section className="officeStats three"><Stat icon={Banknote} label="Bank ready" value={meta.bankReady??drivers.filter(d=>d.bankAccount?.ready).length} sub="Payout details saved"/><Stat icon={AlertTriangle} label="Missing bank details" value={meta.bankMissing??drivers.filter(d=>!d.bankAccount?.ready).length} sub="Cannot be released for payout"/><Stat icon={Clock3} label="Recently changed" value={meta.bankRecentlyChanged??drivers.filter(d=>d.bankAccount?.changedRecently).length} sub="Changed in the last 7 days"/></section><div className="driverToolbar"><div className="searchBox"><Search/><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search callsign, name, mobile, email or bank ending…"/></div><select value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All drivers</option><option value="bank_ready">Bank ready</option><option value="bank_missing">Missing bank details</option><option value="bank_recent">Recently changed bank</option><option value="payout_excluded">Payout excluded</option><option value="positive">Positive balance</option><option value="negative">Negative balance</option><option value="unmatched">Unmatched</option></select></div><section className="panel driverPanel"><div className="tableWrap proTable"><table><thead><tr><th>Callsign</th><th>Driver</th><th>Previous</th><th>Current</th><th>Payout account</th><th>Payout status</th><th>Last processed</th></tr></thead><tbody>{filtered.map(d=>{const b=d.bankAccount||{};return <tr key={d.driverId} onClick={()=>setSelected(d)}><td><span className="callsign">{d.callsign}</span></td><td><b>{d.fullName}</b><small>{d.email||d.mobile||`Driver ${d.driverId}`}</small></td><td>{money(d.previousBalance)}</td><td><b className={(d.currentBalance??0)<0?'negative':''}>{money(d.currentBalance)}</b></td><td><div className="bankTableCell"><Pill tone={bankTone(b)}>{b.label||'Bank details missing'}</Pill>{b.ready&&<small>{b.accountNumberMasked} · {b.sortCodeMasked}</small>}</div></td><td><div className="bankTableCell"><Pill tone={d.payoutExcluded?'bad':'good'}>{d.payoutExcluded?'Excluded':'Enabled'}</Pill>{d.payoutExcluded&&<small>{d.payoutExclusionReason||'Persistent exclusion'}</small>}</div></td><td>{dt(d.lastProcessed)}</td></tr>})}</tbody></table></div></section></>}
     {view==='access'&&<><section className="officePageIntro"><div><span>IDENTITY & PERMISSIONS</span><h2>Users & access</h2><p>Office accounts use mandatory authenticator MFA. Roles limit who can move money or change settings.</p></div>{isAdmin&&<button className="primary" onClick={()=>setShowNewStaff(!showNewStaff)}><UserCheck/>Add office user</button>}</section>{isAdmin&&showNewStaff&&<section className="panel"><form className="staffForm" onSubmit={createStaff}><label>Name<input required value={newStaff.name} onChange={e=>setNewStaff({...newStaff,name:e.target.value})}/></label><label>Email<input type="email" required value={newStaff.email} onChange={e=>setNewStaff({...newStaff,email:e.target.value})}/></label><label>Role<select value={newStaff.role} onChange={e=>setNewStaff({...newStaff,role:e.target.value})}><option value="administrator">Administrator</option><option value="finance">Finance</option><option value="office">Office</option><option value="readonly">Read only</option></select></label><label>Temporary password<input type="password" minLength="10" required value={newStaff.password} onChange={e=>setNewStaff({...newStaff,password:e.target.value})}/></label><button className="primary">Create user</button></form></section>}<section className="panel"><div className="panelHead"><div><h3>Office users</h3><p>MFA and role status for each staff account.</p></div><button className="mini" onClick={loadStaff}>Refresh</button></div><div className="tableWrap proTable"><table><thead><tr><th>User</th><th>Role</th><th>MFA</th><th>Last login</th><th>Status</th><th/></tr></thead><tbody>{staff.map(u=><tr key={u.id}><td><b>{u.name}</b><small>{u.email}</small></td><td><select value={u.role} onChange={e=>updateStaff(u,{role:e.target.value})} disabled={u.id===me?.id}><option value="administrator">Administrator</option><option value="finance">Finance</option><option value="office">Office</option><option value="readonly">Read only</option></select></td><td><Pill tone={u.mfaEnabled?'good':'warn'}>{u.mfaEnabled?'Enabled':'Setup required'}</Pill></td><td>{dt(u.lastLoginAt)}</td><td><Pill tone={u.active?'good':'bad'}>{u.active?'Active':'Disabled'}</Pill></td><td>{u.id!==me?.id&&<button className="mini" onClick={()=>updateStaff(u,{active:!u.active})}>{u.active?'Disable':'Enable'}</button>}</td></tr>)}</tbody></table></div></section><section className="panel"><div className="panelHead"><div><h3>Driver app accounts</h3><p>Registration remains matched to active Autocab driver details.</p></div><button className="mini" onClick={loadDriverUsers}>Refresh</button></div><div className="tableWrap proTable"><table><thead><tr><th>Callsign</th><th>Email</th><th>Created</th><th>Last login</th><th>Status</th><th/></tr></thead><tbody>{driverUsers.map(u=><tr key={u.id}><td><span className="callsign">{u.callsign}</span></td><td>{u.email}</td><td>{dt(u.createdAt)}</td><td>{dt(u.lastLoginAt)}</td><td><Pill tone={u.approved?'good':'warn'}>{u.approved?'Approved':'Pending'}</Pill></td><td>{canOffice&&<button className="mini" onClick={()=>setApproval(u,!u.approved)}>{u.approved?'Suspend':'Approve'}</button>}</td></tr>)}</tbody></table></div></section></>}
