@@ -11477,12 +11477,19 @@ function serializeFeeInvoice(row,{items=false}={}){
  return result;
 }
 
-function feeInvoiceById(invoiceId,{items=false}={}){
- const row=db.prepare(`
-  SELECT *
-  FROM fee_invoices
-  WHERE id=?
- `).get(invoiceId);
+function feeInvoiceById(invoiceId,{items=false,companyId=null}={}){
+ const row=companyId
+  ?db.prepare(`
+    SELECT *
+    FROM fee_invoices
+    WHERE id=?
+      AND company_id=?
+   `).get(invoiceId,companyId)
+  :db.prepare(`
+    SELECT *
+    FROM fee_invoices
+    WHERE id=?
+   `).get(invoiceId);
 
  return serializeFeeInvoice(row,{items});
 }
@@ -11930,9 +11937,20 @@ app.get(
  adminAuth,
  requireStaffRole('administrator','finance','office','readonly'),
  (req,res)=>{
+  const company=officeCompanyRow(req);
+
+  if(!company){
+   return res.status(409).json({
+    error:'Select a company before viewing this invoice.'
+   });
+  }
+
   const invoice=feeInvoiceById(
    req.params.id,
-   {items:true}
+   {
+    items:true,
+    companyId:company.id
+   }
   );
 
   if(!invoice){
@@ -12041,9 +12059,20 @@ app.get(
  requireStaffRole('administrator','finance','office','readonly'),
  async(req,res)=>{
   try{
+   const company=officeCompanyRow(req);
+
+   if(!company){
+    return res.status(409).json({
+     error:'Select a company before downloading this invoice.'
+    });
+   }
+
    const invoice=feeInvoiceById(
     req.params.id,
-    {items:true}
+    {
+     items:true,
+     companyId:company.id
+    }
    );
 
    if(!invoice){
@@ -12078,6 +12107,14 @@ app.get(
 );
 
 app.get('/api/admin/fees',adminAuth,(req,res)=>{
+ const company=officeCompanyRow(req);
+
+ if(!company){
+  return res.status(409).json({
+   error:'Select a company before viewing fees.'
+  });
+ }
+
  const rawRows=db.prepare(`
   SELECT
    fl.*,
@@ -12100,9 +12137,10 @@ app.get('/api/admin/fees',adminAuth,(req,res)=>{
    ON fl.fee_type='customer_payment'
    AND fl.source_type='customer_payment'
    AND cp.id=fl.source_id
+  WHERE fl.company_id=?
   ORDER BY fl.created_at DESC
   LIMIT 3000
- `).all();
+ `).all(company.id);
 
  const rows=rawRows.map(x=>{
   const originalGross=Number(x.grossFee||0);
@@ -12176,8 +12214,26 @@ app.get('/api/admin/fees',adminAuth,(req,res)=>{
 
  res.json({fees:rows,summary});
 });
-app.post('/api/admin/fees/mark-invoiced',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const invoiceRef=String(req.body.invoiceRef||'').trim();if(!invoiceRef)return res.status(400).json({error:'Invoice reference is required'});const ids=Array.isArray(req.body.ids)?req.body.ids.filter(Boolean):[];const now=new Date().toISOString();let info;if(ids.length){const placeholders=ids.map(()=>'?').join(',');info=db.prepare(`UPDATE fee_ledger SET status='invoiced',invoice_ref=?,invoiced_at=? WHERE id IN (${placeholders}) AND status='uninvoiced'`).run(invoiceRef,now,...ids)}else info=db.prepare("UPDATE fee_ledger SET status='invoiced',invoice_ref=?,invoiced_at=? WHERE status='uninvoiced'").run(invoiceRef,now);audit(req,'staff',req.auth.email,'fees_marked_invoiced','fee_ledger',invoiceRef,{count:Number(info.changes||0)});res.json({ok:true,count:Number(info.changes||0)})});
+app.post(
+ '/api/admin/fees/mark-invoiced',
+ adminAuth,
+ requireStaffRole('administrator','finance'),
+ (req,res)=>{
+  res.status(410).json({
+   error:
+    'Direct fee marking has been retired. Create a weekly fee invoice instead.'
+  });
+ }
+);
 app.get('/api/admin/fees/csv',adminAuth,(req,res)=>{
+ const company=officeCompanyRow(req);
+
+ if(!company){
+  return res.status(409).json({
+   error:'Select a company before exporting fees.'
+  });
+ }
+
  const status=String(req.query.status||'all');
 
  const rawRows=db.prepare(`
@@ -12192,9 +12248,10 @@ app.get('/api/admin/fees/csv',adminAuth,(req,res)=>{
    ON fl.fee_type='customer_payment'
    AND fl.source_type='customer_payment'
    AND cp.id=fl.source_id
-  ${status==='uninvoiced'?"WHERE fl.status='uninvoiced'":''}
+  WHERE fl.company_id=?
+  ${status==='uninvoiced'?"AND fl.status='uninvoiced'":''}
   ORDER BY fl.created_at
- `).all();
+ `).all(company.id);
 
  const rows=rawRows.map(x=>{
   let gross=Number(x.gross_fee||0);
