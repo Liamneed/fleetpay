@@ -1143,173 +1143,190 @@ function LiveTestLab({
 
      {liveTestWritePreview&&
       <section className="panel liveTestWritePreviewPanel">
-       <div className="panelHead">
+       <div className="panelHead liveTestWritePreviewHead">
         <div>
          <span className="sectionKicker">AUTOCAB WRITE PREVIEW</span>
          <h3>
           Callsign {liveTestWritePreview.driver?.callsign||'—'}
          </h3>
          <p>
-          Exact Autocab driver-account adjustments FaivoPay would send
-          after a weekly payout is confirmed paid.
+          What FaivoPay would place on the driver's Autocab account
+          after this weekly payout is confirmed paid.
          </p>
         </div>
+
         <Pill tone="good">Preview only</Pill>
        </div>
 
-       <div className="liveTestSimulationSafety">
+       <div className="liveTestPreviewSafety">
         <ShieldCheck/>
         <div>
-         <b>PREVIEW ONLY — NOTHING WAS SENT TO AUTOCAB</b>
+         <b>Nothing has been sent to Autocab</b>
          <span>
-          No Autocab adjustment, payout, cache update, provider payment
-          or notification was created.
+          This is a calculation and payload preview only.
          </span>
         </div>
        </div>
 
-       <div className="liveTestWritePreviewInputs">
-        <label>
-         Hypothetical Previous Balance
+       <div className="liveTestPreviewTop">
+        <label className="liveTestPreviewBalanceInput">
+         <span>Test Previous Balance</span>
          <input
           type="number"
           step="0.01"
           value={writePreviewBalance}
           onChange={e=>setWritePreviewBalance(e.target.value)}
-          placeholder="Leave blank to use live Previous Balance"
+          placeholder="Use live balance"
          />
          <small>
-          Leave blank for the real live balance. Enter 41.00 to model
-          a positive weekly payout without changing Autocab.
+          Blank = live balance. Use 41.00 to model this payout.
          </small>
         </label>
-       </div>
 
-       <div className="liveTestSimulationMeta">
-        <span>
-         Live Previous Balance
-         <b>
-          {money(
-           liveTestWritePreview.source?.livePreviousBalance
-          )}
-         </b>
-        </span>
+        <div className="liveTestPreviewFacts">
+         <div>
+          <span>Live balance</span>
+          <b>
+           {money(
+            liveTestWritePreview.source?.livePreviousBalance
+           )}
+          </b>
+         </div>
 
-        <span>
-         Balance used
-         <b>
-          {money(
-           liveTestWritePreview.source?.usedPreviousBalance
-          )}
-         </b>
-        </span>
+         <div>
+          <span>Balance tested</span>
+          <b>
+           {money(
+            liveTestWritePreview.source?.usedPreviousBalance
+           )}
+          </b>
+         </div>
 
-        <span>
-         Simulated action
-         <b>
-          {String(
-           liveTestWritePreview.preview?.simulatedAction||'none'
-          ).replaceAll('_',' ')}
-         </b>
-        </span>
+         <div>
+          <span>Monday outcome</span>
+          <b className="capitalize">
+           {String(
+            liveTestWritePreview.preview?.simulatedAction||'none'
+           ).replaceAll('_',' ')}
+          </b>
+         </div>
 
-        <span>
-         Total Autocab debit
-         <b>
-          {money(
-           liveTestWritePreview.preview?.totals?.totalDebit
-          )}
-         </b>
-        </span>
+         <div className="liveTestPreviewDebitTotal">
+          <span>Total Autocab debit</span>
+          <b>
+           {money(
+            liveTestWritePreview.preview?.totals?.totalDebit
+           )}
+          </b>
+         </div>
+        </div>
        </div>
 
        {liveTestWritePreview.preview?.adjustments?.length
-        ?<div className="liveTestWritePreviewList">
+        ?<div className="liveTestPreviewTransactions">
           {liveTestWritePreview.preview.adjustments.map((x,i)=>
            <div
-            className="liveTestWritePayload"
+            className="liveTestPreviewTransaction"
             key={`${x.purpose}-${i}`}
            >
-            <div className="liveTestWritePayloadHead">
-             <b>
-              Adjustment {i+1} · {
-               String(x.purpose||'').replaceAll('_',' ')
-              }
-             </b>
-             <Pill tone="warn">
-              {x.expectedRentSheetColumn||'Autocab'}
-             </Pill>
+            <div className="liveTestPreviewTransactionMain">
+             <div className="liveTestPreviewTransactionIdentity">
+              <span className="liveTestPreviewDebitBadge">
+               DEBIT
+              </span>
+
+              <div>
+               <b>
+                {String(x.purpose||'')
+                 .replaceAll('_',' ')
+                 .replace(/\b\w/g,c=>c.toUpperCase())}
+               </b>
+
+               <span>
+                {x.payload?.description||'—'}
+               </span>
+              </div>
+             </div>
+
+             <strong>
+              {money(x.payload?.amount)}
+             </strong>
             </div>
 
-            <div className="liveTestWritePayloadGrid">
-             <span>
-              Method
-              <b>{x.method||'—'}</b>
-             </span>
+            <details className="liveTestPreviewTechnical">
+             <summary>Technical details</summary>
 
-             <span>
-              Amount
-              <b>{money(x.payload?.amount)}</b>
-             </span>
+             <div className="liveTestPreviewTechnicalGrid">
+              <span>
+               Autocab column
+               <b>{x.expectedRentSheetColumn||'—'}</b>
+              </span>
 
-             <span>
-              isCredit
-              <b>{String(Boolean(x.payload?.isCredit))}</b>
-             </span>
+              <span>
+               Method
+               <b>{x.method||'—'}</b>
+              </span>
 
-             <span>
-              Reason
-              <b>{x.payload?.adjustmentReason||'—'}</b>
-             </span>
-            </div>
+              <span>
+               isCredit
+               <b>{String(Boolean(x.payload?.isCredit))}</b>
+              </span>
 
-            <div className="liveTestWriteDescription">
-             <span>Description sent to Autocab</span>
-             <code>{x.payload?.description||'—'}</code>
-            </div>
+              <span>
+               Autocab reason
+               <b>{x.payload?.adjustmentReason||'—'}</b>
+              </span>
+             </div>
 
-            <div className="liveTestWriteEndpoint">
-             <span>Endpoint</span>
              <code>{x.endpoint||'—'}</code>
-            </div>
+            </details>
            </div>
           )}
          </div>
 
         :<div className="emptyState compact">
           <ShieldCheck/>
-          <h3>No Autocab adjustment for this outcome</h3>
+          <h3>No Autocab transaction for this outcome</h3>
           <p>
            {liveTestWritePreview.preview?.expected?.description||
-            'This simulated result would not send a weekly payout reconciliation.'}
+            'This result would not send a weekly payout reconciliation.'}
           </p>
          </div>
        }
 
-       <div className="liveTestWritePreviewSummary">
-        <span>
-         Adjustment count
+       <div className="liveTestPreviewFooter">
+        <div>
+         <span>Transactions</span>
          <b>
           {liveTestWritePreview.preview?.totals?.adjustmentCount||0}
          </b>
-        </span>
+        </div>
 
-        <span>
-         Net Autocab movement
+        <div>
+         <span>Total debit</span>
+         <b>
+          {money(
+           liveTestWritePreview.preview?.totals?.totalDebit
+          )}
+         </b>
+        </div>
+
+        <div>
+         <span>Autocab balance movement</span>
          <b>
           {money(
            liveTestWritePreview.preview?.totals?.netAutocabMovement
           )}
          </b>
-        </span>
+        </div>
 
-        <span>
-         Expected rent-sheet column
+        <div>
+         <span>Rent sheet</span>
          <b>
           {liveTestWritePreview.preview?.expected?.rentSheetColumn||
            'None'}
          </b>
-        </span>
+        </div>
        </div>
       </section>
      }
