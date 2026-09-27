@@ -12592,3 +12592,20 @@ body {
   grid-template-columns:1fr;
  }
 }
+
+/* FaivoPay Settings — standalone section cards use full desktop width */
+.officeV2 .settingsSections > .companyProfileCard,
+.officeV2 .settingsSections > .settlementRulesCard,
+.officeV2 .settingsSections > .feePricingCard,
+.officeV2 .settingsSections > .testDemoSettingsCard{
+ grid-column:1 / -1;
+}
+
+@media(max-width:1200px){
+ .officeV2 .settingsSections > .companyProfileCard,
+ .officeV2 .settingsSections > .settlementRulesCard,
+ .officeV2 .settingsSections > .feePricingCard,
+ .officeV2 .settingsSections > .testDemoSettingsCard{
+  grid-column:auto;
+ }
+}
