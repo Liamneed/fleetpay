@@ -544,6 +544,7 @@ function LiveTestLab({
  loadLiveTest,
  addDriver,
  toggleDriver,
+ toggleLiveWrites,
  snapshotDriver,
  snapshotBusyDriver,
  simulateMonday,
@@ -565,7 +566,12 @@ function LiveTestLab({
  const visibleEvents=events
   .filter(x=>[
    'live_account_snapshot_completed',
-   'live_account_snapshot_failed'
+   'live_account_snapshot_failed',
+   'monday_simulation_completed',
+   'monday_simulation_failed',
+   'autocab_write_preview_completed',
+   'live_writes_enabled',
+   'live_writes_disabled'
   ].includes(x.action))
   .slice(0,25);
 
@@ -898,6 +904,21 @@ function LiveTestLab({
                 {writePreviewBusyDriver===String(x.driverId)
                  ?'Previewing…'
                  :'Autocab preview'}
+               </button>
+
+               <button
+                className={`mini ${x.liveWriteEnabled?'danger':'warn'}`}
+                disabled={
+                 busy||
+                 !x.enabled||
+                 String(x.driverId)!=='1112'||
+                 String(x.callsign)!=='9997'
+                }
+                onClick={()=>toggleLiveWrites(x,!x.liveWriteEnabled)}
+               >
+                {x.liveWriteEnabled
+                 ?'Disable live writes'
+                 :'Enable live writes'}
                </button>
 
                <button
@@ -1439,10 +1460,10 @@ function LiveTestLab({
       <div className="panelHead">
        <div>
         <span className="sectionKicker">IMMUTABLE TEST HISTORY</span>
-        <h3>Recent live-data snapshots</h3>
+        <h3>Recent Live Test activity</h3>
         <p>
-         Completed and failed live-read events are recorded against
-         the signed-in administrator.
+         Read-only checks, simulations, previews and controlled test
+         controls are recorded against the signed-in administrator.
         </p>
        </div>
        <Pill tone="good">{visibleEvents.length} shown</Pill>
@@ -1454,10 +1475,9 @@ function LiveTestLab({
           <thead>
            <tr>
             <th>Driver</th>
+            <th>Activity</th>
             <th>Result</th>
-            <th>Cached current</th>
-            <th>Live current</th>
-            <th>Difference</th>
+            <th>Details</th>
             <th>Administrator</th>
             <th>Time</th>
            </tr>
@@ -1465,17 +1485,57 @@ function LiveTestLab({
 
           <tbody>
            {visibleEvents.map(x=>{
-            const completed=
-             x.action==='live_account_snapshot_completed';
+            const failed=
+             String(x.action||'').endsWith('_failed')||
+             x.status==='failed';
 
-            const cachedCurrent=
-             x.before?.currentBalance;
+            const labels={
+             live_account_snapshot_completed:'Live snapshot',
+             live_account_snapshot_failed:'Live snapshot',
+             monday_simulation_completed:'Monday simulation',
+             monday_simulation_failed:'Monday simulation',
+             autocab_write_preview_completed:'Autocab write preview',
+             live_writes_enabled:'Live writes enabled',
+             live_writes_disabled:'Live writes disabled'
+            };
 
-            const liveCurrent=
-             x.result?.live?.currentBalance;
+            const activity=
+             labels[x.action]||
+             String(x.action||'Activity').replaceAll('_',' ');
 
-            const changed=
-             x.result?.comparison?.currentBalance?.changed;
+            let details='';
+
+            if(x.action==='live_account_snapshot_completed'){
+             const cached=x.before?.currentBalance;
+             const live=x.result?.live?.currentBalance;
+
+             details=
+              `Current ${cached==null?'—':money(cached)} → `+
+              `${live==null?'—':money(live)}`;
+
+            }else if(x.action==='monday_simulation_completed'){
+             details=
+              `${String(
+               x.result?.simulation?.outcome?.action||'none'
+              ).replaceAll('_',' ')} · `+
+              `${money(
+               x.result?.simulation?.outcome?.amount||0
+              )}`;
+
+            }else if(x.action==='autocab_write_preview_completed'){
+             details=
+              `${x.proposed?.totals?.adjustmentCount||0} adjustments · `+
+              `${money(x.proposed?.totals?.totalDebit||0)} debit`;
+
+            }else if(x.action==='live_writes_enabled'){
+             details='Armed for controlled Autocab test writes';
+
+            }else if(x.action==='live_writes_disabled'){
+             details='Live Autocab test writes disarmed';
+
+            }else if(failed){
+             details=x.result?.error||'Failed';
+            }
 
             return <tr key={x.id}>
              <td>
@@ -1491,35 +1551,16 @@ function LiveTestLab({
              </td>
 
              <td>
-              <Pill tone={completed?'good':'bad'}>
-               {completed?'Completed':'Failed'}
+              <b className="capitalize">{activity}</b>
+             </td>
+
+             <td>
+              <Pill tone={failed?'bad':'good'}>
+               {failed?'Failed':'Recorded'}
               </Pill>
-              {!completed&&
-               <small className="reasonText">
-                {x.result?.error||'Autocab read failed'}
-               </small>
-              }
              </td>
 
-             <td>
-              {cachedCurrent==null
-               ?'—'
-               :money(cachedCurrent)}
-             </td>
-
-             <td>
-              {liveCurrent==null
-               ?'—'
-               :money(liveCurrent)}
-             </td>
-
-             <td>
-              {completed
-               ?<Pill tone={changed?'warn':'good'}>
-                 {changed?'Changed':'Matched'}
-                </Pill>
-               :'—'}
-             </td>
+             <td>{details||'—'}</td>
 
              <td>
               <b>{x.actorName||x.actorEmail||'Administrator'}</b>
@@ -1537,12 +1578,13 @@ function LiveTestLab({
 
        :<div className="emptyState compact">
          <FileClock/>
-         <h3>No live snapshots yet</h3>
+         <h3>No Live Test activity yet</h3>
          <p>
-          Run a read-only snapshot against an enabled test driver.
+          Run a snapshot, simulation or preview against an enabled test driver.
          </p>
         </div>
       }
+
      </section>
 
      <section className="liveTestPhaseNotice">
@@ -3392,6 +3434,67 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
    setLiveTest(await api('/api/admin/live-test'));
   }catch(e){
    alert(`Could not ${verb} test driver: ${e.message}`);
+  }finally{
+   setLiveTestBusy(false);
+  }
+ }
+
+ async function toggleLiveTestWrites(driver,enabled){
+  if(!driver?.driverId)return;
+
+  if(
+   String(driver.driverId)!=='1112'||
+   String(driver.callsign)!=='9997'
+  ){
+   alert(
+    'Live writes are restricted to callsign 9997 / Autocab ID 1112.'
+   );
+   return;
+  }
+
+  if(enabled){
+   const phrase=prompt(
+    'ARM LIVE AUTOCAB WRITES\n\n'+
+    'This does NOT send a transaction. It only arms the controlled test gate for driver 9997.\n\n'+
+    'Type exactly:\nENABLE LIVE WRITES 9997'
+   );
+
+   if(phrase!=='ENABLE LIVE WRITES 9997'){
+    if(phrase!==null){
+     alert('Confirmation phrase did not match.');
+    }
+    return;
+   }
+  }else{
+   if(!confirm(
+    'Disable live Autocab writes for callsign 9997?'
+   ))return;
+  }
+
+  setLiveTestBusy(true);
+
+  try{
+   await api(
+    `/api/admin/live-test/drivers/${driver.driverId}`,
+    {
+     method:'PATCH',
+     body:JSON.stringify({
+      liveWriteEnabled:Boolean(enabled)
+     })
+    }
+   );
+
+   setLiveTest(await api('/api/admin/live-test'));
+
+   const history=
+    await api('/api/admin/live-test/events');
+
+   setLiveTestEvents(history.events||[]);
+
+  }catch(e){
+   alert(
+    `Could not ${enabled?'enable':'disable'} live writes: ${e.message}`
+   );
   }finally{
    setLiveTestBusy(false);
   }
@@ -7035,7 +7138,7 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
      </section>
     </>}
     {view==='demo'&&<DemoLab demo={demo} loadDemo={loadDemo} resetDemo={resetDemo} action={demoAction} demoEmail={demoEmail} setDemoEmail={setDemoEmail} demoMobile={demoMobile} setDemoMobile={setDemoMobile} sendEmail={demoSendEmail} sendSms={demoSendSms}/>}
-    {view==='liveTest'&&isAdmin&&<LiveTestLab liveTest={liveTest} liveTestEvents={liveTestEvents} liveTestSnapshot={liveTestSnapshot} liveTestSimulation={liveTestSimulation} loadLiveTest={loadLiveTest} addDriver={addLiveTestDriver} toggleDriver={toggleLiveTestDriver} snapshotDriver={snapshotLiveTestDriver} snapshotBusyDriver={liveTestSnapshotBusy} simulateMonday={simulateLiveTestMonday} simulationBusyDriver={liveTestSimulationBusy} liveTestWritePreview={liveTestWritePreview} previewAutocabWrite={previewLiveTestAutocabWrite} writePreviewBusyDriver={liveTestWritePreviewBusy} writePreviewBalance={liveTestWritePreviewBalance} setWritePreviewBalance={setLiveTestWritePreviewBalance} busy={liveTestBusy}/>}
+    {view==='liveTest'&&isAdmin&&<LiveTestLab liveTest={liveTest} liveTestEvents={liveTestEvents} liveTestSnapshot={liveTestSnapshot} liveTestSimulation={liveTestSimulation} loadLiveTest={loadLiveTest} addDriver={addLiveTestDriver} toggleDriver={toggleLiveTestDriver} toggleLiveWrites={toggleLiveTestWrites} snapshotDriver={snapshotLiveTestDriver} snapshotBusyDriver={liveTestSnapshotBusy} simulateMonday={simulateLiveTestMonday} simulationBusyDriver={liveTestSimulationBusy} liveTestWritePreview={liveTestWritePreview} previewAutocabWrite={previewLiveTestAutocabWrite} writePreviewBusyDriver={liveTestWritePreviewBusy} writePreviewBalance={liveTestWritePreviewBalance} setWritePreviewBalance={setLiveTestWritePreviewBalance} busy={liveTestBusy}/>}
     {view==='drivers'&&<><section className="officePageIntro"><div><span>AUTOCAB + PAYOUT READINESS</span><h2>Driver accounts</h2><p>Balances and payout-bank readiness in one place. Full bank account numbers are never exposed in the normal office view.</p></div><button className="secondary" onClick={syncNow}><RefreshCw className={loading?'spin':''}/>Sync Autocab</button></section><section className="officeStats three"><Stat icon={Banknote} label="Bank ready" value={meta.bankReady??drivers.filter(d=>d.bankAccount?.ready).length} sub="Payout details saved"/><Stat icon={AlertTriangle} label="Missing bank details" value={meta.bankMissing??drivers.filter(d=>!d.bankAccount?.ready).length} sub="Cannot be released for payout"/><Stat icon={Clock3} label="Recently changed" value={meta.bankRecentlyChanged??drivers.filter(d=>d.bankAccount?.changedRecently).length} sub="Changed in the last 7 days"/></section><div className="driverToolbar"><div className="searchBox"><Search/><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search callsign, name, mobile, email or bank ending…"/></div><select value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All drivers</option><option value="bank_ready">Bank ready</option><option value="bank_missing">Missing bank details</option><option value="bank_recent">Recently changed bank</option><option value="payout_excluded">Payout excluded</option><option value="positive">Positive balance</option><option value="negative">Negative balance</option><option value="unmatched">Unmatched</option></select></div><section className="panel driverPanel"><div className="tableWrap proTable"><table><thead><tr><th>Callsign</th><th>Driver</th><th>Previous</th><th>Current</th><th>Payout account</th><th>Payout status</th><th>Last processed</th></tr></thead><tbody>{filtered.map(d=>{const b=d.bankAccount||{};return <tr key={d.driverId} onClick={()=>setSelected(d)}><td><span className="callsign">{d.callsign}</span></td><td><b>{d.fullName}</b><small>{d.email||d.mobile||`Driver ${d.driverId}`}</small></td><td>{money(d.previousBalance)}</td><td><b className={(d.currentBalance??0)<0?'negative':''}>{money(d.currentBalance)}</b></td><td><div className="bankTableCell"><Pill tone={bankTone(b)}>{b.label||'Bank details missing'}</Pill>{b.ready&&<small>{b.accountNumberMasked} · {b.sortCodeMasked}</small>}</div></td><td><div className="bankTableCell"><Pill tone={d.payoutExcluded?'bad':'good'}>{d.payoutExcluded?'Excluded':'Enabled'}</Pill>{d.payoutExcluded&&<small>{d.payoutExclusionReason||'Persistent exclusion'}</small>}</div></td><td>{dt(d.lastProcessed)}</td></tr>})}</tbody></table></div></section></>}
     {view==='access'&&<><section className="officePageIntro"><div><span>IDENTITY & PERMISSIONS</span><h2>Users & access</h2><p>Office accounts use mandatory authenticator MFA. Roles limit who can move money or change settings.</p></div>{isAdmin&&<button className="primary" onClick={()=>setShowNewStaff(!showNewStaff)}><UserCheck/>Add office user</button>}</section>{isAdmin&&showNewStaff&&<section className="panel"><form className="staffForm" onSubmit={createStaff}><label>Name<input required value={newStaff.name} onChange={e=>setNewStaff({...newStaff,name:e.target.value})}/></label><label>Email<input type="email" required value={newStaff.email} onChange={e=>setNewStaff({...newStaff,email:e.target.value})}/></label><label>Role<select value={newStaff.role} onChange={e=>setNewStaff({...newStaff,role:e.target.value})}><option value="administrator">Administrator</option><option value="finance">Finance</option><option value="office">Office</option><option value="readonly">Read only</option></select></label><label>Temporary password<input type="password" minLength="10" required value={newStaff.password} onChange={e=>setNewStaff({...newStaff,password:e.target.value})}/></label><button className="primary">Create user</button></form></section>}<section className="panel"><div className="panelHead"><div><h3>Office users</h3><p>MFA and role status for each staff account.</p></div><button className="mini" onClick={loadStaff}>Refresh</button></div><div className="tableWrap proTable"><table><thead><tr><th>User</th><th>Role</th><th>MFA</th><th>Last login</th><th>Status</th><th/></tr></thead><tbody>{staff.map(u=><tr key={u.id}><td><b>{u.name}</b><small>{u.email}</small></td><td><select value={u.role} onChange={e=>updateStaff(u,{role:e.target.value})} disabled={u.id===me?.id}><option value="administrator">Administrator</option><option value="finance">Finance</option><option value="office">Office</option><option value="readonly">Read only</option></select></td><td><Pill tone={u.mfaEnabled?'good':'warn'}>{u.mfaEnabled?'Enabled':'Setup required'}</Pill></td><td>{dt(u.lastLoginAt)}</td><td><Pill tone={u.active?'good':'bad'}>{u.active?'Active':'Disabled'}</Pill></td><td>{u.id!==me?.id&&<button className="mini" onClick={()=>updateStaff(u,{active:!u.active})}>{u.active?'Disable':'Enable'}</button>}</td></tr>)}</tbody></table></div></section><section className="panel"><div className="panelHead"><div><h3>Driver app accounts</h3><p>Registration remains matched to active Autocab driver details.</p></div><button className="mini" onClick={loadDriverUsers}>Refresh</button></div><div className="tableWrap proTable"><table><thead><tr><th>Callsign</th><th>Email</th><th>Created</th><th>Last login</th><th>Status</th><th/></tr></thead><tbody>{driverUsers.map(u=><tr key={u.id}><td><span className="callsign">{u.callsign}</span></td><td>{u.email}</td><td>{dt(u.createdAt)}</td><td>{dt(u.lastLoginAt)}</td><td><Pill tone={u.approved?'good':'warn'}>{u.approved?'Approved':'Pending'}</Pill></td><td>{canOffice&&<button className="mini" onClick={()=>setApproval(u,!u.approved)}>{u.approved?'Suspend':'Approve'}</button>}</td></tr>)}</tbody></table></div></section></>}
 

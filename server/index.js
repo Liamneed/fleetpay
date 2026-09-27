@@ -7636,22 +7636,62 @@ app.patch(
     });
    }
 
+   const currentEnabled=Boolean(existing.enabled);
+
+   const enabled=
+    req.body?.enabled===undefined
+     ?currentEnabled
+     :Boolean(req.body.enabled);
+
+   const requestedLiveWrite=
+    req.body?.liveWriteEnabled===undefined
+     ?Boolean(existing.live_write_enabled)
+     :Boolean(req.body.liveWriteEnabled);
+
    /*
-    * Phase 1 permits enable/disable only.
-    * live_write_enabled is always forced OFF.
+    * Phase 2C live-write arming is deliberately restricted to the
+    * designated Autocab test driver.
+    *
+    * No other driver can have live writes enabled, even if a caller
+    * bypasses the UI and invokes this route directly.
     */
-   const enabled=Boolean(req.body?.enabled);
+   const exactTestDriver=
+    String(driverId)==='1112' &&
+    String(existing.callsign)==='9997';
+
+   if(requestedLiveWrite && !exactTestDriver){
+    return res.status(403).json({
+     error:
+      'Live writes are restricted to designated test driver '+
+      '9997 / Autocab ID 1112.'
+    });
+   }
+
+   if(requestedLiveWrite && !enabled){
+    return res.status(409).json({
+     error:
+      'Enable this Live Test Lab driver before enabling live writes.'
+    });
+   }
+
+   /*
+    * Disabling test access automatically disarms live writes.
+    */
+   const liveWriteEnabled=
+    enabled && requestedLiveWrite;
+
    const now=new Date().toISOString();
    const actor=liveTestActor(req);
 
    db.prepare(`
     UPDATE live_test_drivers
     SET enabled=?,
-        live_write_enabled=0,
+        live_write_enabled=?,
         updated_at=?
     WHERE company_id=? AND driver_id=?
    `).run(
     enabled?1:0,
+    liveWriteEnabled?1:0,
     now,
     company.id,
     driverId
@@ -7663,23 +7703,101 @@ app.patch(
     WHERE company_id=? AND driver_id=?
    `).get(company.id,driverId);
 
-   audit(
-    req,
-    'staff',
-    actor.email||actor.id,
-    enabled
-     ?'live_test_driver_enabled'
-     :'live_test_driver_disabled',
-    'driver',
-    row.callsign||driverId,
-    {
-     companyId:company.id,
+   const enabledChanged=
+    Boolean(existing.enabled)!==Boolean(row.enabled);
+
+   const writeChanged=
+    Boolean(existing.live_write_enabled)!==
+    Boolean(row.live_write_enabled);
+
+   if(enabledChanged){
+    audit(
+     req,
+     'staff',
+     actor.email||actor.id,
+     Boolean(row.enabled)
+      ?'live_test_driver_enabled'
+      :'live_test_driver_disabled',
+     'driver',
+     row.callsign||driverId,
+     {
+      companyId:company.id,
+      driverId,
+      callsign:row.callsign||'',
+      liveWriteEnabled:Boolean(row.live_write_enabled)
+     }
+    );
+   }
+
+   if(writeChanged){
+    audit(
+     req,
+     'staff',
+     actor.email||actor.id,
+     Boolean(row.live_write_enabled)
+      ?'live_test_live_writes_enabled'
+      :'live_test_live_writes_disabled',
+     'driver',
+     row.callsign||driverId,
+     {
+      companyId:company.id,
+      driverId,
+      callsign:row.callsign||'',
+      enabled:Boolean(row.enabled),
+      liveWriteEnabled:Boolean(row.live_write_enabled),
+      designatedTestDriver:exactTestDriver
+     }
+    );
+
+    db.prepare(`
+     INSERT INTO live_test_events(
+      id,
+      company_id,
+      driver_id,
+      callsign,
+      mode,
+      action,
+      request_json,
+      before_json,
+      proposed_json,
+      result_json,
+      reversal_of,
+      status,
+      actor_id,
+      actor_email,
+      actor_name,
+      created_at
+     )
+     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(
+     id('livetestevt'),
+     company.id,
      driverId,
-     callsign:row.callsign||'',
-     simulationOnly:true,
-     liveWriteEnabled:false
-    }
-   );
+     String(row.callsign||''),
+     'control',
+     Boolean(row.live_write_enabled)
+      ?'live_writes_enabled'
+      :'live_writes_disabled',
+     liveTestJson({
+      requestedLiveWrite:Boolean(requestedLiveWrite)
+     }),
+     liveTestJson({
+      enabled:Boolean(existing.enabled),
+      liveWriteEnabled:Boolean(existing.live_write_enabled)
+     }),
+     null,
+     liveTestJson({
+      enabled:Boolean(row.enabled),
+      liveWriteEnabled:Boolean(row.live_write_enabled)
+     }),
+     null,
+     'recorded',
+     actor.id,
+     actor.email,
+     actor.name,
+     now
+    );
+   }
 
    res.json({
     ok:true,
