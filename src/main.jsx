@@ -9678,6 +9678,7 @@ function DriverApp(){
  const[livePaymentPreviewBusy,setLivePaymentPreviewBusy]=useState(false);
  const[showManualPayment,setShowManualPayment]=useState(false);
  const[activityFilter,setActivityFilter]=useState('account-work');
+ const[activityDateFilter,setActivityDateFilter]=useState('this-week');
  const[accountWork,setAccountWork]=useState(null);
  const[accountWorkLoading,setAccountWorkLoading]=useState(true);
  const[accountWorkError,setAccountWorkError]=useState('');
@@ -9778,14 +9779,113 @@ function DriverApp(){
   }
  },[customerPayment,me?.customerPayments]);
 
+ function driverActivityRange(key){
+  const now=new Date();
+
+  const startOfDay=d=>{
+   const x=new Date(d);
+   x.setHours(0,0,0,0);
+   return x;
+  };
+
+  const addDays=(d,n)=>{
+   const x=new Date(d);
+   x.setDate(x.getDate()+n);
+   return x;
+  };
+
+  const startOfWeek=d=>{
+   const x=startOfDay(d);
+   const day=x.getDay();
+   x.setDate(x.getDate()+(day===0?-6:1-day));
+   return x;
+  };
+
+  let from;
+  let to;
+
+  if(key==='today'){
+   from=startOfDay(now);
+   to=addDays(from,1);
+
+  }else if(key==='yesterday'){
+   to=startOfDay(now);
+   from=addDays(to,-1);
+
+  }else if(key==='last-week'){
+   to=startOfWeek(now);
+   from=addDays(to,-7);
+
+  }else if(key==='all'){
+   from=new Date('2020-01-01T00:00:00');
+   to=addDays(startOfDay(now),1);
+
+  }else{
+   from=startOfWeek(now);
+   to=addDays(startOfDay(now),1);
+  }
+
+  return {
+   from:from.toISOString(),
+   to:to.toISOString()
+  };
+ }
+
+ function driverActivityInRange(value,range){
+  if(!value)return false;
+
+  const t=Date.parse(value);
+
+  return Number.isFinite(t) &&
+   t>=Date.parse(range.from) &&
+   t<Date.parse(range.to);
+ }
+
+ async function loadAccountWorkForRange(key=activityDateFilter){
+  if(!token)return;
+
+  const range=driverActivityRange(key);
+
+  setAccountWorkLoading(true);
+  setAccountWorkError('');
+
+  try{
+   const p=new URLSearchParams({
+    from:range.from,
+    to:range.to
+   });
+
+   const result=await api(
+    `/api/driver/account-work?${p.toString()}`
+   );
+
+   setAccountWork(result);
+
+  }catch(e){
+   setAccountWorkError(
+    e?.message||'Account work is temporarily unavailable.'
+   );
+
+  }finally{
+   setAccountWorkLoading(false);
+  }
+ }
+
  async function load(force=false){
   if(!token||loadingDriver.current)return;
   if(!force&&me&&Date.now()-lastLoadAt.current<15000)return;
   loadingDriver.current=true;
   try{
+   const activityRange=driverActivityRange(activityDateFilter);
+
+   const workParams=new URLSearchParams({
+    from:activityRange.from,
+    to:activityRange.to
+   });
+
    const [meResult,workResult]=await Promise.allSettled([
     api('/api/driver/me'),
-    api('/api/driver/account-work')
+    api(`/api/driver/account-work?${workParams.toString()}`)
    ]);
 
    if(meResult.status!=='fulfilled'){
@@ -9822,6 +9922,12 @@ function DriverApp(){
    setPushReady(Boolean(sub)&&Notification.permission==='granted');
   }catch{setPushAvailable(false)}
  }
+
+ useEffect(()=>{
+  if(!token)return;
+
+  loadAccountWorkForRange(activityDateFilter);
+ },[token,activityDateFilter]);
 
  useEffect(()=>{
   const params=new URLSearchParams(window.location.search);
@@ -11055,6 +11161,32 @@ function DriverApp(){
   const showLedger=activityFilter==='ledger';
   const showPayouts=activityFilter==='payouts';
 
+  const activityRange=driverActivityRange(activityDateFilter);
+
+  const filteredLedger=(me.ledger||[]).filter(
+   x=>driverActivityInRange(x.createdAt,activityRange)
+  );
+
+  const allPayoutActivity=[
+   ...(me.earlyPayoutRequests||[]),
+   ...(me.weeklyPayouts||[])
+  ];
+
+  const filteredPayoutActivity=allPayoutActivity.filter(
+   x=>driverActivityInRange(
+    x.createdAt||x.updatedAt||x.paidAt,
+    activityRange
+   )
+  );
+
+  const activityPeriodLabel={
+   'today':'Today',
+   'yesterday':'Yesterday',
+   'this-week':'This week',
+   'last-week':'Last week',
+   'all':'All'
+  }[activityDateFilter]||'This week';
+
   return <div className="driverPageView mockTransactionsPage">
    <div className="mockSegmented mockTransactionsTabs" role="tablist">
     {[
@@ -11073,10 +11205,29 @@ function DriverApp(){
     )}
    </div>
 
+   <div className="driverActivityDateFilters" aria-label="Activity date range">
+    {[
+     ['today','Today'],
+     ['yesterday','Yesterday'],
+     ['this-week','This week'],
+     ['last-week','Last week'],
+     ['all','All']
+    ].map(([key,label])=>
+     <button
+      key={key}
+      type="button"
+      className={activityDateFilter===key?'active':''}
+      onClick={()=>setActivityDateFilter(key)}
+     >
+      {label}
+     </button>
+    )}
+   </div>
+
    {showAccountWork&&<>
     <section className="mockAccountWorkSummary">
      <div>
-      <span>POSTED THIS WEEK</span>
+      <span>POSTED · {activityPeriodLabel.toUpperCase()}</span>
       {accountWorkLoading
        ?<>
          <strong className="mockAccountWorkLoading">Loading…</strong>
@@ -11112,7 +11263,7 @@ function DriverApp(){
 
      {!accountWorkLoading&&!accountWorkError&&jobs.length===0&&
       <div className="mockEmptyList">
-       No account work has been posted this week.
+       No account work has been posted for {activityPeriodLabel.toLowerCase()}.
       </div>
      }
 

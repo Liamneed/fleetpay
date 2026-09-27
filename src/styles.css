@@ -12633,3 +12633,47 @@ body {
   border-radius:20px;
  }
 }
+
+/* Driver transaction date filters */
+.driverActivityDateFilters{
+ display:flex;
+ gap:7px;
+ overflow-x:auto;
+ padding:2px 1px 12px;
+ margin-bottom:2px;
+ scrollbar-width:none;
+}
+
+.driverActivityDateFilters::-webkit-scrollbar{
+ display:none;
+}
+
+.driverActivityDateFilters button{
+ flex:0 0 auto;
+ border:1px solid rgba(255,255,255,.12);
+ background:rgba(255,255,255,.06);
+ color:#aeb9c9;
+ border-radius:999px;
+ padding:8px 12px;
+ font:inherit;
+ font-size:calc(10px * var(--driver-text-scale));
+ font-weight:800;
+}
+
+.driverActivityDateFilters button.active{
+ background:#fff;
+ color:#13243d;
+ border-color:#fff;
+}
+
+.driverVNext.theme-light .driverActivityDateFilters button{
+ background:#eef3f8;
+ border-color:#dbe3ec;
+ color:#64748b;
+}
+
+.driverVNext.theme-light .driverActivityDateFilters button.active{
+ background:#17355c;
+ border-color:#17355c;
+ color:#fff;
+}
