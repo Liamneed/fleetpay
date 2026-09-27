@@ -12182,3 +12182,105 @@ body {
   grid-template-columns:1fr;
  }
 }
+
+/* Live Test Lab - Phase 2C Autocab write preview */
+.liveTestWritePreviewPanel{
+ display:grid;
+ gap:18px;
+}
+
+.liveTestWritePreviewInputs{
+ display:grid;
+ grid-template-columns:minmax(260px,420px);
+ gap:10px;
+}
+
+.liveTestWritePreviewInputs label{
+ display:grid;
+ gap:7px;
+ font-weight:700;
+}
+
+.liveTestWritePreviewInputs input{
+ width:100%;
+}
+
+.liveTestWritePreviewInputs small{
+ font-weight:400;
+ opacity:.72;
+ line-height:1.45;
+}
+
+.liveTestWritePreviewList{
+ display:grid;
+ gap:14px;
+}
+
+.liveTestWritePayload{
+ border:1px solid var(--line);
+ border-radius:16px;
+ padding:16px;
+ display:grid;
+ gap:14px;
+ background:var(--panel-soft);
+}
+
+.liveTestWritePayloadHead{
+ display:flex;
+ align-items:center;
+ justify-content:space-between;
+ gap:12px;
+}
+
+.liveTestWritePayloadGrid{
+ display:grid;
+ grid-template-columns:repeat(4,minmax(0,1fr));
+ gap:10px;
+}
+
+.liveTestWritePayloadGrid span,
+.liveTestWritePreviewSummary span{
+ display:grid;
+ gap:5px;
+}
+
+.liveTestWriteDescription,
+.liveTestWriteEndpoint{
+ display:grid;
+ gap:6px;
+}
+
+.liveTestWriteDescription span,
+.liveTestWriteEndpoint span{
+ font-size:12px;
+ opacity:.7;
+}
+
+.liveTestWriteDescription code,
+.liveTestWriteEndpoint code{
+ display:block;
+ padding:10px 12px;
+ border-radius:10px;
+ overflow-wrap:anywhere;
+ white-space:normal;
+}
+
+.liveTestWritePreviewSummary{
+ display:grid;
+ grid-template-columns:repeat(3,minmax(0,1fr));
+ gap:12px;
+}
+
+@media (max-width:900px){
+ .liveTestWritePayloadGrid,
+ .liveTestWritePreviewSummary{
+  grid-template-columns:1fr 1fr;
+ }
+}
+
+@media (max-width:640px){
+ .liveTestWritePayloadGrid,
+ .liveTestWritePreviewSummary{
+  grid-template-columns:1fr;
+ }
+}

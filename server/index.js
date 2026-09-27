@@ -7988,6 +7988,408 @@ function liveTestMondaySimulation(driverId,liveAccount){
 }
 
 
+
+function liveTestAutocabWritePreview(driverId,simulation){
+ const numericDriverId=Number(driverId);
+ const settings=getSettings();
+
+ if(
+  !Number.isInteger(numericDriverId) ||
+  numericDriverId<=0
+ ){
+  throw new Error('A valid Autocab driver ID is required.');
+ }
+
+ const action=String(
+  simulation?.outcome?.action||''
+ );
+
+ const weeklyFee=Number(
+  simulation?.inputs?.weeklyFee||0
+ );
+
+ const carriedCharges=Number(
+  simulation?.inputs?.carriedCharges||0
+ );
+
+ const paid=Number(
+  simulation?.calculation?.payoutAvailable||0
+ );
+
+ const callsign=String(
+  simulation?.driver?.callsign||''
+ );
+
+ const adjustments=[];
+
+ if(action==='payout'){
+
+  if(weeklyFee>0){
+   adjustments.push({
+    purpose:'weekly_fee',
+    endpoint:
+     `/driver/v1/accounts/driveraccounts/${numericDriverId}/adjustment`,
+    method:'PUT',
+    payload:{
+     amount:weeklyFee,
+     description:'FaivoPay weekly app fee',
+     isCredit:false,
+     adjustmentReason:'FleetPay Fee'
+    },
+    expectedRentSheetColumn:'Debits'
+   });
+  }
+
+  if(carriedCharges>0){
+   adjustments.push({
+    purpose:'carried_charge',
+    endpoint:
+     `/driver/v1/accounts/driveraccounts/${numericDriverId}/adjustment`,
+    method:'PUT',
+    payload:{
+     amount:carriedCharges,
+     description:'FaivoPay carried charge',
+     isCredit:false,
+     adjustmentReason:'FleetPay Carried Charge'
+    },
+    expectedRentSheetColumn:'Debits'
+   });
+  }
+
+  if(paid>0){
+   const vars=dateTimeVars({
+    callsign,
+    amount:paid.toFixed(2)
+   });
+
+   const description=
+    templateText(
+     settings.weeklyPayoutReasonTemplate,
+     vars
+    )||
+    `FaivoPay Weekly Payout ${vars.date} ${vars.time}`;
+
+   adjustments.push({
+    purpose:'weekly_payout',
+    endpoint:
+     `/driver/v1/accounts/driveraccounts/${numericDriverId}/adjustment`,
+    method:'PUT',
+    payload:{
+     amount:paid,
+     description,
+     isCredit:false,
+     adjustmentReason:'FleetPay Weekly Payout'
+    },
+    expectedRentSheetColumn:'Debits'
+   });
+  }
+ }
+
+ const totalDebit=Number(
+  adjustments
+   .filter(x=>x.payload?.isCredit===false)
+   .reduce(
+    (sum,x)=>sum+Number(x.payload?.amount||0),
+    0
+   )
+   .toFixed(2)
+ );
+
+ const totalCredit=Number(
+  adjustments
+   .filter(x=>x.payload?.isCredit===true)
+   .reduce(
+    (sum,x)=>sum+Number(x.payload?.amount||0),
+    0
+   )
+   .toFixed(2)
+ );
+
+ return {
+  previewOnly:true,
+  driverId:String(numericDriverId),
+  callsign,
+  simulatedAction:action,
+  generatedAt:new Date().toISOString(),
+
+  productionFunction:'settlePayoutInAutocab',
+  productionEndpoint:
+   `/driver/v1/accounts/driveraccounts/${numericDriverId}/adjustment`,
+
+  adjustments,
+
+  totals:{
+   adjustmentCount:adjustments.length,
+   totalDebit,
+   totalCredit,
+   netAutocabMovement:Number(
+    (totalCredit-totalDebit).toFixed(2)
+   )
+  },
+
+  expected:{
+   rentSheetColumn:
+    adjustments.length
+     ?'Debits'
+     :null,
+
+   description:
+    action==='payout'
+     ?'These are the adjustments FaivoPay would send after the weekly payout is confirmed paid.'
+     :'No weekly payout reconciliation would be sent for this simulated Monday outcome.'
+  },
+
+  mutationSafety:{
+   autocabChanged:false,
+   driverCacheChanged:false,
+   settlementCreated:false,
+   payoutCreated:false,
+   paymentRequestCreated:false,
+   paymentProviderChanged:false,
+   notificationsSent:false
+  }
+ };
+}
+
+
+app.post(
+ '/api/admin/live-test/drivers/:driverId/autocab-write-preview',
+ adminAuth,
+ requireStaffRole('administrator'),
+ async(req,res)=>{
+  try{
+   const company=officeCompanyRow(req);
+
+   if(!company){
+    return res.status(409).json({
+     error:'Select a company before creating an Autocab write preview.'
+    });
+   }
+
+   const activeCompanyCount=Number(
+    db.prepare(`
+     SELECT COUNT(*) c
+     FROM companies
+     WHERE status='active'
+    `).get()?.c||0
+   );
+
+   if(activeCompanyCount!==1){
+    return res.status(409).json({
+     error:
+      'Live Test Lab write previews are temporarily restricted '+
+      'to installations with exactly one active company.'
+    });
+   }
+
+   const driverId=Number(req.params.driverId);
+
+   if(!Number.isInteger(driverId) || driverId<=0){
+    return res.status(400).json({
+     error:'A valid Autocab driver ID is required.'
+    });
+   }
+
+   const allowRow=db.prepare(`
+    SELECT *
+    FROM live_test_drivers
+    WHERE company_id=?
+      AND driver_id=?
+   `).get(
+    company.id,
+    String(driverId)
+   );
+
+   if(!allowRow){
+    return res.status(404).json({
+     error:'This driver is not on the Live Test Lab allow-list.'
+    });
+   }
+
+   if(!Number(allowRow.enabled)){
+    return res.status(409).json({
+     error:'This Live Test Lab driver is disabled.'
+    });
+   }
+
+   if(Number(allowRow.live_write_enabled)){
+    return res.status(409).json({
+     error:'Live writes must remain disabled while using write preview.'
+    });
+   }
+
+   const live=
+    await liveTestReadDriverAccount(driverId);
+
+   const rawHypothetical=
+    req.body?.previousBalance;
+
+   const hasHypothetical=
+    rawHypothetical!==undefined &&
+    rawHypothetical!==null &&
+    String(rawHypothetical).trim()!=='';
+
+   const hypotheticalPreviousBalance=
+    hasHypothetical
+     ?Number(rawHypothetical)
+     :null;
+
+   if(
+    hasHypothetical &&
+    !Number.isFinite(hypotheticalPreviousBalance)
+   ){
+    return res.status(400).json({
+     error:'Hypothetical Previous Balance must be a valid number.'
+    });
+   }
+
+   const accountForSimulation={
+    ...live,
+    previousBalance:
+     hasHypothetical
+      ?hypotheticalPreviousBalance
+      :live.previousBalance
+   };
+
+   const simulation=
+    liveTestMondaySimulation(
+     driverId,
+     accountForSimulation
+    );
+
+   const preview=
+    liveTestAutocabWritePreview(
+     driverId,
+     simulation
+    );
+
+   const actor=liveTestActor(req);
+   const eventId=id('livetestevt');
+
+   db.prepare(`
+    INSERT INTO live_test_events(
+     id,
+     company_id,
+     driver_id,
+     callsign,
+     mode,
+     action,
+     request_json,
+     before_json,
+     proposed_json,
+     result_json,
+     reversal_of,
+     status,
+     actor_id,
+     actor_email,
+     actor_name,
+     created_at
+    )
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+   `).run(
+    eventId,
+    company.id,
+    String(driverId),
+    String(
+     allowRow.callsign||
+     simulation.driver?.callsign||
+     ''
+    ),
+    'simulation',
+    'autocab_write_preview_completed',
+    liveTestJson({
+     driverId:String(driverId),
+     hypotheticalPreviousBalance,
+     previewOnly:true
+    }),
+    liveTestJson({
+     livePreviousBalance:
+      live.previousBalance,
+     liveCurrentBalance:
+      live.currentBalance,
+     fetchedAt:
+      live.fetchedAt
+    }),
+    liveTestJson(preview),
+    liveTestJson({
+     simulation,
+     preview,
+     autocabChanged:false,
+     localFinancialStateChanged:false,
+     paymentProviderChanged:false,
+     notificationsSent:false
+    }),
+    null,
+    'recorded',
+    actor.id,
+    actor.email,
+    actor.name,
+    new Date().toISOString()
+   );
+
+   audit(
+    req,
+    'staff',
+    actor.email||actor.id,
+    'live_test_autocab_write_preview',
+    'driver',
+    String(driverId),
+    {
+     companyId:company.id,
+     callsign:
+      allowRow.callsign||
+      simulation.driver?.callsign||
+      '',
+     hypotheticalPreviousBalance,
+     simulatedAction:
+      simulation.outcome.action,
+     adjustmentCount:
+      preview.adjustments.length,
+     previewOnly:true
+    }
+   );
+
+   res.json({
+    company:companyPublic(company),
+    driver:{
+     driverId:String(driverId),
+     callsign:String(
+      allowRow.callsign||
+      simulation.driver?.callsign||
+      ''
+     ),
+     driverName:String(
+      simulation.driver?.driverName||
+      ''
+     )
+    },
+    source:{
+     livePreviousBalance:
+      live.previousBalance,
+     hypotheticalPreviousBalance,
+     usedPreviousBalance:
+      simulation.calculation.previousBalance,
+     liveFetchedAt:
+      live.fetchedAt
+    },
+    simulation,
+    preview,
+    eventId,
+    previewOnly:true,
+    liveWritesAvailable:false
+   });
+
+  }catch(e){
+   res.status(500).json({
+    error:e.message,
+    previewOnly:true,
+    liveWritesAvailable:false
+   });
+  }
+ }
+);
+
+
 app.post(
  '/api/admin/live-test/drivers/:driverId/simulate-monday',
  adminAuth,
