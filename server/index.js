@@ -3568,16 +3568,30 @@ async function syncAutocab(){
 function notify(driverId,title,message,type='info',referenceId=null){db.prepare('INSERT INTO driver_notifications(id,driver_id,title,message,type,reference_id,created_at) VALUES(?,?,?,?,?,?,?)').run(id('note'),driverId,title,message,type,referenceId,new Date().toISOString());sendPush(driverId,title,message).catch(()=>{})}
 
 async function postAutocabAdjustment({driverId,callsign,amount,isCredit,description,adjustmentReason,eventKey,force=false,liveTestWrite=false}){
- const approvedLiveTestWrite=
+ const liveTestIdentityApproved=
   Boolean(liveTestWrite) &&
   LIVE_TEST_AUTOCAB_WRITES_ENABLED &&
   Number(driverId)===1112 &&
   String(callsign)==='9997' &&
-  Number(amount)===1 &&
+  Number(amount)===1;
+
+ const approvedLiveTestCredit=
+  liveTestIdentityApproved &&
   Boolean(isCredit)===true &&
   String(description)==='FaivoPay Live Test Credit' &&
   String(adjustmentReason)==='FleetPay Live Test' &&
   String(eventKey)==='live-test:1112:first-credit-1gbp';
+
+ const approvedLiveTestReversal=
+  liveTestIdentityApproved &&
+  Boolean(isCredit)===false &&
+  String(description)==='FaivoPay Live Test Reversal' &&
+  String(adjustmentReason)==='FleetPay Live Test' &&
+  String(eventKey)==='live-test:1112:first-credit-reversal-1gbp';
+
+ const approvedLiveTestWrite=
+  approvedLiveTestCredit||
+  approvedLiveTestReversal;
 
  if(liveTestWrite && !approvedLiveTestWrite){
   throw new Error(
@@ -9263,6 +9277,848 @@ app.post(
        liveWritesAutomaticallyDisabled:Boolean(writeAttempted)
       }),
       null,
+      'failed',
+      actor.id,
+      actor.email,
+      actor.name,
+      new Date().toISOString()
+     );
+    }catch{}
+   }
+
+   return res.status(500).json({
+    error:e.message,
+    writeAttempted,
+    adjustmentCompleted:Boolean(adjustment?.ok),
+    liveWritesEnabled:
+     writeAttempted
+      ?false
+      :Boolean(allowRow?.live_write_enabled)
+   });
+  }
+ }
+);
+
+
+
+/*
+ * Live Test Lab — compensating £1 debit reversal
+ *
+ * May only reverse the already-completed first £1 Live Test credit
+ * for callsign 9997 / Autocab driver 1112.
+ */
+app.post(
+ '/api/admin/live-test/drivers/:driverId/live-reversal-preview',
+ adminAuth,
+ requireStaffRole('administrator'),
+ async(req,res)=>{
+  try{
+   const company=officeCompanyRow(req);
+
+   if(!company){
+    return res.status(409).json({
+     error:'Select a company before preparing a Live Test reversal.'
+    });
+   }
+
+   const activeCompanyCount=Number(
+    db.prepare(`
+     SELECT COUNT(*) c
+     FROM companies
+     WHERE status='active'
+    `).get()?.c||0
+   );
+
+   if(activeCompanyCount!==1){
+    return res.status(409).json({
+     error:
+      'Controlled Live Test reversals are temporarily restricted '+
+      'to installations with exactly one active company.'
+    });
+   }
+
+   const driverId=Number(req.params.driverId);
+
+   if(driverId!==1112){
+    return res.status(403).json({
+     error:
+      'The controlled reversal is restricted to '+
+      'Autocab driver 1112 / callsign 9997.'
+    });
+   }
+
+   if(!LIVE_TEST_AUTOCAB_WRITES_ENABLED){
+    return res.status(409).json({
+     error:
+      'Controlled Live Test Autocab writes are disabled at server level.'
+    });
+   }
+
+   const allowRow=db.prepare(`
+    SELECT *
+    FROM live_test_drivers
+    WHERE company_id=?
+      AND driver_id=?
+   `).get(company.id,String(driverId));
+
+   if(
+    !allowRow ||
+    String(allowRow.callsign)!=='9997' ||
+    !Number(allowRow.enabled) ||
+    !Number(allowRow.live_write_enabled)
+   ){
+    return res.status(409).json({
+     error:
+      'Test driver 9997 must be enabled and live writes must be armed.'
+    });
+   }
+
+   const cached=cachedDriver(driverId);
+
+   if(!cached || String(cached.callsign)!=='9997'){
+    return res.status(409).json({
+     error:
+      'FaivoPay cache identity does not match test driver 9997 / 1112.'
+    });
+   }
+
+   const originalAdjustment=db.prepare(`
+    SELECT *
+    FROM autocab_adjustments
+    WHERE event_key='live-test:1112:first-credit-1gbp'
+      AND status='completed'
+    LIMIT 1
+   `).get();
+
+   if(!originalAdjustment){
+    return res.status(409).json({
+     error:
+      'The original £1 Live Test credit is not recorded as completed. '+
+      'The reversal cannot be prepared.'
+    });
+   }
+
+   const originalEvent=db.prepare(`
+    SELECT *
+    FROM live_test_events
+    WHERE company_id=?
+      AND driver_id='1112'
+      AND callsign='9997'
+      AND action='live_credit_completed'
+      AND status='completed'
+    ORDER BY created_at DESC
+    LIMIT 1
+   `).get(company.id);
+
+   if(!originalEvent){
+    return res.status(409).json({
+     error:
+      'The successful Live Test credit event cannot be found. '+
+      'The reversal cannot be prepared.'
+    });
+   }
+
+   const existingReversal=db.prepare(`
+    SELECT *
+    FROM autocab_adjustments
+    WHERE event_key='live-test:1112:first-credit-reversal-1gbp'
+   `).get();
+
+   if(existingReversal){
+    return res.status(409).json({
+     error:
+      `The £1 reversal already has an Autocab adjustment in `+
+      `${existingReversal.status} state. It cannot be prepared again.`,
+     adjustmentId:existingReversal.id,
+     status:existingReversal.status
+    });
+   }
+
+   const live=await liveTestReadDriverAccount(driverId);
+
+   const liveCurrent=
+    live.currentBalance==null
+     ?null
+     :Number(live.currentBalance);
+
+   if(
+    liveCurrent===null ||
+    Math.abs(liveCurrent-1)>0.004
+   ){
+    return res.status(409).json({
+     error:
+      'The controlled reversal expects the live Current Balance to be £1.00. '+
+      'No reversal was prepared.',
+     liveCurrentBalance:liveCurrent
+    });
+   }
+
+   const actor=liveTestActor(req);
+   const eventId=id('livetestevt');
+   const createdAt=new Date().toISOString();
+   const expiresAt=new Date(
+    Date.now()+5*60*1000
+   ).toISOString();
+
+   const proposed={
+    endpoint:
+     `/driver/v1/accounts/driveraccounts/${driverId}/adjustment`,
+    method:'PUT',
+    payload:{
+     amount:1,
+     description:'FaivoPay Live Test Reversal',
+     isCredit:false,
+     adjustmentReason:'FleetPay Live Test'
+    },
+    eventKey:'live-test:1112:first-credit-reversal-1gbp',
+    reversalOfEventId:originalEvent.id,
+    reversalOfAdjustmentId:originalAdjustment.id,
+    expectedCurrentBalanceAfter:0,
+    expiresAt
+   };
+
+   db.prepare(`
+    INSERT INTO live_test_events(
+     id,
+     company_id,
+     driver_id,
+     callsign,
+     mode,
+     action,
+     request_json,
+     before_json,
+     proposed_json,
+     result_json,
+     reversal_of,
+     status,
+     actor_id,
+     actor_email,
+     actor_name,
+     created_at
+    )
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+   `).run(
+    eventId,
+    company.id,
+    String(driverId),
+    '9997',
+    'live_write_preview',
+    'live_reversal_preview_completed',
+    liveTestJson({
+     operation:'controlled_live_credit_reversal_preview',
+     amount:1,
+     currency:'GBP',
+     isCredit:false,
+     liveWriteEnabled:true,
+     originalAdjustmentId:originalAdjustment.id
+    }),
+    liveTestJson({
+     previousBalance:live.previousBalance,
+     currentBalance:live.currentBalance,
+     fetchedAt:live.fetchedAt
+    }),
+    liveTestJson(proposed),
+    liveTestJson({
+     previewOnly:true,
+     autocabChanged:false,
+     driverCacheChanged:false
+    }),
+    originalEvent.id,
+    'recorded',
+    actor.id,
+    actor.email,
+    actor.name,
+    createdAt
+   );
+
+   audit(
+    req,
+    'staff',
+    actor.email||actor.id,
+    'live_test_reversal_preview',
+    'driver',
+    '9997',
+    {
+     companyId:company.id,
+     driverId:String(driverId),
+     callsign:'9997',
+     amount:1,
+     previewEventId:eventId,
+     reversalOfEventId:originalEvent.id,
+     reversalOfAdjustmentId:originalAdjustment.id,
+     liveCurrentBalance:liveCurrent,
+     expiresAt,
+     previewOnly:true
+    }
+   );
+
+   return res.json({
+    ok:true,
+    previewOnly:true,
+    driver:{
+     driverId:String(driverId),
+     callsign:'9997',
+     driverName:String(cached.fullName||'')
+    },
+    before:{
+     previousBalance:live.previousBalance,
+     currentBalance:liveCurrent,
+     fetchedAt:live.fetchedAt
+    },
+    proposed,
+    previewEventId:eventId,
+    expiresAt
+   });
+
+  }catch(e){
+   return res.status(500).json({
+    error:e.message,
+    previewOnly:true
+   });
+  }
+ }
+);
+
+
+app.post(
+ '/api/admin/live-test/drivers/:driverId/live-reversal-execute',
+ adminAuth,
+ requireStaffRole('administrator'),
+ async(req,res)=>{
+  let company=null;
+  let allowRow=null;
+  let actor=null;
+  let driverId=null;
+  let previewEvent=null;
+  let beforeLive=null;
+  let requestEventId=null;
+  let adjustment=null;
+  let originalEvent=null;
+  let writeAttempted=false;
+
+  try{
+   company=officeCompanyRow(req);
+
+   if(!company){
+    return res.status(409).json({
+     error:'Select a company before running a Live Test reversal.'
+    });
+   }
+
+   const activeCompanyCount=Number(
+    db.prepare(`
+     SELECT COUNT(*) c
+     FROM companies
+     WHERE status='active'
+    `).get()?.c||0
+   );
+
+   if(activeCompanyCount!==1){
+    return res.status(409).json({
+     error:
+      'Controlled Live Test reversals are temporarily restricted '+
+      'to installations with exactly one active company.'
+    });
+   }
+
+   driverId=Number(req.params.driverId);
+
+   if(driverId!==1112){
+    return res.status(403).json({
+     error:
+      'The controlled reversal is restricted to '+
+      'Autocab driver 1112 / callsign 9997.'
+    });
+   }
+
+   if(!LIVE_TEST_AUTOCAB_WRITES_ENABLED){
+    return res.status(409).json({
+     error:
+      'Controlled Live Test Autocab writes are disabled at server level.'
+    });
+   }
+
+   const confirmation=String(
+    req.body?.confirmation||''
+   ).trim();
+
+   if(confirmation!=='DEBIT £1 FROM 9997'){
+    return res.status(400).json({
+     error:
+      'Exact confirmation phrase required: DEBIT £1 FROM 9997'
+    });
+   }
+
+   const previewEventId=String(
+    req.body?.previewEventId||''
+   ).trim();
+
+   if(!previewEventId){
+    return res.status(400).json({
+     error:'A valid Live Test reversal preview event is required.'
+    });
+   }
+
+   allowRow=db.prepare(`
+    SELECT *
+    FROM live_test_drivers
+    WHERE company_id=?
+      AND driver_id=?
+   `).get(company.id,String(driverId));
+
+   if(
+    !allowRow ||
+    String(allowRow.callsign)!=='9997' ||
+    !Number(allowRow.enabled) ||
+    !Number(allowRow.live_write_enabled)
+   ){
+    return res.status(409).json({
+     error:
+      'Test driver 9997 must be enabled and live writes must be armed.'
+    });
+   }
+
+   const cached=cachedDriver(driverId);
+
+   if(!cached || String(cached.callsign)!=='9997'){
+    return res.status(409).json({
+     error:
+      'FaivoPay cache identity does not match test driver 9997 / 1112.'
+    });
+   }
+
+   const originalAdjustment=db.prepare(`
+    SELECT *
+    FROM autocab_adjustments
+    WHERE event_key='live-test:1112:first-credit-1gbp'
+      AND status='completed'
+    LIMIT 1
+   `).get();
+
+   if(!originalAdjustment){
+    return res.status(409).json({
+     error:
+      'The original £1 credit is no longer recorded as completed. '+
+      'No reversal was sent.'
+    });
+   }
+
+   originalEvent=db.prepare(`
+    SELECT *
+    FROM live_test_events
+    WHERE company_id=?
+      AND driver_id='1112'
+      AND callsign='9997'
+      AND action='live_credit_completed'
+      AND status='completed'
+    ORDER BY created_at DESC
+    LIMIT 1
+   `).get(company.id);
+
+   if(!originalEvent){
+    return res.status(409).json({
+     error:
+      'The successful Live Test credit event cannot be found. '+
+      'No reversal was sent.'
+    });
+   }
+
+   previewEvent=db.prepare(`
+    SELECT *
+    FROM live_test_events
+    WHERE id=?
+      AND company_id=?
+      AND driver_id='1112'
+      AND callsign='9997'
+      AND action='live_reversal_preview_completed'
+      AND status='recorded'
+      AND reversal_of=?
+    LIMIT 1
+   `).get(
+    previewEventId,
+    company.id,
+    originalEvent.id
+   );
+
+   if(!previewEvent){
+    return res.status(409).json({
+     error:
+      'The selected reversal preview is invalid or no longer available.'
+    });
+   }
+
+   const previewCreatedAt=
+    new Date(previewEvent.created_at).getTime();
+
+   const previewAgeMs=
+    Date.now()-previewCreatedAt;
+
+   if(
+    !Number.isFinite(previewCreatedAt) ||
+    previewAgeMs<0 ||
+    previewAgeMs>5*60*1000
+   ){
+    return res.status(409).json({
+     error:
+      'The Live Test reversal preview has expired. Prepare a fresh preview.'
+    });
+   }
+
+   let previewBefore=null;
+   let previewProposed=null;
+
+   try{
+    previewBefore=JSON.parse(previewEvent.before_json||'null');
+    previewProposed=JSON.parse(previewEvent.proposed_json||'null');
+   }catch{
+    return res.status(409).json({
+     error:'The stored Live Test reversal preview is unreadable.'
+    });
+   }
+
+   if(
+    Number(previewProposed?.payload?.amount)!==1 ||
+    previewProposed?.payload?.isCredit!==false ||
+    previewProposed?.eventKey!==
+     'live-test:1112:first-credit-reversal-1gbp' ||
+    previewProposed?.reversalOfEventId!==originalEvent.id ||
+    previewProposed?.reversalOfAdjustmentId!==originalAdjustment.id
+   ){
+    return res.status(409).json({
+     error:
+      'The stored reversal preview does not match the fixed £1 reversal.'
+    });
+   }
+
+   const existingReversal=db.prepare(`
+    SELECT *
+    FROM autocab_adjustments
+    WHERE event_key='live-test:1112:first-credit-reversal-1gbp'
+   `).get();
+
+   if(existingReversal){
+    return res.status(409).json({
+     error:
+      `The £1 reversal already has an Autocab adjustment in `+
+      `${existingReversal.status} state. It will not be resent.`,
+     adjustmentId:existingReversal.id,
+     status:existingReversal.status
+    });
+   }
+
+   beforeLive=await liveTestReadDriverAccount(driverId);
+
+   const previewCurrent=
+    previewBefore?.currentBalance==null
+     ?null
+     :Number(previewBefore.currentBalance);
+
+   const freshCurrent=
+    beforeLive.currentBalance==null
+     ?null
+     :Number(beforeLive.currentBalance);
+
+   if(
+    previewCurrent===null ||
+    freshCurrent===null ||
+    Math.abs(previewCurrent-freshCurrent)>0.004
+   ){
+    return res.status(409).json({
+     error:
+      'Autocab Current Balance changed after the reversal preview. '+
+      'No debit was sent. Prepare a fresh preview.',
+     previewCurrentBalance:previewCurrent,
+     freshCurrentBalance:freshCurrent
+    });
+   }
+
+   if(Math.abs(freshCurrent-1)>0.004){
+    return res.status(409).json({
+     error:
+      'The controlled reversal requires a live Current Balance of £1.00. '+
+      'No debit was sent.',
+     freshCurrentBalance:freshCurrent
+    });
+   }
+
+   actor=liveTestActor(req);
+   requestEventId=id('livetestevt');
+   const requestedAt=new Date().toISOString();
+
+   db.prepare(`
+    INSERT INTO live_test_events(
+     id,
+     company_id,
+     driver_id,
+     callsign,
+     mode,
+     action,
+     request_json,
+     before_json,
+     proposed_json,
+     result_json,
+     reversal_of,
+     status,
+     actor_id,
+     actor_email,
+     actor_name,
+     created_at
+    )
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+   `).run(
+    requestEventId,
+    company.id,
+    String(driverId),
+    '9997',
+    'live_write',
+    'live_reversal_requested',
+    liveTestJson({
+     previewEventId,
+     confirmationMatched:true,
+     amount:1,
+     currency:'GBP',
+     eventKey:'live-test:1112:first-credit-reversal-1gbp',
+     reversalOfAdjustmentId:originalAdjustment.id
+    }),
+    liveTestJson(beforeLive),
+    liveTestJson(previewProposed),
+    null,
+    originalEvent.id,
+    'requested',
+    actor.id,
+    actor.email,
+    actor.name,
+    requestedAt
+   );
+
+   writeAttempted=true;
+
+   adjustment=
+    await postAutocabAdjustmentSafelyOnce({
+     driverId,
+     callsign:'9997',
+     amount:1,
+     isCredit:false,
+     description:'FaivoPay Live Test Reversal',
+     adjustmentReason:'FleetPay Live Test',
+     eventKey:'live-test:1112:first-credit-reversal-1gbp',
+     liveTestWrite:true
+    });
+
+   db.prepare(`
+    UPDATE live_test_drivers
+    SET live_write_enabled=0,
+        updated_at=?
+    WHERE company_id=?
+      AND driver_id=?
+   `).run(
+    new Date().toISOString(),
+    company.id,
+    String(driverId)
+   );
+
+   const afterLive=
+    await liveTestReadDriverAccount(driverId);
+
+   const expectedCurrent=0;
+
+   const afterCurrent=
+    afterLive.currentBalance==null
+     ?null
+     :Number(afterLive.currentBalance);
+
+   const verified=
+    afterCurrent!==null &&
+    Math.abs(afterCurrent-expectedCurrent)<=0.004;
+
+   const completedEventId=id('livetestevt');
+   const completedAt=new Date().toISOString();
+
+   db.prepare(`
+    INSERT INTO live_test_events(
+     id,
+     company_id,
+     driver_id,
+     callsign,
+     mode,
+     action,
+     request_json,
+     before_json,
+     proposed_json,
+     result_json,
+     reversal_of,
+     status,
+     actor_id,
+     actor_email,
+     actor_name,
+     created_at
+    )
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+   `).run(
+    completedEventId,
+    company.id,
+    String(driverId),
+    '9997',
+    'live_write',
+    verified
+     ?'live_reversal_completed'
+     :'live_reversal_completed_unverified',
+    liveTestJson({
+     requestEventId,
+     previewEventId,
+     eventKey:'live-test:1112:first-credit-reversal-1gbp',
+     reversalOfAdjustmentId:originalAdjustment.id
+    }),
+    liveTestJson(beforeLive),
+    liveTestJson(previewProposed),
+    liveTestJson({
+     adjustmentId:adjustment?.id||null,
+     adjustmentCompleted:Boolean(adjustment?.ok),
+     beforeCurrentBalance:freshCurrent,
+     expectedCurrentBalance:expectedCurrent,
+     afterCurrentBalance:afterCurrent,
+     afterFetchedAt:afterLive.fetchedAt,
+     verified,
+     liveWritesAutomaticallyDisabled:true
+    }),
+    originalEvent.id,
+    verified?'completed':'completed_unverified',
+    actor.id,
+    actor.email,
+    actor.name,
+    completedAt
+   );
+
+   audit(
+    req,
+    'staff',
+    actor.email||actor.id,
+    'live_test_reversal_executed',
+    'driver',
+    '9997',
+    {
+     companyId:company.id,
+     driverId:String(driverId),
+     previewEventId,
+     requestEventId,
+     completedEventId,
+     reversalOfEventId:originalEvent.id,
+     reversalOfAdjustmentId:originalAdjustment.id,
+     adjustmentId:adjustment?.id||null,
+     amount:1,
+     isCredit:false,
+     beforeCurrentBalance:freshCurrent,
+     expectedCurrentBalance:expectedCurrent,
+     afterCurrentBalance:afterCurrent,
+     verified,
+     liveWritesAutomaticallyDisabled:true
+    }
+   );
+
+   return res.json({
+    ok:true,
+    driver:{
+     driverId:String(driverId),
+     callsign:'9997',
+     driverName:String(cached.fullName||'')
+    },
+    previewEventId,
+    requestEventId,
+    completedEventId,
+    reversalOf:{
+     eventId:originalEvent.id,
+     adjustmentId:originalAdjustment.id
+    },
+    adjustment:{
+     id:adjustment?.id||null,
+     amount:1,
+     isCredit:false,
+     description:'FaivoPay Live Test Reversal',
+     adjustmentReason:'FleetPay Live Test'
+    },
+    before:{
+     previousBalance:beforeLive.previousBalance,
+     currentBalance:freshCurrent,
+     fetchedAt:beforeLive.fetchedAt
+    },
+    after:{
+     previousBalance:afterLive.previousBalance,
+     currentBalance:afterCurrent,
+     fetchedAt:afterLive.fetchedAt
+    },
+    verification:{
+     expectedCurrentBalance:expectedCurrent,
+     actualCurrentBalance:afterCurrent,
+     verified
+    },
+    liveWritesEnabled:false
+   });
+
+  }catch(e){
+   if(writeAttempted && company && driverId){
+    try{
+     db.prepare(`
+      UPDATE live_test_drivers
+      SET live_write_enabled=0,
+          updated_at=?
+      WHERE company_id=?
+        AND driver_id=?
+     `).run(
+      new Date().toISOString(),
+      company.id,
+      String(driverId)
+     );
+    }catch{}
+   }
+
+   if(company && driverId && allowRow){
+    try{
+     if(!actor)actor=liveTestActor(req);
+
+     db.prepare(`
+      INSERT INTO live_test_events(
+       id,
+       company_id,
+       driver_id,
+       callsign,
+       mode,
+       action,
+       request_json,
+       before_json,
+       proposed_json,
+       result_json,
+       reversal_of,
+       status,
+       actor_id,
+       actor_email,
+       actor_name,
+       created_at
+      )
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+     `).run(
+      id('livetestevt'),
+      company.id,
+      String(driverId),
+      String(allowRow.callsign||''),
+      'live_write',
+      adjustment
+       ?'live_reversal_verification_failed'
+       :'live_reversal_failed',
+      liveTestJson({
+       requestEventId,
+       previewEventId:
+        String(req.body?.previewEventId||'').trim()||null,
+       eventKey:'live-test:1112:first-credit-reversal-1gbp'
+      }),
+      liveTestJson(beforeLive),
+      null,
+      liveTestJson({
+       error:e.message,
+       writeAttempted,
+       adjustmentCompleted:Boolean(adjustment?.ok),
+       liveWritesAutomaticallyDisabled:Boolean(writeAttempted)
+      }),
+      originalEvent?.id||null,
       'failed',
       actor.id,
       actor.email,
