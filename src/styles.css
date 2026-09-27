@@ -12677,3 +12677,456 @@ body {
  border-color:#17355c;
  color:#fff;
 }
+
+
+/* FAIVOPAY DRIVER UI POLISH · LIGHT MODE + TRANSACTION FILTERS */
+
+/* Header brand lockup */
+.mockBrandLockup{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  min-width:0;
+}
+
+.mockBrandWords{
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  min-width:0;
+}
+
+.mockBrandWords b{
+  display:block;
+  color:#fff;
+  font-size:calc(15px * var(--driver-text-scale));
+  font-weight:900;
+  line-height:1;
+  letter-spacing:-.025em;
+}
+
+.mockBrandWords span{
+  display:block;
+  margin-top:4px;
+  color:#9fb0c5;
+  font-size:calc(7.5px * var(--driver-text-scale));
+  font-weight:700;
+  line-height:1.15;
+  letter-spacing:.01em;
+  white-space:nowrap;
+}
+
+.mockBrandLockup .mockWordmarkImage img{
+  width:auto;
+  height:30px;
+  max-width:105px;
+}
+
+/* Transactions filtering */
+.driverActivityFilters{
+  display:grid;
+  gap:11px;
+  margin-bottom:14px;
+}
+
+.driverActivityFilterGroup{
+  display:grid;
+  gap:6px;
+}
+
+.driverActivityFilterLabel{
+  padding-left:2px;
+  color:#8fa0b5!important;
+  font-size:calc(8px * var(--driver-text-scale))!important;
+  font-weight:900!important;
+  line-height:1!important;
+  letter-spacing:.13em;
+  text-transform:uppercase;
+}
+
+.mockTransactionsTabs{
+  grid-template-columns:1.25fr 1fr .75fr!important;
+  margin-bottom:0!important;
+}
+
+.driverActivityDateFilters{
+  margin-bottom:0!important;
+  padding-bottom:2px!important;
+}
+
+/* ==========================================================
+   LIGHT MODE
+   Keep branded navy header, make application body genuinely
+   light instead of retaining the dark mockup background.
+   ========================================================== */
+
+.mockDriverApp.theme-light{
+  --mock-white:#fff;
+  --mock-surface:#f5f7fa;
+  --mock-ink:#13233a;
+  --mock-muted:#68788d;
+  --mock-line:#e2e8ef;
+
+  background:#f3f6fa!important;
+  color:#13233a!important;
+}
+
+.mockDriverApp.theme-light .mockDriverMain{
+  background:
+    linear-gradient(
+      180deg,
+      #edf2f7 0,
+      #f5f7fa 145px,
+      #f5f7fa 100%
+    )!important;
+}
+
+/* Retain the FaivoPay identity at the top */
+.mockDriverApp.theme-light .mockAppHeader{
+  background:linear-gradient(
+    180deg,
+    #06172d 0%,
+    #092541 100%
+  )!important;
+  color:#fff!important;
+  box-shadow:0 8px 24px rgba(10,29,51,.10);
+}
+
+.mockDriverApp.theme-light .mockHeaderTitle h1{
+  color:#fff!important;
+}
+
+.mockDriverApp.theme-light .mockHeaderTitle button,
+.mockDriverApp.theme-light .mockHeaderBell{
+  color:#fff!important;
+}
+
+/* Main cards */
+.mockDriverApp.theme-light .mockWhiteCard,
+.mockDriverApp.theme-light .mockPaymentSurface,
+.mockDriverApp.theme-light .mockAccountDisclosure,
+.mockDriverApp.theme-light .mockSecondaryDisclosure,
+.mockDriverApp.theme-light .mockAccountWorkSummary{
+  background:#fff!important;
+  border-color:#e1e7ee!important;
+  color:#13233a!important;
+  box-shadow:0 7px 20px rgba(24,45,72,.06)!important;
+}
+
+/* View selector */
+.mockDriverApp.theme-light .mockSegmented{
+  background:#e9eef4!important;
+  border-color:transparent!important;
+}
+
+.mockDriverApp.theme-light .mockSegmented button{
+  color:#586b83!important;
+  background:transparent!important;
+}
+
+.mockDriverApp.theme-light .mockSegmented button.active{
+  background:#173b67!important;
+  color:#fff!important;
+  box-shadow:0 3px 9px rgba(23,59,103,.18)!important;
+}
+
+/* Date selector */
+.mockDriverApp.theme-light .driverActivityDateFilters button{
+  background:#fff!important;
+  border-color:#d9e1ea!important;
+  color:#61738a!important;
+}
+
+.mockDriverApp.theme-light .driverActivityDateFilters button.active{
+  background:#173b67!important;
+  border-color:#173b67!important;
+  color:#fff!important;
+  box-shadow:0 3px 9px rgba(23,59,103,.14);
+}
+
+/* Transaction content */
+.mockDriverApp.theme-light .mockSectionHead span{
+  color:#7b899b!important;
+}
+
+.mockDriverApp.theme-light .mockSectionHead h2,
+.mockDriverApp.theme-light .mockAccountWorkMain b,
+.mockDriverApp.theme-light .mockTransactionRow>div b{
+  color:#17263a!important;
+}
+
+.mockDriverApp.theme-light .mockAccountWorkMain>span:not(.mockAccountWorkTitle),
+.mockDriverApp.theme-light .mockTransactionRow>div span{
+  color:#607187!important;
+}
+
+.mockDriverApp.theme-light .mockAccountWorkMain small,
+.mockDriverApp.theme-light .mockTransactionRow>div small{
+  color:#8996a6!important;
+}
+
+.mockDriverApp.theme-light .mockTransactionRow{
+  border-color:#edf0f4!important;
+}
+
+.mockDriverApp.theme-light .mockJourney{
+  background:#f5f7fa!important;
+}
+
+.mockDriverApp.theme-light .mockAccountWorkBreakdown,
+.mockDriverApp.theme-light .mockAccountWorkMeta{
+  color:#27384d!important;
+}
+
+.mockDriverApp.theme-light .mockAccountWorkNote{
+  background:#edf4ff!important;
+  color:#50657d!important;
+}
+
+.mockDriverApp.theme-light .mockRoundIcon.slate{
+  background:#eef2f6!important;
+  color:#536b87!important;
+}
+
+/* Bottom navigation */
+.mockDriverApp.theme-light .mockBottomNav{
+  background:rgba(255,255,255,.98)!important;
+  border-top-color:#e0e6ed!important;
+  box-shadow:0 -10px 28px rgba(21,43,68,.09)!important;
+}
+
+.mockDriverApp.theme-light .mockBottomNav button{
+  color:#7c8999!important;
+}
+
+.mockDriverApp.theme-light .mockBottomNav button.active{
+  color:#173b67!important;
+  background:#eef4fa!important;
+}
+
+.mockDriverApp.theme-light .mockBottomNav button.active svg{
+  color:#173b67!important;
+}
+
+.mockDriverApp.theme-light .mockNavCount{
+  border-color:#fff!important;
+}
+
+/* Small screens */
+@media(max-width:430px){
+  .mockBrandLockup{
+    gap:8px;
+  }
+
+  .mockBrandLockup .mockWordmarkImage img{
+    height:27px;
+    max-width:92px;
+  }
+
+  .mockBrandWords b{
+    font-size:calc(14px * var(--driver-text-scale));
+  }
+
+  .mockBrandWords span{
+    font-size:calc(6.8px * var(--driver-text-scale));
+  }
+
+  .mockTransactionsTabs button{
+    padding-left:6px!important;
+    padding-right:6px!important;
+    font-size:calc(10px * var(--driver-text-scale))!important;
+  }
+}
+
+
+/* FAIVOPAY DRIVER FINAL PHONE POLISH */
+
+/* Keep all five period choices visible */
+.driverActivityDateFilters{
+  display:grid!important;
+  grid-template-columns:repeat(5,minmax(0,1fr))!important;
+  gap:6px!important;
+  width:100%;
+  overflow:visible!important;
+}
+
+.driverActivityDateFilters button{
+  width:100%;
+  min-width:0!important;
+  padding:8px 4px!important;
+  font-size:calc(9px * var(--driver-text-scale))!important;
+  line-height:1.08!important;
+  white-space:normal!important;
+  text-align:center;
+}
+
+/* ==========================================================
+   LIGHT HOME
+   Keep the navy FaivoPay header, but make the finance area
+   genuinely light.
+   ========================================================== */
+
+.mockDriverApp.theme-light .financeHero{
+  border-color:#dfe6ee!important;
+  background:linear-gradient(145deg,#ffffff,#f7f9fc)!important;
+  box-shadow:0 10px 28px rgba(25,46,72,.08)!important;
+}
+
+.mockDriverApp.theme-light .financeHero.settled{
+  background:linear-gradient(145deg,#ffffff,#f2f6fa)!important;
+}
+
+.mockDriverApp.theme-light .financeHero.positive{
+  border-color:#cfe7dc!important;
+  background:linear-gradient(145deg,#ffffff,#eef9f4)!important;
+}
+
+.mockDriverApp.theme-light .financeHero.negative{
+  border-color:#efd4d7!important;
+  background:linear-gradient(145deg,#ffffff,#fff3f4)!important;
+}
+
+.mockDriverApp.theme-light .financeEyebrow{
+  color:#748399!important;
+}
+
+.mockDriverApp.theme-light .financeHeroTop strong{
+  color:#13243b!important;
+}
+
+.mockDriverApp.theme-light .financeHeroTop p{
+  color:#66768b!important;
+}
+
+.mockDriverApp.theme-light .financeHeroRefresh{
+  border-color:#dbe5ee!important;
+  background:#edf5fb!important;
+  color:#258ed7!important;
+}
+
+/* Early payout */
+.mockDriverApp.theme-light .financeEarlyPayout{
+  border-color:#dce5ef!important;
+  background:#f2f6fa!important;
+  color:#1a2c44!important;
+}
+
+.mockDriverApp.theme-light .financeEarlyPayout b,
+.mockDriverApp.theme-light .financeEarlyPayout strong{
+  color:#172940!important;
+}
+
+.mockDriverApp.theme-light .financeEarlyPayout small{
+  color:#69798e!important;
+}
+
+.mockDriverApp.theme-light .financeEarlyPayout svg{
+  color:#6d8098!important;
+}
+
+/* Monday status panels */
+.mockDriverApp.theme-light .financeSettlementState{
+  border:1px solid #dde8f4;
+  background:#f1f6fb!important;
+}
+
+.mockDriverApp.theme-light .financeSettlementState>span{
+  color:#71839a!important;
+}
+
+.mockDriverApp.theme-light .financeSettlementState>b{
+  color:#172940!important;
+}
+
+.mockDriverApp.theme-light .financeSettlementState>small{
+  color:#67788d!important;
+}
+
+.mockDriverApp.theme-light .financeSettlementState.paid{
+  border-color:#d1eadc;
+  background:#eef9f3!important;
+}
+
+.mockDriverApp.theme-light .financeSettlementState.due{
+  border-color:#efd7d9;
+  background:#fff2f3!important;
+}
+
+.mockDriverApp.theme-light .financeDeductionRow{
+  background:#fff8e8!important;
+  color:#755b28!important;
+}
+
+.mockDriverApp.theme-light .financeDeductionRow b{
+  color:#9a6800!important;
+}
+
+/* Clear / active job strip */
+.mockDriverApp.theme-light .mockJobStatus{
+  border:1px solid #d7eadf!important;
+  background:#eef9f3!important;
+  color:#176a42!important;
+  box-shadow:0 5px 14px rgba(31,82,57,.04);
+}
+
+.mockDriverApp.theme-light .mockJobStatus.clear{
+  border-color:#dfe6ed!important;
+  background:#fff!important;
+  color:#52667e!important;
+  box-shadow:0 5px 16px rgba(24,45,72,.055);
+}
+
+.mockDriverApp.theme-light .mockJobStatus.clear>span i{
+  background:#9aabba!important;
+  box-shadow:0 0 0 4px rgba(154,171,186,.12)!important;
+}
+
+/* Account Work quick link */
+.mockDriverApp.theme-light .financeAccountWorkSummary{
+  border-color:#dfe6ed!important;
+  background:#fff!important;
+  box-shadow:0 7px 20px rgba(24,45,72,.06)!important;
+}
+
+.mockDriverApp.theme-light .financeAccountWorkSummary b,
+.mockDriverApp.theme-light .financeAccountWorkSummary strong{
+  color:#172940!important;
+}
+
+.mockDriverApp.theme-light .financeAccountWorkSummary small{
+  color:#718096!important;
+}
+
+.mockDriverApp.theme-light .financeRecentActivity{
+  border-color:#dfe6ed!important;
+  background:#fff!important;
+  box-shadow:0 7px 20px rgba(24,45,72,.06)!important;
+}
+
+/* Slightly stronger light-mode bottom navigation */
+.mockDriverApp.theme-light .mockBottomNav{
+  border-top:1px solid #dce3eb!important;
+  background:rgba(255,255,255,.985)!important;
+  box-shadow:0 -8px 24px rgba(24,45,72,.085)!important;
+}
+
+.mockDriverApp.theme-light .mockBottomNav button{
+  color:#748397!important;
+}
+
+.mockDriverApp.theme-light .mockBottomNav button.active{
+  color:#173b67!important;
+  background:#edf3f8!important;
+}
+
+@media(max-width:390px){
+  .driverActivityDateFilters{
+    gap:4px!important;
+  }
+
+  .driverActivityDateFilters button{
+    padding-left:2px!important;
+    padding-right:2px!important;
+    font-size:calc(8.2px * var(--driver-text-scale))!important;
+  }
+}

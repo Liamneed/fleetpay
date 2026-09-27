@@ -11196,24 +11196,39 @@ function DriverApp(){
  };
 
  const ActivityPage=()=>{
-  const jobs=accountWork?.jobs||[];
-  const summary=accountWork?.summary||{};
   const showAccountWork=activityFilter==='account-work';
   const showLedger=activityFilter==='ledger';
   const showPayouts=activityFilter==='payouts';
 
   const activityRange=driverActivityRange(activityDateFilter);
 
+  /*
+   * The API already receives the selected period, but keep the rendered
+   * jobs constrained here as well so a slower response from a previous
+   * period cannot repopulate the current view.
+   */
+  const jobs=(accountWork?.jobs||[]).filter(
+   x=>driverActivityInRange(x.postedAt||x.completedAt,activityRange)
+  );
+
+  const summary={
+   jobs:jobs.length,
+   totalDriverCost:Math.round(
+    jobs.reduce((sum,x)=>sum+Number(x.driverCost||0),0)*100
+   )/100,
+   totalWaitingCost:Math.round(
+    jobs.reduce((sum,x)=>sum+Number(x.waitingTimeCost||0),0)*100
+   )/100,
+   totalExtraCost:Math.round(
+    jobs.reduce((sum,x)=>sum+Number(x.extraCost||0),0)*100
+   )/100
+  };
+
   const filteredLedger=(me.ledger||[]).filter(
    x=>driverActivityInRange(x.createdAt,activityRange)
   );
 
-  const allPayoutActivity=[
-   ...(me.earlyPayoutRequests||[]),
-   ...(me.weeklyPayouts||[])
-  ];
-
-  const filteredPayoutActivity=allPayoutActivity.filter(
+  const filteredPayoutActivity=(me.earlyPayoutRequests||[]).filter(
    x=>driverActivityInRange(
     x.createdAt||x.updatedAt||x.paidAt,
     activityRange
@@ -11229,41 +11244,49 @@ function DriverApp(){
   }[activityDateFilter]||'This week';
 
   return <div className="driverPageView mockTransactionsPage">
-   <div className="mockSegmented mockTransactionsTabs" role="tablist">
-    {[
-     ['account-work','Account Work'],
-     ['ledger','Office Ledger'],
-     ['payouts','Payouts']
-    ].map(([key,label])=>
-     <button
-      type="button"
-      key={key}
-      className={activityFilter===key?'active':''}
-      onClick={()=>setActivityFilter(key)}
-     >
-      {label}
-     </button>
-    )}
-   </div>
+   <section className="driverActivityFilters">
+    <div className="driverActivityFilterGroup">
+     <span className="driverActivityFilterLabel">View</span>
+     <div className="mockSegmented mockTransactionsTabs" role="tablist">
+      {[
+       ['account-work','Account Work'],
+       ['ledger','Adjustments'],
+       ['payouts','Payouts']
+      ].map(([key,label])=>
+       <button
+        type="button"
+        key={key}
+        className={activityFilter===key?'active':''}
+        onClick={()=>setActivityFilter(key)}
+       >
+        {label}
+       </button>
+      )}
+     </div>
+    </div>
 
-   <div className="driverActivityDateFilters" aria-label="Activity date range">
-    {[
-     ['today','Today'],
-     ['yesterday','Yesterday'],
-     ['this-week','This week'],
-     ['last-week','Last week'],
-     ['all','All']
-    ].map(([key,label])=>
-     <button
-      key={key}
-      type="button"
-      className={activityDateFilter===key?'active':''}
-      onClick={()=>setActivityDateFilter(key)}
-     >
-      {label}
-     </button>
-    )}
-   </div>
+    <div className="driverActivityFilterGroup">
+     <span className="driverActivityFilterLabel">Period</span>
+     <div className="driverActivityDateFilters" aria-label="Activity date range">
+      {[
+       ['today','Today'],
+       ['yesterday','Yesterday'],
+       ['this-week','This week'],
+       ['last-week','Last week'],
+       ['all','All']
+      ].map(([key,label])=>
+       <button
+        key={key}
+        type="button"
+        className={activityDateFilter===key?'active':''}
+        onClick={()=>setActivityDateFilter(key)}
+       >
+        {label}
+       </button>
+      )}
+     </div>
+    </div>
+   </section>
 
    {showAccountWork&&<>
     <section className="mockAccountWorkSummary">
@@ -11333,7 +11356,11 @@ function DriverApp(){
            </i>
           }
          </span>
-         <span>{x.accountName||x.accountCode||'Account job'}</span>
+         <span>{
+          String(x.accountName||'').trim().toLowerCase()==='fleetpay uk'
+           ?'FaivoPay'
+           :x.accountName||x.accountCode||'Account job'
+         }</span>
          {(Number(x.waitingTimeCost||0)>0||Number(x.extraCost||0)>0)&&
           <span className="mockAccountWorkFlags">
            {Number(x.waitingTimeCost||0)>0&&
@@ -11430,14 +11457,14 @@ function DriverApp(){
     <section className="mockWhiteCard mockLedgerCard">
      <div className="mockSectionHead">
       <div>
-       <span>FAIVOPAY</span>
-       <h2>Office ledger</h2>
+       <span>ACCOUNT</span>
+       <h2>Account adjustments</h2>
       </div>
      </div>
 
-     {(me.ledger||[]).length===0
-      ?<div className="mockEmptyList">No office account activity recorded yet.</div>
-      :(me.ledger||[]).slice(0,30).map(x=>
+     {filteredLedger.length===0
+      ?<div className="mockEmptyList">No account adjustments for {activityPeriodLabel.toLowerCase()}.</div>
+      :filteredLedger.slice(0,30).map(x=>
        <div className="mockTransactionRow" key={`lg-${x.id}`}>
         <span className="mockRoundIcon slate"><WalletCards/></span>
         <div>
@@ -11465,9 +11492,9 @@ function DriverApp(){
       </div>
      </div>
 
-     {(me.earlyPayoutRequests||[]).length===0
-      ?<div className="mockEmptyList">No payout requests yet.</div>
-      :(me.earlyPayoutRequests||[]).slice(0,20).map(x=>
+     {filteredPayoutActivity.length===0
+      ?<div className="mockEmptyList">No payouts for {activityPeriodLabel.toLowerCase()}.</div>
+      :filteredPayoutActivity.slice(0,20).map(x=>
        <div className="mockTransactionRow" key={`po-${x.id}`}>
         <span className="mockRoundIcon amber"><ArrowUpRight/></span>
         <div>
@@ -11596,7 +11623,13 @@ function DriverApp(){
  return <div className={`driverApp modernDriverApp driverVNext mockDriverApp theme-${theme}`} style={{'--driver-text-scale':textScale}}>
   <header className="mockAppHeader">
    <div className="mockHeaderTop">
-    <div className="mockWordmark mockWordmarkImage"><img src={faivopayMark} alt="FaivoPay"/></div>
+    <div className="mockBrandLockup">
+     <div className="mockWordmark mockWordmarkImage"><img src={faivopayMark} alt="FaivoPay"/></div>
+     <div className="mockBrandWords">
+      <b>FaivoPay</b>
+      <span>Fairer, faster and simpler payments</span>
+     </div>
+    </div>
     <button className="mockHeaderBell" type="button" onClick={openNotifications} aria-label="Notifications"><Bell/>{unreadNotifications.length>0&&<i/>}</button>
    </div>
    <div className="mockHeaderTitle">
