@@ -11569,17 +11569,21 @@ function invoiceCandidateFees(
   ORDER BY fl.created_at,fl.id
  `).all(companyId);
 
+ /*
+  * Include every uninvoiced fee record in the accounting period,
+  * including rows whose effective value has become £0.00 after a
+  * full pre-invoice refund.
+  *
+  * Zero-value rows still need a closed lifecycle: they are snapshotted
+  * on the weekly invoice at £0.00 and marked invoiced with the rest of
+  * the period instead of remaining uninvoiced forever.
+  */
  return rows
   .filter(row=>{
    const date=londonDateFromIso(row.created_at);
    return date>=periodStart && date<=periodEnd;
   })
-  .map(effectiveUninvoicedFeeRow)
-  .filter(row=>
-   row.effectiveGrossFee>0 ||
-   row.effectiveFaivopayShare>0 ||
-   row.effectiveTaxiCompanyShare>0
-  );
+  .map(effectiveUninvoicedFeeRow);
 }
 
 
