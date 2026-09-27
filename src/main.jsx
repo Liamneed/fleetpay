@@ -967,14 +967,113 @@ function AdminApp(){
  const weeklyPending=weeklyItems.filter(x=>!x.approvalStatus||x.approvalStatus==='pending');
  const weeklyApproved=weeklyItems.filter(x=>x.approvalStatus==='approved');
  const weeklyExcluded=weeklyItems.filter(x=>x.approvalStatus==='excluded');
- const weeklyApprovedTotal=weeklyApproved.reduce((a,x)=>a+Number(x.amount||0),0);
- const weeklyOutstandingTotal=weeklyCollections.reduce((a,x)=>a+Number(x.amount||0),0);
- const weeklyPayoutBeforeFees=weeklyApproved.reduce((a,x)=>a+Math.max(0,Number(x.previousBalance||0)),0);
- const weeklyPayoutPlanDeductions=weeklyApproved.reduce((a,x)=>a+Number(x.planAllocation||0),0);
- const weeklyPayoutFeesCharges=Math.max(0,weeklyPayoutBeforeFees-weeklyPayoutPlanDeductions-weeklyApprovedTotal);
- const weeklyIncomingBeforeFees=weeklyCollections.reduce((a,x)=>a+Math.abs(Number(x.previousBalance||0)),0);
- const weeklyIncomingFeesCharges=Math.max(0,weeklyOutstandingTotal-weeklyIncomingBeforeFees);
- const weeklyExcludedBeforeFees=weeklyExcluded.reduce((a,x)=>a+Math.max(0,Number(x.previousBalance||0)),0);
+
+ /*
+  * Monday outgoing:
+  * Previous Balance is the gross amount before FaivoPay deductions.
+  * The final approved amount is the actual driver payout.
+  */
+ const weeklyApprovedTotal=weeklyApproved.reduce(
+  (a,x)=>a+Number(x.amount||0),
+  0
+ );
+
+ const weeklyPayoutBeforeFees=weeklyApproved.reduce(
+  (a,x)=>a+Math.max(0,Number(x.previousBalance||0)),
+  0
+ );
+
+ const weeklyPayoutWeeklyFees=weeklyApproved.reduce(
+  (a,x)=>a+Number(x.weeklyFee||0),
+  0
+ );
+
+ const weeklyPayoutCarriedCharges=weeklyApproved.reduce(
+  (a,x)=>a+Number(x.carriedCharges||0),
+  0
+ );
+
+ const weeklyPayoutPlanDeductions=weeklyApproved.reduce(
+  (a,x)=>a+Number(x.planAllocation||0),
+  0
+ );
+
+ const weeklyPayoutFeesCharges=
+  weeklyPayoutWeeklyFees+
+  weeklyPayoutCarriedCharges;
+
+ /*
+  * Monday incoming:
+  * settlement_run.items records what became due.
+  * payment_requests is authoritative for whether money was actually
+  * received. An OPEN request is a receivable, not cleared cash.
+  */
+ const mondayPaymentRequestsById=new Map(
+  (sett.paymentRequests||[]).map(x=>[String(x.id),x])
+ );
+
+ const weeklyCollectionStatus=weeklyCollections.map(item=>{
+  const request=item.requestId
+   ?mondayPaymentRequestsById.get(String(item.requestId))
+   :null;
+
+  return {
+   item,
+   request,
+   status:String(request?.status||'open')
+  };
+ });
+
+ const weeklyActiveCollections=weeklyCollectionStatus.filter(
+  x=>x.status!=='cancelled'
+ );
+
+ const weeklyPaidCollections=weeklyActiveCollections.filter(
+  x=>x.status==='paid'
+ );
+
+ const weeklyUnpaidCollections=weeklyActiveCollections.filter(
+  x=>x.status!=='paid'
+ );
+
+ const weeklyIncomingDueTotal=weeklyActiveCollections.reduce(
+  (a,x)=>a+Number(x.request?.amount??x.item.amount??0),
+  0
+ );
+
+ const weeklyIncomingClearedTotal=weeklyPaidCollections.reduce(
+  (a,x)=>a+Number(x.request?.amount??x.item.amount??0),
+  0
+ );
+
+ const weeklyIncomingOutstandingTotal=weeklyUnpaidCollections.reduce(
+  (a,x)=>a+Number(x.request?.amount??x.item.amount??0),
+  0
+ );
+
+ const weeklyIncomingBeforeFees=weeklyActiveCollections.reduce(
+  (a,x)=>a+Math.abs(Number(x.item.previousBalance||0)),
+  0
+ );
+
+ const weeklyIncomingWeeklyFees=weeklyActiveCollections.reduce(
+  (a,x)=>a+Number(x.item.weeklyFee||0),
+  0
+ );
+
+ const weeklyIncomingCarriedCharges=weeklyActiveCollections.reduce(
+  (a,x)=>a+Number(x.item.carriedCharges||0),
+  0
+ );
+
+ const weeklyIncomingFeesCharges=
+  weeklyIncomingWeeklyFees+
+  weeklyIncomingCarriedCharges;
+
+ const weeklyExcludedBeforeFees=weeklyExcluded.reduce(
+  (a,x)=>a+Math.max(0,Number(x.previousBalance||0)),
+  0
+ );
  const activeMondayCancelledBatch=activeMonday?sett.payoutRuns.find(r=>r.runType==='weekly'&&r.status==='cancelled'&&String(r.notes||'').includes(activeMonday.id)):null;
 
  const activeWeeklyPayoutRun=activeMonday?.payoutRunId
@@ -4150,14 +4249,79 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
       <section className="panel wizardFinancePanel">
        <div className="panelHead"><div><span className="sectionKicker">{activeMonday.runDate||'MONDAY RUN'}</span><h3>Settlement summary</h3><p>{activeMonday.id}</p></div><Pill tone="warn">{String(activeMonday.status||'active').replaceAll('_',' ')}</Pill></div>
        <div className="mondayFinanceSummary">
-        <div><span>Payout before fees</span><b>{money(weeklyPayoutBeforeFees)}</b></div>
-        <div><span>Fees & charges</span><b>{money(weeklyPayoutFeesCharges)}</b></div>
-        <div><span>Plan deductions</span><b>{money(weeklyPayoutPlanDeductions)}</b></div>
-        <div><span>Actual payout</span><b>{money(weeklyApprovedTotal)}</b></div>
-        <div><span>Drivers to pay</span><b>{weeklyApproved.length}</b></div>
-        <div><span>Collections</span><b>{money(weeklyOutstandingTotal)}</b></div>
-        <div><span>Drivers owing</span><b>{weeklyCollections.length}</b></div>
-        <div><span>Pending decisions</span><b>{weeklyPending.length}</b></div>
+        <div>
+         <span>Gross outgoing</span>
+         <b>{money(weeklyPayoutBeforeFees)}</b>
+         <small>Before FaivoPay deductions</small>
+        </div>
+
+        <div>
+         <span>FaivoPay fees</span>
+         <b>{money(weeklyPayoutWeeklyFees)}</b>
+         <small>Weekly driver fees</small>
+        </div>
+
+        <div>
+         <span>Other deductions</span>
+         <b>{money(weeklyPayoutCarriedCharges)}</b>
+         <small>Carried charges</small>
+        </div>
+
+        <div>
+         <span>Plan deductions</span>
+         <b>{money(weeklyPayoutPlanDeductions)}</b>
+         <small>Applied to repayment plans</small>
+        </div>
+
+        <div>
+         <span>Net outgoing</span>
+         <b>{money(weeklyApprovedTotal)}</b>
+         <small>Actual approved driver payouts</small>
+        </div>
+
+        <div>
+         <span>Drivers to pay</span>
+         <b>{weeklyApproved.length}</b>
+         <small>{weeklyPending.length} pending decision{weeklyPending.length===1?'':'s'}</small>
+        </div>
+
+        <div>
+         <span>Incoming due</span>
+         <b>{money(weeklyIncomingDueTotal)}</b>
+         <small>{weeklyActiveCollections.length} driver{weeklyActiveCollections.length===1?'':'s'} billed</small>
+        </div>
+
+        <div>
+         <span>Incoming cleared</span>
+         <b>{money(weeklyIncomingClearedTotal)}</b>
+         <small>{weeklyPaidCollections.length} payment{weeklyPaidCollections.length===1?'':'s'} received</small>
+        </div>
+
+        <div>
+         <span>Outstanding incoming</span>
+         <b>{money(weeklyIncomingOutstandingTotal)}</b>
+         <small>{weeklyUnpaidCollections.length} unpaid request{weeklyUnpaidCollections.length===1?'':'s'}</small>
+        </div>
+
+        <div>
+         <span>Incoming before fees</span>
+         <b>{money(weeklyIncomingBeforeFees)}</b>
+         <small>Driver balances before added charges</small>
+        </div>
+
+        <div>
+         <span>Incoming fees & charges</span>
+         <b>{money(weeklyIncomingFeesCharges)}</b>
+         <small>
+          {money(weeklyIncomingWeeklyFees)} fees · {money(weeklyIncomingCarriedCharges)} carried
+         </small>
+        </div>
+
+        <div>
+         <span>Net cash position</span>
+         <b>{money(weeklyIncomingClearedTotal-weeklyApprovedTotal)}</b>
+         <small>Cleared incoming less approved outgoing</small>
+        </div>
        </div>
       </section>
 
