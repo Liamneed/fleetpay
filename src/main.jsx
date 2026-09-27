@@ -1919,6 +1919,12 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
    return alert('Preview the draft invoice before creating the final invoice.');
   }
 
+  if(!preview.finalInvoiceEligible){
+   return alert(
+    'This is a current week draft only. The final invoice can be created after the week has fully completed.'
+   );
+  }
+
   if(!confirm(
    `Create the FINAL invoice for ${preview.periodStart} to ${preview.periodEnd}?\n\n`+
    `${preview.feeCount} fee records\n`+
@@ -5377,13 +5383,21 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
         <div className="invoiceDraftHead">
          <div>
           <span className="sectionKicker">DRAFT REVIEW</span>
-          <h3>Previous completed week</h3>
+          <h3>
+           {feeInvoicePreview.finalInvoiceEligible
+            ?'Completed week'
+            :'Current week draft'}
+          </h3>
           <p>
            {feeInvoicePreview.periodStart} to {feeInvoicePreview.periodEnd}
           </p>
          </div>
 
-         <Pill tone="warn">DRAFT — NOT AN INVOICE</Pill>
+         <Pill tone="warn">
+          {feeInvoicePreview.finalInvoiceEligible
+           ?'DRAFT — READY FOR FINAL REVIEW'
+           :'CURRENT WEEK DRAFT — NOT FINAL'}
+         </Pill>
         </div>
 
         <div className="invoiceDraftMetrics">
@@ -5421,8 +5435,9 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
          <div>
           <b>No accounting records have changed</b>
           <span>
-           If a fee or refund changes after this preview, FaivoPay will block
-           final creation and require a fresh draft.
+           {feeInvoicePreview.finalInvoiceEligible
+            ?'If a fee or refund changes after this preview, FaivoPay will block final creation and require a fresh draft.'
+            :'This draft includes the current week-to-date only. Final invoice creation remains blocked until the week is fully completed.'}
           </span>
          </div>
         </div>
@@ -5440,11 +5455,19 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
          {canMoney&&
           <button
            className="primary"
-           disabled={feeInvoiceBusy||feeInvoiceDraftPdfBusy}
+           disabled={
+            feeInvoiceBusy||
+            feeInvoiceDraftPdfBusy||
+            !feeInvoicePreview.finalInvoiceEligible
+           }
            onClick={createWeeklyFeeInvoice}
           >
            <ShieldCheck/>
-           {feeInvoiceBusy?'Creating final invoice…':'Create final invoice'}
+           {feeInvoiceBusy
+            ?'Creating final invoice…'
+            :feeInvoicePreview.finalInvoiceEligible
+             ?'Create final invoice'
+             :'Final invoice available after week close'}
           </button>
          }
         </div>

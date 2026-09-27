@@ -11236,6 +11236,30 @@ function isoDateShift(dateString,days){
  return d.toISOString().slice(0,10);
 }
 
+
+function currentInvoiceWeekToDate(){
+ const today=londonWindow().date;
+ const d=invoiceDateParts(today);
+ const weekday=d.getUTCDay();
+
+ /*
+  * Monday = 1 ... Sunday = 0.
+  * Draft previews may include the current incomplete week.
+  */
+ const daysBackToMonday=weekday===0?6:weekday-1;
+
+ const periodStart=isoDateShift(
+  today,
+  -daysBackToMonday
+ );
+
+ return {
+  periodStart,
+  periodEnd:today,
+  isCompleteWeek:weekday===0
+ };
+}
+
 function previousCompleteInvoiceWeek(){
  const today=londonWindow().date;
  const d=invoiceDateParts(today);
@@ -11277,6 +11301,34 @@ function londonDateFromIso(value){
   parts.find(x=>x.type===type)?.value||'';
 
  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+
+function validateInvoiceDraftPeriod(periodStart,periodEnd){
+ invoiceDateParts(periodStart);
+ invoiceDateParts(periodEnd);
+
+ if(periodStart>periodEnd){
+  throw new Error('Invoice draft period start must be on or before period end');
+ }
+
+ const startDay=invoiceDateParts(periodStart).getUTCDay();
+
+ if(startDay!==1){
+  throw new Error('Invoice draft periods must start on Monday');
+ }
+
+ const today=londonWindow().date;
+
+ if(periodEnd>today){
+  throw new Error('Invoice draft period cannot extend into the future');
+ }
+
+ const maxEnd=isoDateShift(periodStart,6);
+
+ if(periodEnd>maxEnd){
+  throw new Error('Invoice draft period cannot exceed one Monday-Sunday week');
+ }
 }
 
 function validateInvoicePeriod(periodStart,periodEnd){
@@ -11459,7 +11511,7 @@ function buildFeeInvoicePreview({
  periodEnd,
  billingEmail
 }){
- validateInvoicePeriod(periodStart,periodEnd);
+ validateInvoiceDraftPeriod(periodStart,periodEnd);
 
  const company=db.prepare(`
   SELECT *
@@ -12139,7 +12191,7 @@ app.post(
     });
    }
 
-   const fallback=previousCompleteInvoiceWeek();
+   const fallback=currentInvoiceWeekToDate();
 
    const periodStart=String(
     req.body?.periodStart||
@@ -12174,10 +12226,20 @@ app.post(
     billingEmail
    });
 
+   const completePeriod=
+    periodEnd<londonWindow().date &&
+    invoiceDateParts(periodStart).getUTCDay()===1 &&
+    invoiceDateParts(periodEnd).getUTCDay()===0 &&
+    isoDateShift(periodStart,6)===periodEnd;
+
    res.json({
     ok:true,
     company:companyPublic(company),
-    preview
+    preview:{
+     ...preview,
+     completePeriod,
+     finalInvoiceEligible:completePeriod
+    }
    });
   }catch(e){
    const code=
