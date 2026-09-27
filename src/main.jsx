@@ -8225,6 +8225,41 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
       <b>{companyFinance?.company?.name||settings.companyName||'Company settings'}</b>
      </div>
 
+     <section className="panel settingsCardV2">
+      <div className="settingsHead">
+       <Settings/>
+       <div>
+        <h3>Company profile</h3>
+        <p>Company identity and operating context used throughout FaivoPay.</p>
+       </div>
+      </div>
+
+      <div className="settingsInlineMeta">
+       <span>Company</span>
+       <b>{companyFinance?.company?.name||settings.companyName||'—'}</b>
+
+       <span>Timezone</span>
+       <b>{companyFinance?.weeklyInvoicing?.timezone||'Europe/London'}</b>
+      </div>
+     </section>
+
+     <div className="settingsSectionLabel">
+      <span>DRIVER PAYMENTS</span>
+      <b>Settlement, payout and fee rules</b>
+     </div>
+
+     <section className="panel settingsCardV2"><div className="settingsHead"><CalendarDays/><div><h3>Settlement & payout rules</h3><p>Controls used for Monday and early payout processing.</p></div></div><div className="formGrid2"><label>Outstanding threshold<div className="moneyField"><span>£</span><input type="number" step="0.01" value={settings.negativeThreshold??0} onChange={e=>setSettings({...settings,negativeThreshold:e.target.value})}/></div><small>Amounts owed below this are carried forward.</small></label><label>Minimum payout threshold<div className="moneyField"><span>£</span><input type="number" min="0" step="0.01" value={settings.minimumPayoutThreshold??0} onChange={e=>setSettings({...settings,minimumPayoutThreshold:e.target.value})}/></div><small>Positive balances below this remain on the driver account until a future settlement.</small></label><label>Weekly FaivoPay fee<div className="moneyField"><span>£</span><input type="number" step="0.01" value={settings.weeklyAppFee??0} onChange={e=>setSettings({...settings,weeklyAppFee:e.target.value})}/></div></label><label className="toggleRow"><span className="toggleCopy"><b>Charge weekly fee when no work is recorded</b><small>Turn this off to waive the weekly fee for drivers with no recorded work during the week being settled.</small></span><span className="toggleSwitch"><input type="checkbox" checked={settings.chargeWeeklyFeeWhenInactive!==false} onChange={e=>setSettings({...settings,chargeWeeklyFeeWhenInactive:e.target.checked})}/><span className="toggleSlider"/></span></label><label>Early payout fee<div className="moneyField"><span>£</span><input type="number" step="0.01" value={settings.earlyPayoutFee??0} onChange={e=>setSettings({...settings,earlyPayoutFee:e.target.value})}/></div></label><label>Early payout cutoff<input type="time" value={settings.earlyPayoutCutoffTime||'11:00'} onChange={e=>setSettings({...settings,earlyPayoutCutoffTime:e.target.value})}/></label><label>Outstanding payment deadline<input type="time" value={settings.outstandingDueTime||'17:00'} onChange={e=>setSettings({...settings,outstandingDueTime:e.target.value})}/></label><label>Autocab sync interval<input type="number" min="2" max="60" value={settings.syncMinutes||10} onChange={e=>setSettings({...settings,syncMinutes:e.target.value})}/><small>Minutes between automatic syncs.</small></label></div><div className="formGrid1"><label>Weekly payout Autocab description<input value={settings.weeklyPayoutReasonTemplate||''} onChange={e=>setSettings({...settings,weeklyPayoutReasonTemplate:e.target.value})}/><small>Available: {'{date}'} {'{time}'} {'{callsign}'} {'{amount}'}</small></label><label>Early payout Autocab description<input value={settings.earlyPayoutReasonTemplate||''} onChange={e=>setSettings({...settings,earlyPayoutReasonTemplate:e.target.value})}/></label><div className="formGrid2"><label>Manual pay-in default reason<input value={settings.manualPayInReasonDefault||''} onChange={e=>setSettings({...settings,manualPayInReasonDefault:e.target.value})}/></label><label>Manual payout default reason<input value={settings.manualPayoutReasonDefault||''} onChange={e=>setSettings({...settings,manualPayoutReasonDefault:e.target.value})}/></label></div></div></section>
+     <div className="settingsSectionLabel">
+      <span>CUSTOMER PAYMENTS</span>
+      <b>Card-payment fees and revenue split</b>
+     </div>
+
+     <section className="panel settingsCardV2"><div className="settingsHead"><BadgePoundSterling/><div><h3>Fee pricing & split</h3><p>Define the gross fee and how each fee is split between FaivoPay and the taxi company.</p></div></div><div className="formGrid2"><label>Customer payment fee type<select value={settings.customerPaymentFeeType||'fixed'} onChange={e=>setSettings({...settings,customerPaymentFeeType:e.target.value})}><option value="fixed">Fixed amount</option><option value="percentage">Percentage</option></select></label><label>Customer payment fee<div className="moneyField"><span>{settings.customerPaymentFeeType==='percentage'?'%':'£'}</span><input type="number" min="0" step="0.01" value={settings.customerPaymentFeeValue??0} onChange={e=>setSettings({...settings,customerPaymentFeeValue:e.target.value})}/></div></label><label>FaivoPay share – customer fees<div className="moneyField"><span>%</span><input type="number" min="0" max="100" value={settings.customerFeeFleetPayPercent??100} onChange={e=>setSettings({...settings,customerFeeFleetPayPercent:e.target.value})}/></div><small>Taxi company receives the remaining percentage.</small></label><label>FaivoPay share – early payout fee<div className="moneyField"><span>%</span><input type="number" min="0" max="100" value={settings.earlyPayoutFeeFleetPayPercent??100} onChange={e=>setSettings({...settings,earlyPayoutFeeFleetPayPercent:e.target.value})}/></div></label><label>FaivoPay share – weekly fee<div className="moneyField"><span>%</span><input type="number" min="0" max="100" value={settings.weeklyFeeFleetPayPercent??100} onChange={e=>setSettings({...settings,weeklyFeeFleetPayPercent:e.target.value})}/></div></label></div></section>
+     <div className="settingsSectionLabel">
+      <span>WEEKLY INVOICING</span>
+      <b>FaivoPay service-fee billing</b>
+     </div>
+
      <section className="panel settingsCardV2 companyInvoiceCard">
       <div className="settingsHead">
        <BadgePoundSterling/>
@@ -8304,13 +8339,6 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
      </section>
 
      <div className="settingsSectionLabel">
-      <span>DRIVER PAYMENTS</span>
-      <b>Settlement, payout and fee rules</b>
-     </div>
-
-     <section className="panel settingsCardV2"><div className="settingsHead"><CalendarDays/><div><h3>Settlement & payout rules</h3><p>Controls used for Monday and early payout processing.</p></div></div><div className="formGrid2"><label>Outstanding threshold<div className="moneyField"><span>£</span><input type="number" step="0.01" value={settings.negativeThreshold??0} onChange={e=>setSettings({...settings,negativeThreshold:e.target.value})}/></div><small>Amounts owed below this are carried forward.</small></label><label>Minimum payout threshold<div className="moneyField"><span>£</span><input type="number" min="0" step="0.01" value={settings.minimumPayoutThreshold??0} onChange={e=>setSettings({...settings,minimumPayoutThreshold:e.target.value})}/></div><small>Positive balances below this remain on the driver account until a future settlement.</small></label><label>Weekly FaivoPay fee<div className="moneyField"><span>£</span><input type="number" step="0.01" value={settings.weeklyAppFee??0} onChange={e=>setSettings({...settings,weeklyAppFee:e.target.value})}/></div></label><label className="toggleRow"><span className="toggleCopy"><b>Charge weekly fee when no work is recorded</b><small>Turn this off to waive the weekly fee for drivers with no recorded work during the week being settled.</small></span><span className="toggleSwitch"><input type="checkbox" checked={settings.chargeWeeklyFeeWhenInactive!==false} onChange={e=>setSettings({...settings,chargeWeeklyFeeWhenInactive:e.target.checked})}/><span className="toggleSlider"/></span></label><label>Early payout fee<div className="moneyField"><span>£</span><input type="number" step="0.01" value={settings.earlyPayoutFee??0} onChange={e=>setSettings({...settings,earlyPayoutFee:e.target.value})}/></div></label><label>Early payout cutoff<input type="time" value={settings.earlyPayoutCutoffTime||'11:00'} onChange={e=>setSettings({...settings,earlyPayoutCutoffTime:e.target.value})}/></label><label>Outstanding payment deadline<input type="time" value={settings.outstandingDueTime||'17:00'} onChange={e=>setSettings({...settings,outstandingDueTime:e.target.value})}/></label><label>Autocab sync interval<input type="number" min="2" max="60" value={settings.syncMinutes||10} onChange={e=>setSettings({...settings,syncMinutes:e.target.value})}/><small>Minutes between automatic syncs.</small></label></div><div className="formGrid1"><label>Weekly payout Autocab description<input value={settings.weeklyPayoutReasonTemplate||''} onChange={e=>setSettings({...settings,weeklyPayoutReasonTemplate:e.target.value})}/><small>Available: {'{date}'} {'{time}'} {'{callsign}'} {'{amount}'}</small></label><label>Early payout Autocab description<input value={settings.earlyPayoutReasonTemplate||''} onChange={e=>setSettings({...settings,earlyPayoutReasonTemplate:e.target.value})}/></label><div className="formGrid2"><label>Manual pay-in default reason<input value={settings.manualPayInReasonDefault||''} onChange={e=>setSettings({...settings,manualPayInReasonDefault:e.target.value})}/></label><label>Manual payout default reason<input value={settings.manualPayoutReasonDefault||''} onChange={e=>setSettings({...settings,manualPayoutReasonDefault:e.target.value})}/></label></div></div></section>
-     <section className="panel settingsCardV2"><div className="settingsHead"><BadgePoundSterling/><div><h3>Fee pricing & split</h3><p>Define the gross fee and how each fee is split between FaivoPay and the taxi company.</p></div></div><div className="formGrid2"><label>Customer payment fee type<select value={settings.customerPaymentFeeType||'fixed'} onChange={e=>setSettings({...settings,customerPaymentFeeType:e.target.value})}><option value="fixed">Fixed amount</option><option value="percentage">Percentage</option></select></label><label>Customer payment fee<div className="moneyField"><span>{settings.customerPaymentFeeType==='percentage'?'%':'£'}</span><input type="number" min="0" step="0.01" value={settings.customerPaymentFeeValue??0} onChange={e=>setSettings({...settings,customerPaymentFeeValue:e.target.value})}/></div></label><label>FaivoPay share – customer fees<div className="moneyField"><span>%</span><input type="number" min="0" max="100" value={settings.customerFeeFleetPayPercent??100} onChange={e=>setSettings({...settings,customerFeeFleetPayPercent:e.target.value})}/></div><small>Taxi company receives the remaining percentage.</small></label><label>FaivoPay share – early payout fee<div className="moneyField"><span>%</span><input type="number" min="0" max="100" value={settings.earlyPayoutFeeFleetPayPercent??100} onChange={e=>setSettings({...settings,earlyPayoutFeeFleetPayPercent:e.target.value})}/></div></label><label>FaivoPay share – weekly fee<div className="moneyField"><span>%</span><input type="number" min="0" max="100" value={settings.weeklyFeeFleetPayPercent??100} onChange={e=>setSettings({...settings,weeklyFeeFleetPayPercent:e.target.value})}/></div></label></div></section>
-     <div className="settingsSectionLabel">
       <span>COMMUNICATIONS</span>
       <b>SMS, email and customer messaging</b>
      </div>
@@ -8325,6 +8353,39 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
       <small>The branded email layout is controlled by FaivoPay; this field changes the email subject only.</small>
      </section>
      <section className="panel settingsCardV2"><div className="settingsHead"><Mail/><div><h3>Outstanding-payment messages</h3><p>Edit the exact wording drivers receive after the Monday run.</p></div></div><label>Email subject<input value={settings.outstandingEmailSubject||''} onChange={e=>setSettings({...settings,outstandingEmailSubject:e.target.value})}/></label><label>Email message<textarea rows="7" value={settings.outstandingEmailBody||''} onChange={e=>setSettings({...settings,outstandingEmailBody:e.target.value})}/></label><label>SMS message<textarea rows="5" value={settings.outstandingSmsTemplate||''} onChange={e=>setSettings({...settings,outstandingSmsTemplate:e.target.value})}/></label><small>Available variables: {'{driver}'}, {'{callsign}'}, {'{amount}'}, {'{dueDate}'}, {'{dueTime}'}, {'{paymentLink}'}</small></section>
+     <div className="settingsSectionLabel">
+      <span>TEST & DEMO</span>
+      <b>Training and controlled live-data testing</b>
+     </div>
+
+     <section className="panel settingsCardV2">
+      <div className="settingsHead">
+       <ShieldCheck/>
+       <div>
+        <h3>Testing environments</h3>
+        <p>
+         Demo Lab provides isolated operator training. Live Data Test Lab
+         provides controlled, allow-listed validation against real Autocab data.
+        </p>
+       </div>
+      </div>
+
+      <div className="settingsInlineMeta">
+       <span>Demo Lab</span>
+       <b>Isolated training data</b>
+
+       <span>Live Test Lab</span>
+       <b>Controlled real-data testing</b>
+      </div>
+     </section>
+
+     <div className="settingsSectionLabel">
+      <span>ADVANCED / INTEGRATIONS</span>
+      <b>Administrative and launch controls</b>
+     </div>
+
+     <section className="panel settingsCardV2 dangerZone"><div className="settingsHead"><AlertTriangle/><div><h3>Pre-launch data reset</h3><p>Use once before the live launch. FaivoPay creates a timestamped SQLite backup first, then clears operational test data while keeping office users, MFA, settings and integrations.</p></div></div><div className="launchResetInfo"><b>Cleared:</b><span>payments, payment plans, payout runs, settlement runs, fee records, notifications, communication history, adjustments and demo data.</span></div><label className="toggleRow"><span className="toggleCopy"><b>Also clear driver app registrations</b><small>Include driver logins and push subscriptions in the pre-launch reset.</small></span><span className="toggleSwitch"><input type="checkbox" checked={resetDrivers} onChange={e=>setResetDrivers(e.target.checked)}/><span className="toggleSlider"/></span></label><label>Confirmation phrase<input value={resetPhrase} onChange={e=>setResetPhrase(e.target.value)} placeholder="RESET FAIVOPAY FOR LIVE LAUNCH"/></label><button className="dangerAction" disabled={resetPhrase!=='RESET FAIVOPAY FOR LIVE LAUNCH'} onClick={launchReset}><AlertTriangle/>Create backup & reset operational data</button></section>
+
      <div className="settingsSectionLabel">
       <span>DATA & AUDIT</span>
       <b>Operational exports</b>
@@ -8380,7 +8441,7 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
       </small>
      </section>
 
-     <section className="panel settingsCardV2 dangerZone"><div className="settingsHead"><AlertTriangle/><div><h3>Pre-launch data reset</h3><p>Use once before the live launch. FaivoPay creates a timestamped SQLite backup first, then clears operational test data while keeping office users, MFA, settings and integrations.</p></div></div><div className="launchResetInfo"><b>Cleared:</b><span>payments, payment plans, payout runs, settlement runs, fee records, notifications, communication history, adjustments and demo data.</span></div><label className="toggleRow"><span className="toggleCopy"><b>Also clear driver app registrations</b><small>Include driver logins and push subscriptions in the pre-launch reset.</small></span><span className="toggleSwitch"><input type="checkbox" checked={resetDrivers} onChange={e=>setResetDrivers(e.target.checked)}/><span className="toggleSlider"/></span></label><label>Confirmation phrase<input value={resetPhrase} onChange={e=>setResetPhrase(e.target.value)} placeholder="RESET FAIVOPAY FOR LIVE LAUNCH"/></label><button className="dangerAction" disabled={resetPhrase!=='RESET FAIVOPAY FOR LIVE LAUNCH'} onClick={launchReset}><AlertTriangle/>Create backup & reset operational data</button></section>
+
 
     </div></>}
    </div>
