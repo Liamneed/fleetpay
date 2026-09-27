@@ -12437,3 +12437,158 @@ body {
   align-items:flex-start;
  }
 }
+
+/* Live Test Lab - controlled live Autocab credit */
+.liveTestSafetyBanner.armed{
+ border-color:rgba(220,70,70,.42);
+ background:rgba(220,70,70,.08);
+}
+
+.liveTestCreditPanel{
+ display:grid;
+ gap:16px;
+}
+
+.liveTestCreditWarning{
+ display:flex;
+ align-items:flex-start;
+ gap:12px;
+ padding:13px 15px;
+ border:1px solid rgba(220,70,70,.34);
+ border-radius:14px;
+ background:rgba(220,70,70,.07);
+}
+
+.liveTestCreditWarning svg{
+ flex:0 0 auto;
+ margin-top:2px;
+}
+
+.liveTestCreditWarning div{
+ display:grid;
+ gap:3px;
+}
+
+.liveTestCreditWarning span{
+ font-size:13px;
+ line-height:1.45;
+ opacity:.76;
+}
+
+.liveTestCreditFacts{
+ display:grid;
+ grid-template-columns:repeat(3,minmax(0,1fr));
+ gap:10px;
+}
+
+.liveTestCreditFacts>div,
+.liveTestCreditPayload>div{
+ display:grid;
+ gap:5px;
+ padding:13px 14px;
+ border:1px solid var(--line);
+ border-radius:13px;
+ background:var(--panel-soft);
+ min-width:0;
+}
+
+.liveTestCreditFacts span,
+.liveTestCreditPayload span{
+ font-size:12px;
+ opacity:.68;
+}
+
+.liveTestCreditFacts b{
+ font-size:17px;
+ overflow-wrap:anywhere;
+}
+
+.liveTestCreditPayload{
+ display:grid;
+ grid-template-columns:2fr 1fr 1fr;
+ gap:10px;
+}
+
+.liveTestCreditPayload b{
+ overflow-wrap:anywhere;
+}
+
+.liveTestCreditExecute{
+ display:flex;
+ align-items:center;
+ justify-content:space-between;
+ gap:20px;
+ padding:14px 15px;
+ border:1px solid rgba(220,70,70,.34);
+ border-radius:14px;
+}
+
+.liveTestCreditExecute>div{
+ display:grid;
+ gap:4px;
+}
+
+.liveTestCreditExecute span{
+ font-size:13px;
+ line-height:1.45;
+ opacity:.72;
+}
+
+.liveTestCreditExecute button{
+ flex:0 0 auto;
+}
+
+.liveTestCreditResult{
+ display:grid;
+ gap:14px;
+}
+
+.liveTestCreditResultHead{
+ display:flex;
+ align-items:center;
+ gap:12px;
+ padding:13px 15px;
+ border:1px solid var(--line);
+ border-radius:14px;
+ background:var(--panel-soft);
+}
+
+.liveTestCreditResultHead div{
+ display:grid;
+ gap:3px;
+}
+
+.liveTestCreditResultHead span{
+ font-size:13px;
+ opacity:.72;
+}
+
+.liveTestCreditNextStep{
+ margin:0;
+ padding:12px 14px;
+ border:1px solid var(--line);
+ border-radius:12px;
+ font-weight:600;
+ line-height:1.45;
+}
+
+@media (max-width:900px){
+ .liveTestCreditFacts{
+  grid-template-columns:1fr 1fr;
+ }
+
+ .liveTestCreditPayload{
+  grid-template-columns:1fr;
+ }
+
+ .liveTestCreditExecute{
+  align-items:flex-start;
+  flex-direction:column;
+ }
+}
+
+@media (max-width:600px){
+ .liveTestCreditFacts{
+  grid-template-columns:1fr;
+ }
+}

@@ -554,6 +554,11 @@ function LiveTestLab({
  writePreviewBusyDriver,
  writePreviewBalance,
  setWritePreviewBalance,
+ liveCreditPreview,
+ prepareLiveCredit,
+ executeLiveCredit,
+ liveCreditBusy,
+ liveCreditResult,
  busy
 }){
  const[search,setSearch]=useState('');
@@ -563,6 +568,14 @@ function LiveTestLab({
  const allowList=liveTest?.allowList||[];
  const events=liveTestEvents||[];
 
+ const armedLiveTestDriver=allowList.find(
+  x=>
+   String(x.driverId)==='1112' &&
+   String(x.callsign)==='9997' &&
+   x.enabled &&
+   x.liveWriteEnabled
+ )||null;
+
  const visibleEvents=events
   .filter(x=>[
    'live_account_snapshot_completed',
@@ -571,7 +584,13 @@ function LiveTestLab({
    'monday_simulation_failed',
    'autocab_write_preview_completed',
    'live_writes_enabled',
-   'live_writes_disabled'
+   'live_writes_disabled',
+   'live_credit_preview_completed',
+   'live_credit_requested',
+   'live_credit_completed',
+   'live_credit_completed_unverified',
+   'live_credit_failed',
+   'live_credit_verification_failed'
   ].includes(x.action))
   .slice(0,25);
 
@@ -606,17 +625,23 @@ function LiveTestLab({
  }
 
  return <>
-  <section className="liveTestSafetyBanner">
-   <ShieldCheck/>
+  <section className={`liveTestSafetyBanner ${armedLiveTestDriver?'armed':''}`}>
+   {armedLiveTestDriver?<AlertTriangle/>:<ShieldCheck/>}
    <div>
-    <b>SIMULATION ONLY — LIVE WRITES DISABLED</b>
+    <b>
+     {armedLiveTestDriver
+      ?'LIVE AUTOCAB WRITE GATE ARMED — TEST DRIVER 9997 ONLY'
+      :'LIVE WRITES DISABLED'}
+    </b>
     <span>
-     This area can select real Autocab drivers for controlled testing,
-     but this phase cannot alter Autocab balances, release payouts,
-     send payments or change live driver accounts.
+     {armedLiveTestDriver
+      ?'A controlled £1 Autocab test write can now be prepared for driver 9997 / ID 1112. No transaction is sent until the separate execution step is explicitly confirmed.'
+      :'Live Autocab reads, simulations and previews are available. No Autocab balance can be changed until the designated test driver is deliberately armed.'}
     </span>
    </div>
-   <Pill tone="good">READ ONLY</Pill>
+   <Pill tone={armedLiveTestDriver?'bad':'good'}>
+    {armedLiveTestDriver?'ARMED':'READ ONLY'}
+   </Pill>
   </section>
 
   <section className="officePageIntro liveTestIntro">
@@ -906,6 +931,24 @@ function LiveTestLab({
                  :'Autocab preview'}
                </button>
 
+               {String(x.driverId)==='1112'&&
+                String(x.callsign)==='9997'&&
+                x.liveWriteEnabled&&
+                <button
+                 className="mini danger"
+                 disabled={
+                  busy||
+                  liveCreditBusy===String(x.driverId)
+                 }
+                 onClick={()=>prepareLiveCredit(x)}
+                >
+                 <AlertTriangle/>
+                 {liveCreditBusy===String(x.driverId)
+                  ?'Preparing…'
+                  :'Prepare £1 credit test'}
+                </button>
+               }
+
                <button
                 className={`mini ${x.liveWriteEnabled?'danger':'warn'}`}
                 disabled={
@@ -949,6 +992,201 @@ function LiveTestLab({
         </div>
       }
      </section>
+
+     {(liveCreditPreview||liveCreditResult)&&
+      <section className="panel liveTestCreditPanel">
+       <div className="panelHead">
+        <div>
+         <span className="sectionKicker">
+          CONTROLLED LIVE AUTOCAB TEST
+         </span>
+         <h3>£1 credit · Callsign 9997</h3>
+         <p>
+          Fixed test transaction for Autocab driver ID 1112.
+          Driver, amount and direction cannot be edited.
+         </p>
+        </div>
+
+        <Pill tone={liveCreditResult?'good':'warn'}>
+         {liveCreditResult?'Completed':'Awaiting execution'}
+        </Pill>
+       </div>
+
+       {liveCreditPreview&&!liveCreditResult&&<>
+        <div className="liveTestCreditWarning">
+         <AlertTriangle/>
+         <div>
+          <b>REAL AUTOCAB WRITE — REVIEW BEFORE EXECUTING</b>
+          <span>
+           The preview itself is read-only. The execution button below
+           will send one £1.00 credit to Autocab if the live balance
+           still matches this preview.
+          </span>
+         </div>
+        </div>
+
+        <div className="liveTestCreditFacts">
+         <div>
+          <span>Driver</span>
+          <b>
+           {liveCreditPreview.driver?.callsign||'9997'}
+           {' / '}
+           {liveCreditPreview.driver?.driverId||'1112'}
+          </b>
+         </div>
+
+         <div>
+          <span>Direction</span>
+          <b>CREDIT</b>
+         </div>
+
+         <div>
+          <span>Amount</span>
+          <b>{money(liveCreditPreview.proposed?.payload?.amount||1)}</b>
+         </div>
+
+         <div>
+          <span>Current balance before</span>
+          <b>{money(liveCreditPreview.before?.currentBalance)}</b>
+         </div>
+
+         <div>
+          <span>Expected balance after</span>
+          <b>
+           {money(
+            liveCreditPreview.proposed?.expectedCurrentBalanceAfter
+           )}
+          </b>
+         </div>
+
+         <div>
+          <span>Preview expires</span>
+          <b>{dt(liveCreditPreview.expiresAt)}</b>
+         </div>
+        </div>
+
+        <div className="liveTestCreditPayload">
+         <div>
+          <span>Description sent to Autocab</span>
+          <b>
+           {liveCreditPreview.proposed?.payload?.description||
+            'FaivoPay Live Test Credit'}
+          </b>
+         </div>
+
+         <div>
+          <span>Autocab reason</span>
+          <b>
+           {liveCreditPreview.proposed?.payload?.adjustmentReason||
+            'FleetPay Live Test'}
+          </b>
+         </div>
+
+         <div>
+          <span>isCredit</span>
+          <b>
+           {String(
+            Boolean(liveCreditPreview.proposed?.payload?.isCredit)
+           )}
+          </b>
+         </div>
+        </div>
+
+        <div className="liveTestCreditExecute">
+         <div>
+          <b>Final execution step</b>
+          <span>
+           FaivoPay will perform another live Autocab read immediately
+           before the write. If the Current Balance has changed, the
+           server refuses the transaction.
+          </span>
+         </div>
+
+         <button
+          className="danger"
+          disabled={Boolean(liveCreditBusy)}
+          onClick={()=>executeLiveCredit(liveCreditPreview)}
+         >
+          <AlertTriangle/>
+          {liveCreditBusy
+           ?'Executing…'
+           :'Execute £1 live credit'}
+         </button>
+        </div>
+       </>}
+
+       {liveCreditResult&&
+        <div className="liveTestCreditResult">
+         <div className="liveTestCreditResultHead">
+          <ShieldCheck/>
+          <div>
+           <b>
+            {liveCreditResult.verification?.verified
+             ?'Autocab write verified'
+             :'Autocab write completed — verification requires review'}
+           </b>
+           <span>
+            The live-write gate has been automatically disabled.
+           </span>
+          </div>
+         </div>
+
+         <div className="liveTestCreditFacts">
+          <div>
+           <span>Before Current Balance</span>
+           <b>{money(liveCreditResult.before?.currentBalance)}</b>
+          </div>
+
+          <div>
+           <span>Expected after</span>
+           <b>
+            {money(
+             liveCreditResult.verification?.expectedCurrentBalance
+            )}
+           </b>
+          </div>
+
+          <div>
+           <span>Actual after</span>
+           <b>{money(liveCreditResult.after?.currentBalance)}</b>
+          </div>
+
+          <div>
+           <span>Verification</span>
+           <b>
+            {liveCreditResult.verification?.verified
+             ?'MATCHED'
+             :'REVIEW'}
+           </b>
+          </div>
+         </div>
+
+         <div className="liveTestCreditPayload">
+          <div>
+           <span>Description</span>
+           <b>{liveCreditResult.adjustment?.description||'—'}</b>
+          </div>
+
+          <div>
+           <span>Amount</span>
+           <b>{money(liveCreditResult.adjustment?.amount)}</b>
+          </div>
+
+          <div>
+           <span>Adjustment ID</span>
+           <b>{liveCreditResult.adjustment?.id||'—'}</b>
+          </div>
+         </div>
+
+         <p className="liveTestCreditNextStep">
+          Do not run another live write yet. Inspect the Autocab
+          rent/credit sheet for callsign 9997 before preparing the
+          compensating £1 debit.
+         </p>
+        </div>
+       }
+      </section>
+     }
 
      {liveTestSimulation&&
       <section className="panel liveTestSimulationPanel">
@@ -1496,7 +1734,13 @@ function LiveTestLab({
              monday_simulation_failed:'Monday simulation',
              autocab_write_preview_completed:'Autocab write preview',
              live_writes_enabled:'Live writes enabled',
-             live_writes_disabled:'Live writes disabled'
+             live_writes_disabled:'Live writes disabled',
+             live_credit_preview_completed:'£1 credit preview',
+             live_credit_requested:'£1 credit requested',
+             live_credit_completed:'£1 credit completed',
+             live_credit_completed_unverified:'£1 credit completed',
+             live_credit_failed:'£1 credit failed',
+             live_credit_verification_failed:'£1 credit verification'
             };
 
             const activity=
@@ -1532,6 +1776,28 @@ function LiveTestLab({
 
             }else if(x.action==='live_writes_disabled'){
              details='Live Autocab test writes disarmed';
+
+            }else if(x.action==='live_credit_preview_completed'){
+             details=
+              `£1 credit preview · Current `+
+              `${money(x.before?.currentBalance)}`;
+
+            }else if(x.action==='live_credit_requested'){
+             details='£1 live Autocab credit requested';
+
+            }else if(
+             x.action==='live_credit_completed'||
+             x.action==='live_credit_completed_unverified'
+            ){
+             details=
+              `Current ${money(x.result?.beforeCurrentBalance)} → `+
+              `${money(x.result?.afterCurrentBalance)}`;
+
+            }else if(
+             x.action==='live_credit_failed'||
+             x.action==='live_credit_verification_failed'
+            ){
+             details=x.result?.error||'Controlled write requires review';
 
             }else if(failed){
              details=x.result?.error||'Failed';
@@ -1724,6 +1990,7 @@ function AdminApp(){
  const[liveTestEvents,setLiveTestEvents]=useState([]),[liveTestSnapshot,setLiveTestSnapshot]=useState(null),[liveTestSnapshotBusy,setLiveTestSnapshotBusy]=useState('');
  const[liveTestSimulation,setLiveTestSimulation]=useState(null),[liveTestSimulationBusy,setLiveTestSimulationBusy]=useState('');
  const[liveTestWritePreview,setLiveTestWritePreview]=useState(null),[liveTestWritePreviewBusy,setLiveTestWritePreviewBusy]=useState(''),[liveTestWritePreviewBalance,setLiveTestWritePreviewBalance]=useState('');
+ const[liveTestCreditPreview,setLiveTestCreditPreview]=useState(null),[liveTestCreditBusy,setLiveTestCreditBusy]=useState(''),[liveTestCreditResult,setLiveTestCreditResult]=useState(null);
  const[resetPhrase,setResetPhrase]=useState(''),[resetDrivers,setResetDrivers]=useState(false);
  const api=(u,o={})=>call(u,o,token);
  function logout(){localStorage.removeItem('fleetpay_admin');setToken('');setMe(null)}
@@ -3630,6 +3897,129 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
 
   }finally{
    setLiveTestWritePreviewBusy('');
+  }
+ }
+
+ async function prepareLiveTestCredit(driver){
+  if(
+   !driver?.enabled||
+   !driver?.liveWriteEnabled||
+   String(driver.driverId)!=='1112'||
+   String(driver.callsign)!=='9997'
+  ){
+   alert(
+    'The controlled £1 credit can only be prepared while live writes are armed for callsign 9997 / Autocab ID 1112.'
+   );
+   return;
+  }
+
+  if(!confirm(
+   'Prepare the controlled £1 live-credit preview for callsign 9997?\n\n'+
+   'This step performs a fresh READ ONLY Autocab account lookup. '+
+   'It does not change any Autocab balance.'
+  ))return;
+
+  setLiveTestCreditBusy(String(driver.driverId));
+  setLiveTestCreditResult(null);
+
+  try{
+   const result=await api(
+    `/api/admin/live-test/drivers/${driver.driverId}/live-credit-preview`,
+    {method:'POST'}
+   );
+
+   setLiveTestCreditPreview(result);
+
+   const history=
+    await api('/api/admin/live-test/events');
+
+   setLiveTestEvents(history.events||[]);
+
+  }catch(e){
+   alert(`Could not prepare £1 credit test: ${e.message}`);
+
+   try{
+    const history=
+     await api('/api/admin/live-test/events');
+
+    setLiveTestEvents(history.events||[]);
+   }catch{}
+
+  }finally{
+   setLiveTestCreditBusy('');
+  }
+ }
+
+ async function executeLiveTestCredit(preview){
+  if(!preview?.previewEventId){
+   alert('A valid controlled live-credit preview is required.');
+   return;
+  }
+
+  const phrase=prompt(
+   'FINAL LIVE AUTOCAB WRITE CONFIRMATION\n\n'+
+   'This will send a REAL £1.00 CREDIT to Autocab driver 9997 / ID 1112.\n\n'+
+   'FaivoPay will re-read the live balance and refuse the write if it has changed.\n\n'+
+   'Type exactly:\nCREDIT £1 TO 9997'
+  );
+
+  if(phrase!=='CREDIT £1 TO 9997'){
+   if(phrase!==null){
+    alert('Confirmation phrase did not match. Nothing was sent.');
+   }
+   return;
+  }
+
+  if(!confirm(
+   'FINAL CHECK\n\n'+
+   'Send ONE £1.00 credit to Autocab driver 9997 now?\n\n'+
+   'This is a real Autocab balance adjustment.'
+  ))return;
+
+  setLiveTestCreditBusy('1112');
+
+  try{
+   const result=await api(
+    '/api/admin/live-test/drivers/1112/live-credit-execute',
+    {
+     method:'POST',
+     body:JSON.stringify({
+      previewEventId:preview.previewEventId,
+      confirmation:'CREDIT £1 TO 9997'
+     })
+    }
+   );
+
+   setLiveTestCreditResult(result);
+   setLiveTestCreditPreview(null);
+
+   setLiveTest(await api('/api/admin/live-test'));
+
+   const history=
+    await api('/api/admin/live-test/events');
+
+   setLiveTestEvents(history.events||[]);
+
+  }catch(e){
+   alert(
+    'Controlled live-credit attempt stopped:\n\n'+
+    e.message+
+    '\n\nDo not retry automatically. Review Live Test history and Autocab before taking another action.'
+   );
+
+   setLiveTestCreditPreview(null);
+
+   try{
+    setLiveTest(await api('/api/admin/live-test'));
+
+    const history=
+     await api('/api/admin/live-test/events');
+
+    setLiveTestEvents(history.events||[]);
+   }catch{}
+
+  }finally{
+   setLiveTestCreditBusy('');
   }
  }
 
@@ -7138,7 +7528,7 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
      </section>
     </>}
     {view==='demo'&&<DemoLab demo={demo} loadDemo={loadDemo} resetDemo={resetDemo} action={demoAction} demoEmail={demoEmail} setDemoEmail={setDemoEmail} demoMobile={demoMobile} setDemoMobile={setDemoMobile} sendEmail={demoSendEmail} sendSms={demoSendSms}/>}
-    {view==='liveTest'&&isAdmin&&<LiveTestLab liveTest={liveTest} liveTestEvents={liveTestEvents} liveTestSnapshot={liveTestSnapshot} liveTestSimulation={liveTestSimulation} loadLiveTest={loadLiveTest} addDriver={addLiveTestDriver} toggleDriver={toggleLiveTestDriver} toggleLiveWrites={toggleLiveTestWrites} snapshotDriver={snapshotLiveTestDriver} snapshotBusyDriver={liveTestSnapshotBusy} simulateMonday={simulateLiveTestMonday} simulationBusyDriver={liveTestSimulationBusy} liveTestWritePreview={liveTestWritePreview} previewAutocabWrite={previewLiveTestAutocabWrite} writePreviewBusyDriver={liveTestWritePreviewBusy} writePreviewBalance={liveTestWritePreviewBalance} setWritePreviewBalance={setLiveTestWritePreviewBalance} busy={liveTestBusy}/>}
+    {view==='liveTest'&&isAdmin&&<LiveTestLab liveTest={liveTest} liveTestEvents={liveTestEvents} liveTestSnapshot={liveTestSnapshot} liveTestSimulation={liveTestSimulation} loadLiveTest={loadLiveTest} addDriver={addLiveTestDriver} toggleDriver={toggleLiveTestDriver} toggleLiveWrites={toggleLiveTestWrites} snapshotDriver={snapshotLiveTestDriver} snapshotBusyDriver={liveTestSnapshotBusy} simulateMonday={simulateLiveTestMonday} simulationBusyDriver={liveTestSimulationBusy} liveTestWritePreview={liveTestWritePreview} previewAutocabWrite={previewLiveTestAutocabWrite} writePreviewBusyDriver={liveTestWritePreviewBusy} writePreviewBalance={liveTestWritePreviewBalance} setWritePreviewBalance={setLiveTestWritePreviewBalance} liveCreditPreview={liveTestCreditPreview} prepareLiveCredit={prepareLiveTestCredit} executeLiveCredit={executeLiveTestCredit} liveCreditBusy={liveTestCreditBusy} liveCreditResult={liveTestCreditResult} busy={liveTestBusy}/>}
     {view==='drivers'&&<><section className="officePageIntro"><div><span>AUTOCAB + PAYOUT READINESS</span><h2>Driver accounts</h2><p>Balances and payout-bank readiness in one place. Full bank account numbers are never exposed in the normal office view.</p></div><button className="secondary" onClick={syncNow}><RefreshCw className={loading?'spin':''}/>Sync Autocab</button></section><section className="officeStats three"><Stat icon={Banknote} label="Bank ready" value={meta.bankReady??drivers.filter(d=>d.bankAccount?.ready).length} sub="Payout details saved"/><Stat icon={AlertTriangle} label="Missing bank details" value={meta.bankMissing??drivers.filter(d=>!d.bankAccount?.ready).length} sub="Cannot be released for payout"/><Stat icon={Clock3} label="Recently changed" value={meta.bankRecentlyChanged??drivers.filter(d=>d.bankAccount?.changedRecently).length} sub="Changed in the last 7 days"/></section><div className="driverToolbar"><div className="searchBox"><Search/><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search callsign, name, mobile, email or bank ending…"/></div><select value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All drivers</option><option value="bank_ready">Bank ready</option><option value="bank_missing">Missing bank details</option><option value="bank_recent">Recently changed bank</option><option value="payout_excluded">Payout excluded</option><option value="positive">Positive balance</option><option value="negative">Negative balance</option><option value="unmatched">Unmatched</option></select></div><section className="panel driverPanel"><div className="tableWrap proTable"><table><thead><tr><th>Callsign</th><th>Driver</th><th>Previous</th><th>Current</th><th>Payout account</th><th>Payout status</th><th>Last processed</th></tr></thead><tbody>{filtered.map(d=>{const b=d.bankAccount||{};return <tr key={d.driverId} onClick={()=>setSelected(d)}><td><span className="callsign">{d.callsign}</span></td><td><b>{d.fullName}</b><small>{d.email||d.mobile||`Driver ${d.driverId}`}</small></td><td>{money(d.previousBalance)}</td><td><b className={(d.currentBalance??0)<0?'negative':''}>{money(d.currentBalance)}</b></td><td><div className="bankTableCell"><Pill tone={bankTone(b)}>{b.label||'Bank details missing'}</Pill>{b.ready&&<small>{b.accountNumberMasked} · {b.sortCodeMasked}</small>}</div></td><td><div className="bankTableCell"><Pill tone={d.payoutExcluded?'bad':'good'}>{d.payoutExcluded?'Excluded':'Enabled'}</Pill>{d.payoutExcluded&&<small>{d.payoutExclusionReason||'Persistent exclusion'}</small>}</div></td><td>{dt(d.lastProcessed)}</td></tr>})}</tbody></table></div></section></>}
     {view==='access'&&<><section className="officePageIntro"><div><span>IDENTITY & PERMISSIONS</span><h2>Users & access</h2><p>Office accounts use mandatory authenticator MFA. Roles limit who can move money or change settings.</p></div>{isAdmin&&<button className="primary" onClick={()=>setShowNewStaff(!showNewStaff)}><UserCheck/>Add office user</button>}</section>{isAdmin&&showNewStaff&&<section className="panel"><form className="staffForm" onSubmit={createStaff}><label>Name<input required value={newStaff.name} onChange={e=>setNewStaff({...newStaff,name:e.target.value})}/></label><label>Email<input type="email" required value={newStaff.email} onChange={e=>setNewStaff({...newStaff,email:e.target.value})}/></label><label>Role<select value={newStaff.role} onChange={e=>setNewStaff({...newStaff,role:e.target.value})}><option value="administrator">Administrator</option><option value="finance">Finance</option><option value="office">Office</option><option value="readonly">Read only</option></select></label><label>Temporary password<input type="password" minLength="10" required value={newStaff.password} onChange={e=>setNewStaff({...newStaff,password:e.target.value})}/></label><button className="primary">Create user</button></form></section>}<section className="panel"><div className="panelHead"><div><h3>Office users</h3><p>MFA and role status for each staff account.</p></div><button className="mini" onClick={loadStaff}>Refresh</button></div><div className="tableWrap proTable"><table><thead><tr><th>User</th><th>Role</th><th>MFA</th><th>Last login</th><th>Status</th><th/></tr></thead><tbody>{staff.map(u=><tr key={u.id}><td><b>{u.name}</b><small>{u.email}</small></td><td><select value={u.role} onChange={e=>updateStaff(u,{role:e.target.value})} disabled={u.id===me?.id}><option value="administrator">Administrator</option><option value="finance">Finance</option><option value="office">Office</option><option value="readonly">Read only</option></select></td><td><Pill tone={u.mfaEnabled?'good':'warn'}>{u.mfaEnabled?'Enabled':'Setup required'}</Pill></td><td>{dt(u.lastLoginAt)}</td><td><Pill tone={u.active?'good':'bad'}>{u.active?'Active':'Disabled'}</Pill></td><td>{u.id!==me?.id&&<button className="mini" onClick={()=>updateStaff(u,{active:!u.active})}>{u.active?'Disable':'Enable'}</button>}</td></tr>)}</tbody></table></div></section><section className="panel"><div className="panelHead"><div><h3>Driver app accounts</h3><p>Registration remains matched to active Autocab driver details.</p></div><button className="mini" onClick={loadDriverUsers}>Refresh</button></div><div className="tableWrap proTable"><table><thead><tr><th>Callsign</th><th>Email</th><th>Created</th><th>Last login</th><th>Status</th><th/></tr></thead><tbody>{driverUsers.map(u=><tr key={u.id}><td><span className="callsign">{u.callsign}</span></td><td>{u.email}</td><td>{dt(u.createdAt)}</td><td>{dt(u.lastLoginAt)}</td><td><Pill tone={u.approved?'good':'warn'}>{u.approved?'Approved':'Pending'}</Pill></td><td>{canOffice&&<button className="mini" onClick={()=>setApproval(u,!u.approved)}>{u.approved?'Suspend':'Approve'}</button>}</td></tr>)}</tbody></table></div></section></>}
 
