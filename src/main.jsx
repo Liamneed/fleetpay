@@ -6099,7 +6099,7 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
       <b>{companyFinance?.company?.name||settings.companyName||'Company settings'}</b>
      </div>
 
-     <section className="panel settingsCardV2">
+     <section className="panel settingsCardV2 companyInvoiceCard">
       <div className="settingsHead">
        <BadgePoundSterling/>
        <div>
@@ -6204,7 +6204,7 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
       <b>Operational exports</b>
      </div>
 
-     <section className="panel settingsCardV2">
+     <section className="panel settingsCardV2 dataExportCard">
       <div className="settingsHead">
        <FileClock/>
        <div>

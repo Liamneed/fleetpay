@@ -11671,3 +11671,74 @@ body {
   width:100%;
  }
 }
+
+
+/* FaivoPay settings responsive desktop layout */
+.officeV2 .settingsSections{
+ display:grid;
+ grid-template-columns:repeat(2,minmax(0,1fr));
+ gap:18px;
+ align-items:start;
+}
+
+/*
+ * Do not let the legacy nth-child rules decide card width.
+ * Settings sections now define their span explicitly.
+ */
+.officeV2 .settingsSections > .settingsCardV2{
+ grid-column:auto;
+}
+
+/* Section headings always occupy their own full row. */
+.officeV2 .settingsSections > .settingsSectionLabel{
+ grid-column:1 / -1;
+ margin-top:8px;
+}
+
+/* Primary / account-wide sections use the whole content width. */
+.officeV2 .settingsSections > .integrationStatusPrimary,
+.officeV2 .settingsSections > .companyInvoiceCard,
+.officeV2 .settingsSections > .dataExportCard,
+.officeV2 .settingsSections > .dangerZone{
+ grid-column:1 / -1;
+}
+
+/* Integration status is designed as one horizontal desktop row. */
+.officeV2 .integrationStatusPrimary .integrationGrid{
+ grid-template-columns:repeat(4,minmax(0,1fr));
+}
+
+/* Keep the four service cards visually balanced. */
+.officeV2 .integrationStatusPrimary .integrationGrid > div{
+ min-width:0;
+ height:100%;
+}
+
+/*
+ * On narrower desktop/tablet widths, retain the existing single-column
+ * settings behaviour and reduce the integration summary to two columns.
+ */
+@media(max-width:1200px){
+ .officeV2 .settingsSections{
+  grid-template-columns:1fr;
+ }
+
+ .officeV2 .settingsSections > .settingsCardV2,
+ .officeV2 .settingsSections > .settingsSectionLabel,
+ .officeV2 .settingsSections > .integrationStatusPrimary,
+ .officeV2 .settingsSections > .companyInvoiceCard,
+ .officeV2 .settingsSections > .dataExportCard,
+ .officeV2 .settingsSections > .dangerZone{
+  grid-column:auto;
+ }
+
+ .officeV2 .integrationStatusPrimary .integrationGrid{
+  grid-template-columns:repeat(2,minmax(0,1fr));
+ }
+}
+
+@media(max-width:760px){
+ .officeV2 .integrationStatusPrimary .integrationGrid{
+  grid-template-columns:1fr;
+ }
+}
