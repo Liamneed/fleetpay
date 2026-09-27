@@ -5794,7 +5794,94 @@ app.get('/api/admin/exports/:dataset.csv',adminAuth,requireStaffRole('administra
  }
 });
 
-app.get('/api/admin/security',adminAuth,requireStaffRole('administrator'),(req,res)=>{const logs=db.prepare("SELECT id,created_at createdAt,actor_type actorType,actor_id actorId,action,entity_type entityType,entity_id entityId,details_json detailsJson,ip FROM audit_logs WHERE action LIKE 'office_%' OR action LIKE '%login%' OR action LIKE '%mfa%' ORDER BY id DESC LIMIT 300").all().map(r=>({...r,details:JSON.parse(r.detailsJson||'{}')}));res.json({logs})});
+app.get(
+ '/api/admin/security',
+ adminAuth,
+ requireStaffRole('administrator'),
+ (req,res)=>{
+  const logs=db.prepare(`
+   SELECT
+    id,
+    created_at createdAt,
+    actor_type actorType,
+    actor_id actorId,
+    action,
+    entity_type entityType,
+    entity_id entityId,
+    details_json detailsJson,
+    ip
+   FROM audit_logs
+   WHERE action LIKE 'office_%'
+      OR action LIKE '%login%'
+      OR action LIKE '%mfa%'
+   ORDER BY id DESC
+   LIMIT 300
+  `).all().map(r=>{
+   const details=JSON.parse(r.detailsJson||'{}');
+   const originalActorId=r.actorId;
+
+   let actorId=originalActorId;
+   let actorName='';
+   let actorEmail='';
+
+   if(r.actorType==='driver'&&/^\d+$/.test(String(actorId||''))){
+    const driver=cachedDriver(Number(actorId));
+
+    actorName=driver?.fullName||'';
+    actorId=driver?.callsign||actorId;
+   }
+
+   if(['staff','admin'].includes(String(r.actorType||''))){
+    const byId=db.prepare(`
+     SELECT id,email,name
+     FROM staff_users
+     WHERE id=?
+    `).get(originalActorId);
+
+    const byEmail=
+     !byId&&String(originalActorId||'').includes('@')
+      ?db.prepare(`
+        SELECT id,email,name
+        FROM staff_users
+        WHERE lower(email)=lower(?)
+       `).get(originalActorId)
+      :null;
+
+    const staff=byId||byEmail;
+
+    if(staff){
+     actorName=staff.name||staff.email||originalActorId;
+     actorEmail=staff.email||'';
+    }else{
+     actorName=String(originalActorId||'');
+     actorEmail=
+      String(originalActorId||'').includes('@')
+       ?String(originalActorId)
+       :'';
+    }
+   }
+
+   if(r.actorType==='system'){
+    actorName=
+     String(originalActorId||'').trim()||
+     'FaivoPay system';
+   }
+
+   return {
+    ...r,
+    actorId,
+    actorRawId:originalActorId,
+    actorName:
+     actorName||
+     String(actorId||r.actorType||'FaivoPay'),
+    actorEmail,
+    details
+   };
+  });
+
+  res.json({logs});
+ }
+);
 
 
 function customerPaymentFeeFor(fareAmount,settings=getSettings()){
