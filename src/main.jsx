@@ -612,7 +612,7 @@ function AdminApp(){
  const[outstanding,setOutstanding]=useState([]),[fees,setFees]=useState({fees:[],summary:{}}),[earlySummary,setEarlySummary]=useState(null);
  const[feeInvoices,setFeeInvoices]=useState([]),[feeInvoiceBusy,setFeeInvoiceBusy]=useState(false);
  const[feeInvoicePreview,setFeeInvoicePreview]=useState(null),[feeInvoicePreviewBusy,setFeeInvoicePreviewBusy]=useState(false),[feeInvoiceDraftPdfBusy,setFeeInvoiceDraftPdfBusy]=useState(false);
- const[feeInvoiceSendBusy,setFeeInvoiceSendBusy]=useState(null);
+ const[feeInvoiceSendBusy,setFeeInvoiceSendBusy]=useState(null),[feeInvoiceTestEmailBusy,setFeeInvoiceTestEmailBusy]=useState(false);
  const[paymentPlans,setPaymentPlans]=useState({plans:[],summary:{}}),[selectedPaymentPlan,setSelectedPaymentPlan]=useState(null);
  const[paymentPlanQ,setPaymentPlanQ]=useState(''),[paymentPlanStatus,setPaymentPlanStatus]=useState('all');
  const[planCreateSource,setPlanCreateSource]=useState(null),[planCreate,setPlanCreate]=useState({frequency:'weekly',instalmentAmount:'',startDate:'',notes:''}),[planCreateBusy,setPlanCreateBusy]=useState(false),[planActivateBusy,setPlanActivateBusy]=useState(false),[planActionBusy,setPlanActionBusy]=useState(false);
@@ -2075,6 +2075,65 @@ async function resendOutstanding(x){try{await api(`/api/admin/outstanding-paymen
    alert(e.message);
   }
  }
+ async function sendDraftInvoiceTestEmail(){
+  const preview=feeInvoicePreview;
+
+  if(!preview){
+   return alert('Preview the draft invoice first.');
+  }
+
+  const testEmail=prompt(
+   'Enter the email address to receive the TEST draft invoice:',
+   me?.email||''
+  );
+
+  if(testEmail===null)return;
+
+  const recipient=String(testEmail||'').trim();
+
+  if(!recipient || !recipient.includes('@')){
+   return alert('Enter a valid test email address.');
+  }
+
+  if(!confirm(
+   `Send TEST draft invoice email?\n\n`+
+   `To: ${recipient}\n`+
+   `Period: ${preview.periodStart} to ${preview.periodEnd}\n`+
+   `FaivoPay amount: ${money(preview.faivopayShareTotal)}\n\n`+
+   'This will NOT create a final invoice, mark fee records invoiced or send anything to the billing email.'
+  ))return;
+
+  setFeeInvoiceTestEmailBusy(true);
+
+  try{
+   const j=await api(
+    '/api/admin/fee-invoices/preview/test-email',
+    {
+     method:'POST',
+     body:JSON.stringify({
+      companyId:companyFinance?.company?.id||'',
+      periodStart:preview.periodStart,
+      periodEnd:preview.periodEnd,
+      billingEmail:preview.billingEmail,
+      previewKey:preview.previewKey,
+      testEmail:recipient
+     })
+    }
+   );
+
+   alert(
+    `Test invoice email sent successfully to ${j.recipient}.\n\nNo final invoice was created.`
+   );
+  }catch(e){
+   if(/draft has changed/i.test(e.message)){
+    setFeeInvoicePreview(null);
+   }
+   alert(e.message);
+  }finally{
+   setFeeInvoiceTestEmailBusy(false);
+  }
+ }
+
  async function sendFeeInvoice(invoice){
   if(!invoice?.id)return;
 
@@ -5502,12 +5561,33 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
         <div className="invoiceDraftActions">
          <button
           className="secondary"
-          disabled={feeInvoiceDraftPdfBusy||feeInvoiceBusy}
+          disabled={
+           feeInvoiceDraftPdfBusy||
+           feeInvoiceBusy||
+           feeInvoiceTestEmailBusy
+          }
           onClick={downloadDraftFeeInvoicePdf}
          >
           <FileClock/>
           {feeInvoiceDraftPdfBusy?'Preparing PDF…':'Download draft PDF'}
          </button>
+
+         {canMoney&&
+          <button
+           className="secondary"
+           disabled={
+            feeInvoiceTestEmailBusy||
+            feeInvoiceDraftPdfBusy||
+            feeInvoiceBusy
+           }
+           onClick={sendDraftInvoiceTestEmail}
+          >
+           <Mail/>
+           {feeInvoiceTestEmailBusy
+            ?'Sending test…'
+            :'Send test email'}
+          </button>
+         }
 
          {canMoney&&
           <button

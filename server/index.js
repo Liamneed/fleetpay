@@ -12459,6 +12459,149 @@ app.post(
 );
 
 app.post(
+ '/api/admin/fee-invoices/preview/test-email',
+ adminAuth,
+ requireStaffRole('administrator','finance'),
+ async(req,res)=>{
+  try{
+   const company=officeCompanyRow(req);
+
+   if(!company){
+    return res.status(409).json({
+     error:'Select a company before sending a test invoice email.'
+    });
+   }
+
+   const periodStart=String(req.body?.periodStart||'');
+   const periodEnd=String(req.body?.periodEnd||'');
+   const billingEmail=safeEmail(req.body?.billingEmail||'');
+   const testEmail=safeEmail(req.body?.testEmail||'');
+   const expectedPreviewKey=String(req.body?.previewKey||'');
+
+   if(!billingEmail){
+    return res.status(400).json({
+     error:'Refresh the invoice draft before sending a test email.'
+    });
+   }
+
+   if(!testEmail || !testEmail.includes('@')){
+    return res.status(400).json({
+     error:'Enter a valid test email address.'
+    });
+   }
+
+   if(!expectedPreviewKey){
+    return res.status(400).json({
+     error:'Refresh the invoice draft before sending a test email.'
+    });
+   }
+
+   const preview=buildFeeInvoicePreview({
+    companyId:company.id,
+    periodStart,
+    periodEnd,
+    billingEmail
+   });
+
+   if(preview.previewKey!==expectedPreviewKey){
+    return res.status(409).json({
+     error:'Invoice draft has changed. Refresh the draft before sending a test email.'
+    });
+   }
+
+   const pdf=await feeInvoicePdfBuffer(preview);
+
+   const subject=
+    `TEST — FaivoPay draft fee statement ${periodStart} to ${periodEnd}`;
+
+   const html=`
+    <div style="font-family:Arial,sans-serif;line-height:1.55;color:#18212f">
+     <h2 style="margin:0 0 16px">TEST — FaivoPay draft fee statement</h2>
+     <p>
+      This is a test delivery only.
+      No invoice has been created and no fee records have been marked invoiced.
+     </p>
+     <p>
+      Draft period:
+      <strong>${periodStart}</strong> to
+      <strong>${periodEnd}</strong>.
+     </p>
+     <p>
+      Draft FaivoPay amount:
+      <strong>£${Number(preview.faivopayShareTotal||0).toFixed(2)}</strong>
+     </p>
+     <p>
+      The attached PDF is marked <strong>DRAFT — NOT AN INVOICE</strong>.
+     </p>
+     <p>Kind regards,<br><strong>FaivoPay</strong></p>
+    </div>
+   `;
+
+   const result=await sendEmail(
+    testEmail,
+    subject,
+    html,
+    {
+     companyId:company.id,
+     attachments:[
+      {
+       filename:`FaivoPay-TEST-DRAFT-${periodStart}-${periodEnd}.pdf`,
+       content:pdf,
+       contentType:'application/pdf'
+      }
+     ]
+    }
+   );
+
+   if(!result?.sent){
+    throw new Error(
+     'No email provider is configured for test invoice delivery.'
+    );
+   }
+
+   logCommunication({
+    channel:'email',
+    recipient:testEmail,
+    templateKey:'weekly_fee_invoice_test',
+    entityType:'fee_invoice_draft',
+    entityId:preview.previewKey,
+    status:'sent',
+    providerRef:result.id||''
+   });
+
+   audit(
+    req,
+    'staff',
+    req.auth.email,
+    'fee_invoice_test_email_sent',
+    'fee_invoice_draft',
+    preview.previewKey,
+    {
+     companyId:company.id,
+     recipient:testEmail,
+     periodStart,
+     periodEnd,
+     provider:result.provider||'',
+     providerRef:result.id||''
+    }
+   );
+
+   res.json({
+    ok:true,
+    sent:true,
+    recipient:testEmail,
+    provider:result.provider||'',
+    providerRef:result.id||''
+   });
+  }catch(e){
+   res.status(
+    /draft has changed/i.test(e.message)?409:500
+   ).json({error:e.message});
+  }
+ }
+);
+
+app.post(
  '/api/admin/fee-invoices/manual-create',
  adminAuth,
  requireStaffRole('administrator','finance'),
