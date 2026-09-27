@@ -10098,6 +10098,44 @@ function DriverApp(){
   requestAnimationFrame(()=>document.querySelector('.driverApp')?.scrollTo({top:0,behavior:'smooth'}));
  }
 
+ async function markAccountWorkSeen(){
+  if(!token)return;
+
+  if(Number(me?.accountWorkActivity?.newCount||0)<=0)return;
+
+  try{
+   const result=await api(
+    '/api/driver/account-work/read',
+    {method:'POST'}
+   );
+
+   setMe(current=>current?{
+    ...current,
+    accountWorkActivity:{
+     ...(current.accountWorkActivity||{}),
+     accountWorkSeenAt:
+      result.accountWorkSeenAt||new Date().toISOString(),
+     newCount:0
+    }
+   }:current);
+
+  }catch{}
+ }
+
+ useEffect(()=>{
+  if(
+   driverTab==='activity' &&
+   activityFilter==='account-work' &&
+   Number(me?.accountWorkActivity?.newCount||0)>0
+  ){
+   markAccountWorkSeen();
+  }
+ },[
+  driverTab,
+  activityFilter,
+  me?.accountWorkActivity?.newCount
+ ]);
+
  async function sharePayment(x){
   try{
    if(navigator.share){
@@ -10363,6 +10401,9 @@ function DriverApp(){
  };
 
  const recentOfficeActivity=(me.ledger||[]).slice(0,3);
+
+ const accountWorkNewCount=
+  Number(me?.accountWorkActivity?.newCount||0);
 
  async function openNotifications(){
   setShowNotifications(true);
@@ -11577,7 +11618,7 @@ function DriverApp(){
 
   <nav className="driverBottomNav mockBottomNav" aria-label="Driver navigation">
    {navItems.map(([key,Icon,label])=><button key={key} className={driverTab===key?'active':''} onClick={()=>changeTab(key)}>
-    <span className="mockNavIcon"><Icon/>{key==='pay'&&livePaymentAvailable&&<i className="livePayPulse" aria-label="Customer payment available"/>}{key==='pay'&&!livePaymentAvailable&&paymentRequests.length>0&&<i className="mockNavCount">{paymentRequests.length}</i>}</span>
+    <span className="mockNavIcon"><Icon/>{key==='pay'&&livePaymentAvailable&&<i className="livePayPulse" aria-label="Customer payment available"/>}{key==='pay'&&!livePaymentAvailable&&paymentRequests.length>0&&<i className="mockNavCount">{paymentRequests.length}</i>}{key==='activity'&&accountWorkNewCount>0&&<i className="mockNavCount" aria-label={`${accountWorkNewCount} new account work ${accountWorkNewCount===1?'docket':'dockets'}`}>{accountWorkNewCount>99?'99+':accountWorkNewCount}</i>}</span>
     <span>{label}</span>
    </button>)}
   </nav>

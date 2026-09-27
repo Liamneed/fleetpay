@@ -340,6 +340,12 @@ CREATE TABLE IF NOT EXISTS driver_weekly_activity (
 CREATE INDEX IF NOT EXISTS idx_driver_weekly_activity_week
 ON driver_weekly_activity(week_start, driver_id);
 
+CREATE TABLE IF NOT EXISTS driver_activity_views (
+ driver_id INTEGER PRIMARY KEY,
+ account_work_seen_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS audit_logs (
  id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, actor_type TEXT NOT NULL, actor_id TEXT,
  action TEXT NOT NULL, entity_type TEXT, entity_id TEXT, details_json TEXT, ip TEXT
@@ -19405,6 +19411,77 @@ app.get('/api/driver/account-work',driverAuth,(req,res)=>{
  }
 });
 
+
+function driverAccountWorkActivity(driverId){
+ const row=db.prepare(`
+  SELECT account_work_seen_at accountWorkSeenAt
+  FROM driver_activity_views
+  WHERE driver_id=?
+ `).get(driverId);
+
+ /*
+  * First use establishes a baseline so existing historical
+  * dockets do not all appear as unread after deployment.
+  */
+ if(!row){
+  const now=new Date().toISOString();
+
+  db.prepare(`
+   INSERT INTO driver_activity_views(
+    driver_id,
+    account_work_seen_at,
+    updated_at
+   )
+   VALUES(?,?,?)
+  `).run(driverId,now,now);
+
+  return {
+   accountWorkSeenAt:now,
+   newCount:0
+  };
+ }
+
+ const countRow=db.prepare(`
+  SELECT COUNT(*) count
+  FROM posted_driver_dockets
+  WHERE driver_id=?
+    AND datetime(first_seen_at)>datetime(?)
+ `).get(driverId,row.accountWorkSeenAt);
+
+ return {
+  accountWorkSeenAt:row.accountWorkSeenAt,
+  newCount:Number(countRow?.count||0)
+ };
+}
+
+app.post('/api/driver/account-work/read',driverAuth,(req,res)=>{
+ try{
+  const driverId=Number(req.auth.driverId);
+  const now=new Date().toISOString();
+
+  db.prepare(`
+   INSERT INTO driver_activity_views(
+    driver_id,
+    account_work_seen_at,
+    updated_at
+   )
+   VALUES(?,?,?)
+   ON CONFLICT(driver_id) DO UPDATE SET
+    account_work_seen_at=excluded.account_work_seen_at,
+    updated_at=excluded.updated_at
+  `).run(driverId,now,now);
+
+  res.json({
+   ok:true,
+   accountWorkSeenAt:now,
+   newCount:0
+  });
+
+ }catch(e){
+  res.status(500).json({error:e.message});
+ }
+});
+
 app.get('/api/driver/me',driverAuth,(req,res)=>{
   try{
     refreshPaymentPlanStatuses();
@@ -19566,6 +19643,7 @@ app.get('/api/driver/me',driverAuth,(req,res)=>{
       )||null;
 
     const earlyTiming=earlyPayoutTiming(settings);
+    const accountWorkActivity=driverAccountWorkActivity(d.driverId);
 
     res.json({
       driver:{
@@ -19600,6 +19678,7 @@ app.get('/api/driver/me',driverAuth,(req,res)=>{
       planSettlementAllocations,
       ledger:ledgerRows,
       notifications,
+      accountWorkActivity,
       stripeConfigured:Boolean(getStripeClient()),
       reservedForEarlyPayout:reserved,
       earlyPayoutAllowed:
