@@ -1,5 +1,5 @@
 self.addEventListener('push',event=>{
-  let data={title:'FleetPay',message:'You have a FleetPay update.',url:'/driver'};
+  let data={title:'FaivoPay',message:'You have a FaivoPay update.',url:'/driver'};
   try{data={...data,...event.data.json()}}catch{}
   event.waitUntil(self.registration.showNotification(data.title,{body:data.message,data:{url:data.url||'/driver'}}));
 });

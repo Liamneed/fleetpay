@@ -5512,6 +5512,25 @@ app.get('/api/admin/exports/:dataset.csv',adminAuth,requireStaffRole('administra
   const dataset=String(req.params.dataset||'').trim().toLowerCase();
   let rows=[],filename=`FaivoPay-${dataset}.csv`;
 
+  /*
+   * Staff/access and audit exports contain security-sensitive office data.
+   * Resolve the current staff role from the database rather than trusting
+   * a client-supplied value.
+   */
+  if(['access','security','audit'].includes(dataset)){
+   const staff=db.prepare(`
+    SELECT role
+    FROM staff_users
+    WHERE id=?
+   `).get(req.auth.staffId);
+
+   if(staff?.role!=='administrator'){
+    return res.status(403).json({
+     error:'Administrator access is required for this export.'
+    });
+   }
+  }
+
   switch(dataset){
    case 'transactions':
     rows=officeTransactions(10000);
@@ -5630,6 +5649,82 @@ app.get('/api/admin/exports/:dataset.csv',adminAuth,requireStaffRole('administra
     `).all();
     filename='FaivoPay-audit.csv';
     break;
+
+   case 'fee-invoices':{
+    const company=officeCompanyRow(req);
+
+    if(!company){
+     return res.status(409).json({
+      error:'Select a company before exporting weekly invoices.'
+     });
+    }
+
+    rows=db.prepare(`
+     SELECT
+      id,
+      company_id companyId,
+      invoice_number invoiceNumber,
+      period_start periodStart,
+      period_end periodEnd,
+      billing_email billingEmail,
+      currency,
+      gross_fee_total grossFeeTotal,
+      faivopay_share_total faivopayShareTotal,
+      taxi_company_share_total taxiCompanyShareTotal,
+      fee_count feeCount,
+      status,
+      email_status emailStatus,
+      email_provider emailProvider,
+      email_provider_ref emailProviderRef,
+      emailed_at emailedAt,
+      created_at createdAt,
+      created_by createdBy,
+      updated_at updatedAt
+     FROM fee_invoices
+     WHERE company_id=?
+     ORDER BY created_at DESC
+    `).all(company.id);
+
+    filename='FaivoPay-weekly-invoices.csv';
+    break;
+   }
+
+   case 'fee-invoice-items':{
+    const company=officeCompanyRow(req);
+
+    if(!company){
+     return res.status(409).json({
+      error:'Select a company before exporting weekly invoice items.'
+     });
+    }
+
+    rows=db.prepare(`
+     SELECT
+      fii.id,
+      fii.invoice_id invoiceId,
+      fi.invoice_number invoiceNumber,
+      fii.fee_id feeId,
+      fii.company_id companyId,
+      fii.fee_type feeType,
+      fii.source_type sourceType,
+      fii.source_id sourceId,
+      fii.callsign,
+      fii.description,
+      fii.gross_fee grossFee,
+      fii.faivopay_share faivopayShare,
+      fii.taxi_company_share taxiCompanyShare,
+      fii.fee_created_at feeCreatedAt,
+      fii.created_at createdAt
+     FROM fee_invoice_items fii
+     JOIN fee_invoices fi
+      ON fi.id=fii.invoice_id
+     WHERE fi.company_id=?
+     ORDER BY fii.created_at DESC,fii.id
+    `).all(company.id);
+
+    filename='FaivoPay-weekly-invoice-items.csv';
+    break;
+   }
 
    case 'refunds':
     rows=db.prepare(`SELECT * FROM customer_refunds ORDER BY created_at DESC`).all();

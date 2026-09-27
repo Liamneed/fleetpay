@@ -2389,6 +2389,26 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
     access:{dataset:'access',filename:'FaivoPay-access.csv'},
     security:{dataset:'audit',filename:'FaivoPay-audit.csv'}
    };
+   const adminDataExports=[
+    ['Transactions','transactions','FaivoPay-transactions.csv'],
+    ['Customer payments','customer-payments','FaivoPay-customer-payments.csv'],
+    ['Monday settlements','monday-settlements','FaivoPay-monday-settlements.csv'],
+    ['Early payouts','early-payouts','FaivoPay-early-payouts.csv'],
+    ['Outstanding payments','outstanding','FaivoPay-outstanding.csv'],
+    ['All payment requests','payment-requests','FaivoPay-payment-requests.csv'],
+    ['All payouts','payouts','FaivoPay-payouts.csv'],
+    ['Payout runs','payout-runs','FaivoPay-payout-runs.csv'],
+    ['Drivers','drivers','FaivoPay-drivers.csv'],
+    ['Weekly invoices','fee-invoices','FaivoPay-weekly-invoices.csv'],
+    ['Weekly invoice items','fee-invoice-items','FaivoPay-weekly-invoice-items.csv'],
+    ['Refunds','refunds','FaivoPay-refunds.csv'],
+    ['Autocab adjustments','adjustments','FaivoPay-autocab-adjustments.csv'],
+    ['Communications','communications','FaivoPay-communications.csv'],
+    ['Payment-plan allocations','plan-allocations','FaivoPay-plan-allocations.csv'],
+    ['Users & access','access','FaivoPay-access.csv'],
+    ['Audit log','audit','FaivoPay-audit.csv']
+   ];
+
    const currentOfficeExport=officeExportByView[view]||null;
    const exportCurrentOfficeView=()=>{
     if(view==='paymentPlans')return downloadPaymentPlansCsv();
@@ -6150,6 +6170,61 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
       <small>The branded email layout is controlled by FaivoPay; this field changes the email subject only.</small>
      </section>
      <section className="panel settingsCardV2"><div className="settingsHead"><Mail/><div><h3>Outstanding-payment messages</h3><p>Edit the exact wording drivers receive after the Monday run.</p></div></div><label>Email subject<input value={settings.outstandingEmailSubject||''} onChange={e=>setSettings({...settings,outstandingEmailSubject:e.target.value})}/></label><label>Email message<textarea rows="7" value={settings.outstandingEmailBody||''} onChange={e=>setSettings({...settings,outstandingEmailBody:e.target.value})}/></label><label>SMS message<textarea rows="5" value={settings.outstandingSmsTemplate||''} onChange={e=>setSettings({...settings,outstandingSmsTemplate:e.target.value})}/></label><small>Available variables: {'{driver}'}, {'{callsign}'}, {'{amount}'}, {'{dueDate}'}, {'{dueTime}'}, {'{paymentLink}'}</small></section>
+     <div className="settingsSectionLabel">
+      <span>DATA & AUDIT</span>
+      <b>Operational exports</b>
+     </div>
+
+     <section className="panel settingsCardV2">
+      <div className="settingsHead">
+       <FileClock/>
+       <div>
+        <h3>Data exports</h3>
+        <p>
+         Download FaivoPay operational and accounting records as CSV.
+         Secrets, passwords and encrypted credentials are never included.
+        </p>
+       </div>
+      </div>
+
+      <div
+       className="rowActions"
+       style={{flexWrap:'wrap',gap:10}}
+      >
+       <button
+        className="secondary"
+        onClick={downloadPaymentPlansCsv}
+       >
+        <FileClock/>
+        Payment plans
+       </button>
+
+       <button
+        className="secondary"
+        onClick={downloadFeesCsv}
+       >
+        <FileClock/>
+        Fee ledger
+       </button>
+
+       {adminDataExports.map(([label,dataset,filename])=>
+        <button
+         key={dataset}
+         className="secondary"
+         onClick={()=>downloadOfficeCsv(dataset,filename)}
+        >
+         <FileClock/>
+         {label}
+        </button>
+       )}
+      </div>
+
+      <small>
+       CSV values are escaped to prevent spreadsheet formula execution.
+       Weekly invoice exports are restricted to the selected company.
+      </small>
+     </section>
+
      <section className="panel settingsCardV2 dangerZone"><div className="settingsHead"><AlertTriangle/><div><h3>Pre-launch data reset</h3><p>Use once before the live launch. FaivoPay creates a timestamped SQLite backup first, then clears operational test data while keeping office users, MFA, settings and integrations.</p></div></div><div className="launchResetInfo"><b>Cleared:</b><span>payments, payment plans, payout runs, settlement runs, fee records, notifications, communication history, adjustments and demo data.</span></div><label className="toggleRow"><span className="toggleCopy"><b>Also clear driver app registrations</b><small>Include driver logins and push subscriptions in the pre-launch reset.</small></span><span className="toggleSwitch"><input type="checkbox" checked={resetDrivers} onChange={e=>setResetDrivers(e.target.checked)}/><span className="toggleSlider"/></span></label><label>Confirmation phrase<input value={resetPhrase} onChange={e=>setResetPhrase(e.target.value)} placeholder="RESET FAIVOPAY FOR LIVE LAUNCH"/></label><button className="dangerAction" disabled={resetPhrase!=='RESET FAIVOPAY FOR LIVE LAUNCH'} onClick={launchReset}><AlertTriangle/>Create backup & reset operational data</button></section>
 
     </div></>}
