@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import { DatabaseSync } from 'node:sqlite';
 import Stripe from 'stripe';
 import webpush from 'web-push';
+import PDFDocument from 'pdfkit';
 
 dotenv.config();
 const app = express();
@@ -6904,6 +6905,13 @@ ensureTableColumn('fee_ledger','company_id','TEXT');
 ensureTableColumn('fee_ledger','invoice_id','TEXT');
 ensureTableColumn('fee_ledger','invoiced_at','TEXT');
 
+ensureTableColumn('fee_invoice_items','fee_type','TEXT');
+ensureTableColumn('fee_invoice_items','source_type','TEXT');
+ensureTableColumn('fee_invoice_items','source_id','TEXT');
+ensureTableColumn('fee_invoice_items','callsign','TEXT');
+ensureTableColumn('fee_invoice_items','description','TEXT');
+ensureTableColumn('fee_invoice_items','fee_created_at','TEXT');
+
 db.exec(`
  CREATE INDEX IF NOT EXISTS idx_fee_ledger_company_status_created
  ON fee_ledger(company_id,status,created_at);
@@ -11197,6 +11205,877 @@ app.post(
 
 app.get('/api/admin/outstanding-payments',adminAuth,(req,res)=>{refreshPaymentPlanStatuses();const now=new Date().toISOString().slice(0,16),rows=db.prepare("SELECT *,driver_id driverId,driver_name driverName,weekly_fee weeklyFee,carried_charges carriedCharges,payment_url paymentUrl,created_at createdAt,updated_at updatedAt,paid_at paidAt,due_at dueAt,email_sent_at emailSentAt,sms_sent_at smsSentAt,communication_error communicationError FROM payment_requests ORDER BY CASE status WHEN 'open' THEN 0 ELSE 1 END,created_at DESC").all().map(x=>({...x,overdue:x.status==='open'&&x.dueAt&&String(x.dueAt).slice(0,16)<now}));res.json({payments:rows})});
 app.post('/api/admin/outstanding-payments/:id/resend',adminAuth,requireStaffRole('administrator','finance','office'),async(req,res)=>{try{const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(req.params.id);if(!item)return res.status(404).json({error:'Payment request not found'});const d=cachedDriver(item.driver_id);const out=await sendOutstandingCommunications(item,d);audit(req,'staff',req.auth.email,'outstanding_message_resent','payment_request',item.id,{callsign:item.callsign});res.json({ok:true,...out})}catch(e){res.status(500).json({error:e.message})}});
+
+
+/* ============================================================
+   FaivoPay fee invoice engine
+   ------------------------------------------------------------
+   Manual only at this stage.
+   No scheduler and no automatic email delivery are enabled here.
+   ============================================================ */
+
+function invoiceDateParts(dateString){
+ const value=String(dateString||'').trim();
+
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(value)){
+  throw new Error('Invoice period dates must use YYYY-MM-DD');
+ }
+
+ const d=new Date(`${value}T12:00:00Z`);
+
+ if(Number.isNaN(d.getTime()) || d.toISOString().slice(0,10)!==value){
+  throw new Error(`Invalid invoice period date: ${value}`);
+ }
+
+ return d;
+}
+
+function isoDateShift(dateString,days){
+ const d=invoiceDateParts(dateString);
+ d.setUTCDate(d.getUTCDate()+Number(days||0));
+ return d.toISOString().slice(0,10);
+}
+
+function previousCompleteInvoiceWeek(){
+ const today=londonWindow().date;
+ const d=invoiceDateParts(today);
+ const weekday=d.getUTCDay();
+
+ /*
+  * Always choose the most recent fully completed Monday-Sunday week.
+  * On Sunday, this intentionally selects the Sunday seven days earlier
+  * because the current Sunday has not finished yet.
+  */
+ const daysBackToCompletedSunday=weekday===0?7:weekday;
+
+ const periodEnd=isoDateShift(
+  today,
+  -daysBackToCompletedSunday
+ );
+
+ const periodStart=isoDateShift(periodEnd,-6);
+
+ return {periodStart,periodEnd};
+}
+
+function londonDateFromIso(value){
+ const d=new Date(value);
+
+ if(Number.isNaN(d.getTime()))return '';
+
+ const parts=new Intl.DateTimeFormat(
+  'en-GB',
+  {
+   timeZone:'Europe/London',
+   year:'numeric',
+   month:'2-digit',
+   day:'2-digit'
+  }
+ ).formatToParts(d);
+
+ const part=type=>
+  parts.find(x=>x.type===type)?.value||'';
+
+ return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+function validateInvoicePeriod(periodStart,periodEnd){
+ invoiceDateParts(periodStart);
+ invoiceDateParts(periodEnd);
+
+ if(periodStart>periodEnd){
+  throw new Error('Invoice period start must be on or before period end');
+ }
+
+ const startDay=invoiceDateParts(periodStart).getUTCDay();
+ const endDay=invoiceDateParts(periodEnd).getUTCDay();
+
+ if(startDay!==1 || endDay!==0){
+  throw new Error('Weekly invoice periods must run Monday to Sunday');
+ }
+
+ if(isoDateShift(periodStart,6)!==periodEnd){
+  throw new Error('Weekly invoice periods must contain exactly 7 days');
+ }
+
+ const today=londonWindow().date;
+
+ if(periodEnd>=today){
+  throw new Error(
+   'Only fully completed invoice periods can be invoiced'
+  );
+ }
+}
+
+function effectiveUninvoicedFeeRow(row){
+ let gross=Number(row.gross_fee||0);
+ let faivopay=Number(row.fleetpay_share||0);
+ let taxi=Number(row.taxi_company_share||0);
+
+ /*
+  * A customer refund made before invoicing can reduce the fee
+  * actually retained. Preserve the same behaviour already used
+  * by the Fees screen/CSV, then freeze these effective values
+  * into fee_invoice_items.
+  */
+ if(
+  row.status==='uninvoiced' &&
+  row.fee_type==='customer_payment' &&
+  row.source_type==='customer_payment' &&
+  row.customerTotalAmount!==null &&
+  row.customerTotalAmount!==undefined
+ ){
+  const net=customerPaymentNetAmounts({
+   fare_amount:row.customerFareAmount,
+   fee_amount:row.customerFeeAmount,
+   total_amount:row.customerTotalAmount,
+   refunded_amount:row.customerRefundedAmount
+  });
+
+  const originalGross=gross;
+
+  gross=Math.min(
+   originalGross,
+   Number(net.netFee||0)
+  );
+
+  const faivopayRatio=
+   originalGross>0
+    ?faivopay/originalGross
+    :0;
+
+  faivopay=Number(
+   (gross*faivopayRatio).toFixed(2)
+  );
+
+  taxi=Number(
+   (gross-faivopay).toFixed(2)
+  );
+ }
+
+ return {
+  ...row,
+  effectiveGrossFee:Number(gross.toFixed(2)),
+  effectiveFaivopayShare:Number(faivopay.toFixed(2)),
+  effectiveTaxiCompanyShare:Number(taxi.toFixed(2))
+ };
+}
+
+function invoiceCandidateFees(
+ companyId,
+ periodStart,
+ periodEnd
+){
+ const rows=db.prepare(`
+  SELECT
+   fl.*,
+   cp.fare_amount customerFareAmount,
+   cp.fee_amount customerFeeAmount,
+   cp.total_amount customerTotalAmount,
+   cp.refunded_amount customerRefundedAmount
+  FROM fee_ledger fl
+  LEFT JOIN customer_payments cp
+   ON fl.fee_type='customer_payment'
+   AND fl.source_type='customer_payment'
+   AND cp.id=fl.source_id
+  WHERE fl.company_id=?
+    AND fl.status='uninvoiced'
+    AND fl.invoice_id IS NULL
+  ORDER BY fl.created_at,fl.id
+ `).all(companyId);
+
+ return rows
+  .filter(row=>{
+   const date=londonDateFromIso(row.created_at);
+   return date>=periodStart && date<=periodEnd;
+  })
+  .map(effectiveUninvoicedFeeRow)
+  .filter(row=>
+   row.effectiveGrossFee>0 ||
+   row.effectiveFaivopayShare>0 ||
+   row.effectiveTaxiCompanyShare>0
+  );
+}
+
+function nextFeeInvoiceNumber(periodEnd){
+ const year=String(periodEnd).slice(0,4);
+ const prefix=`FP-${year}-`;
+
+ const rows=db.prepare(`
+  SELECT invoice_number
+  FROM fee_invoices
+  WHERE invoice_number LIKE ?
+ `).all(`${prefix}%`);
+
+ let max=0;
+
+ for(const row of rows){
+  const match=String(row.invoice_number||'')
+   .match(new RegExp(`^FP-${year}-(\\d+)$`));
+
+  if(match){
+   max=Math.max(max,Number(match[1]||0));
+  }
+ }
+
+ return `${prefix}${String(max+1).padStart(6,'0')}`;
+}
+
+function serializeFeeInvoice(row,{items=false}={}){
+ if(!row)return null;
+
+ const result={
+  id:row.id,
+  companyId:row.company_id,
+  invoiceNumber:row.invoice_number,
+  periodStart:row.period_start,
+  periodEnd:row.period_end,
+  billingEmail:row.billing_email,
+  currency:row.currency,
+  grossFeeTotal:Number(row.gross_fee_total||0),
+  faivopayShareTotal:Number(row.faivopay_share_total||0),
+  taxiCompanyShareTotal:Number(row.taxi_company_share_total||0),
+  feeCount:Number(row.fee_count||0),
+  status:row.status,
+  pdfPath:row.pdf_path||null,
+  emailStatus:row.email_status,
+  emailProvider:row.email_provider||null,
+  emailProviderRef:row.email_provider_ref||null,
+  emailedAt:row.emailed_at||null,
+  createdAt:row.created_at,
+  createdBy:row.created_by||null,
+  updatedAt:row.updated_at||null
+ };
+
+ if(items){
+  result.items=db.prepare(`
+   SELECT
+    invoice_id invoiceId,
+    fee_id feeId,
+    company_id companyId,
+    fee_type feeType,
+    source_type sourceType,
+    source_id sourceId,
+    callsign,
+    description,
+    gross_fee grossFee,
+    faivopay_share faivopayShare,
+    taxi_company_share taxiCompanyShare,
+    fee_created_at feeCreatedAt,
+    created_at createdAt
+   FROM fee_invoice_items
+   WHERE invoice_id=?
+   ORDER BY fee_created_at,fee_id
+  `).all(row.id).map(x=>({
+   ...x,
+   grossFee:Number(x.grossFee||0),
+   faivopayShare:Number(x.faivopayShare||0),
+   taxiCompanyShare:Number(x.taxiCompanyShare||0)
+  }));
+ }
+
+ return result;
+}
+
+function feeInvoiceById(invoiceId,{items=false}={}){
+ const row=db.prepare(`
+  SELECT *
+  FROM fee_invoices
+  WHERE id=?
+ `).get(invoiceId);
+
+ return serializeFeeInvoice(row,{items});
+}
+
+function createManualFeeInvoice({
+ companyId,
+ periodStart,
+ periodEnd,
+ billingEmail,
+ createdBy
+}){
+ validateInvoicePeriod(periodStart,periodEnd);
+
+ const company=db.prepare(`
+  SELECT *
+  FROM companies
+  WHERE id=?
+ `).get(companyId);
+
+ if(!company){
+  throw new Error('Company not found');
+ }
+
+ const existing=db.prepare(`
+  SELECT *
+  FROM fee_invoices
+  WHERE company_id=?
+    AND period_start=?
+    AND period_end=?
+ `).get(
+  companyId,
+  periodStart,
+  periodEnd
+ );
+
+ if(existing){
+  return {
+   invoice:serializeFeeInvoice(existing,{items:true}),
+   alreadyExists:true
+  };
+ }
+
+ db.exec('BEGIN IMMEDIATE');
+
+ try{
+  /*
+   * Re-check after the write lock so concurrent/manual retries cannot
+   * create two invoices for the same company and period.
+   */
+  const lockedExisting=db.prepare(`
+   SELECT *
+   FROM fee_invoices
+   WHERE company_id=?
+     AND period_start=?
+     AND period_end=?
+  `).get(
+   companyId,
+   periodStart,
+   periodEnd
+  );
+
+  if(lockedExisting){
+   db.exec('COMMIT');
+
+   return {
+    invoice:serializeFeeInvoice(
+     lockedExisting,
+     {items:true}
+    ),
+    alreadyExists:true
+   };
+  }
+
+  const candidates=invoiceCandidateFees(
+   companyId,
+   periodStart,
+   periodEnd
+  );
+
+  if(!candidates.length){
+   throw new Error(
+    `No uninvoiced fees exist for ${periodStart} to ${periodEnd}`
+   );
+  }
+
+  const totals=candidates.reduce(
+   (a,row)=>{
+    a.gross+=row.effectiveGrossFee;
+    a.faivopay+=row.effectiveFaivopayShare;
+    a.taxi+=row.effectiveTaxiCompanyShare;
+    return a;
+   },
+   {gross:0,faivopay:0,taxi:0}
+  );
+
+  for(const key of Object.keys(totals)){
+   totals[key]=Number(totals[key].toFixed(2));
+  }
+
+  const now=new Date().toISOString();
+  const invoiceId=id('invoice');
+  const invoiceNumber=nextFeeInvoiceNumber(periodEnd);
+
+  db.prepare(`
+   INSERT INTO fee_invoices(
+    id,
+    company_id,
+    invoice_number,
+    period_start,
+    period_end,
+    billing_email,
+    currency,
+    gross_fee_total,
+    faivopay_share_total,
+    taxi_company_share_total,
+    fee_count,
+    status,
+    email_status,
+    created_at,
+    created_by,
+    updated_at
+   )
+   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `).run(
+   invoiceId,
+   companyId,
+   invoiceNumber,
+   periodStart,
+   periodEnd,
+   billingEmail||'',
+   'GBP',
+   totals.gross,
+   totals.faivopay,
+   totals.taxi,
+   candidates.length,
+   'created',
+   'not_sent',
+   now,
+   createdBy||'',
+   now
+  );
+
+  const insertItem=db.prepare(`
+   INSERT INTO fee_invoice_items(
+    invoice_id,
+    fee_id,
+    company_id,
+    gross_fee,
+    faivopay_share,
+    taxi_company_share,
+    created_at,
+    fee_type,
+    source_type,
+    source_id,
+    callsign,
+    description,
+    fee_created_at
+   )
+   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `);
+
+  const markFee=db.prepare(`
+   UPDATE fee_ledger
+   SET
+    status='invoiced',
+    invoice_ref=?,
+    invoice_id=?,
+    invoiced_at=?
+   WHERE id=?
+     AND company_id=?
+     AND status='uninvoiced'
+     AND invoice_id IS NULL
+  `);
+
+  for(const row of candidates){
+   insertItem.run(
+    invoiceId,
+    row.id,
+    companyId,
+    row.effectiveGrossFee,
+    row.effectiveFaivopayShare,
+    row.effectiveTaxiCompanyShare,
+    now,
+    row.fee_type||'',
+    row.source_type||'',
+    row.source_id||'',
+    row.callsign||'',
+    row.description||'',
+    row.created_at||''
+   );
+
+   const changed=markFee.run(
+    invoiceNumber,
+    invoiceId,
+    now,
+    row.id,
+    companyId
+   );
+
+   if(Number(changed.changes||0)!==1){
+    throw new Error(
+     `Fee ${row.id} changed while invoice was being created`
+    );
+   }
+  }
+
+  db.exec('COMMIT');
+
+  return {
+   invoice:feeInvoiceById(
+    invoiceId,
+    {items:true}
+   ),
+   alreadyExists:false
+  };
+
+ }catch(e){
+  try{db.exec('ROLLBACK')}catch{}
+  throw e;
+ }
+}
+
+function invoiceMoney(value){
+ return `£${Number(value||0).toFixed(2)}`;
+}
+
+function invoiceDateLabel(value){
+ try{
+  return new Intl.DateTimeFormat(
+   'en-GB',
+   {
+    day:'numeric',
+    month:'short',
+    year:'numeric',
+    timeZone:'Europe/London'
+   }
+  ).format(
+   new Date(`${String(value).slice(0,10)}T12:00:00Z`)
+  );
+ }catch{
+  return String(value||'');
+ }
+}
+
+async function feeInvoicePdfBuffer(invoice){
+ const company=db.prepare(`
+  SELECT *
+  FROM companies
+  WHERE id=?
+ `).get(invoice.companyId);
+
+ return await new Promise((resolve,reject)=>{
+  const doc=new PDFDocument({
+   size:'A4',
+   margins:{
+    top:46,
+    bottom:46,
+    left:48,
+    right:48
+   },
+   info:{
+    Title:`FaivoPay invoice ${invoice.invoiceNumber}`,
+    Author:'FaivoPay'
+   }
+  });
+
+  const chunks=[];
+
+  doc.on('data',chunk=>chunks.push(chunk));
+  doc.on('error',reject);
+  doc.on('end',()=>resolve(Buffer.concat(chunks)));
+
+  doc
+   .font('Helvetica-Bold')
+   .fontSize(25)
+   .text('FaivoPay');
+
+  doc
+   .font('Helvetica')
+   .fontSize(10)
+   .fillColor('#667085')
+   .text('Weekly fee invoice');
+
+  doc.moveDown(1.3);
+
+  doc
+   .fillColor('#111827')
+   .font('Helvetica-Bold')
+   .fontSize(18)
+   .text(`Invoice ${invoice.invoiceNumber}`);
+
+  doc.moveDown(.6);
+
+  const invoiceDate=
+   invoice.createdAt
+    ?new Intl.DateTimeFormat(
+      'en-GB',
+      {
+       day:'numeric',
+       month:'short',
+       year:'numeric',
+       timeZone:'Europe/London'
+      }
+     ).format(new Date(invoice.createdAt))
+    :'';
+
+  doc
+   .font('Helvetica')
+   .fontSize(10)
+   .text(`Invoice date: ${invoiceDate}`)
+   .text(`Company: ${company?.name||invoice.companyId}`)
+   .text(
+    `Fee period: ${invoiceDateLabel(invoice.periodStart)} – ${invoiceDateLabel(invoice.periodEnd)}`
+   )
+   .text(`Billing email: ${invoice.billingEmail||'—'}`);
+
+  doc.moveDown(1.4);
+
+  doc
+   .font('Helvetica-Bold')
+   .fontSize(12)
+   .text('Invoice summary');
+
+  doc.moveDown(.5);
+
+  doc
+   .font('Helvetica')
+   .fontSize(10)
+   .text(`Fee transactions: ${invoice.feeCount}`)
+   .text(`Gross fees charged: ${invoiceMoney(invoice.grossFeeTotal)}`)
+   .text(`Taxi company share: ${invoiceMoney(invoice.taxiCompanyShareTotal)}`);
+
+  doc.moveDown(.4);
+
+  doc
+   .font('Helvetica-Bold')
+   .fontSize(14)
+   .text(
+    `Amount due to FaivoPay: ${invoiceMoney(invoice.faivopayShareTotal)}`
+   );
+
+  const groups=new Map();
+
+  for(const item of invoice.items||[]){
+   const key=item.feeType||'other';
+
+   if(!groups.has(key)){
+    groups.set(key,{
+     count:0,
+     gross:0,
+     faivopay:0,
+     taxi:0
+    });
+   }
+
+   const g=groups.get(key);
+   g.count++;
+   g.gross+=Number(item.grossFee||0);
+   g.faivopay+=Number(item.faivopayShare||0);
+   g.taxi+=Number(item.taxiCompanyShare||0);
+  }
+
+  doc.moveDown(1.5);
+
+  doc
+   .font('Helvetica-Bold')
+   .fontSize(12)
+   .text('Fee breakdown');
+
+  doc.moveDown(.5);
+
+  for(const [type,g] of groups){
+   doc
+    .font('Helvetica')
+    .fontSize(9)
+    .text(
+     `${String(type).replaceAll('_',' ')} · ${g.count} item${g.count===1?'':'s'} · Gross ${invoiceMoney(g.gross)} · FaivoPay ${invoiceMoney(g.faivopay)}`
+    );
+  }
+
+  doc.moveDown(1.5);
+
+  doc
+   .font('Helvetica-Bold')
+   .fontSize(12)
+   .text('Transaction detail');
+
+  doc.moveDown(.5);
+
+  for(const item of invoice.items||[]){
+   const date=londonDateFromIso(item.feeCreatedAt);
+   const type=String(item.feeType||'fee').replaceAll('_',' ');
+   const callsign=item.callsign?` · Callsign ${String(item.callsign).trim()}`:'';
+
+   doc
+    .font('Helvetica')
+    .fontSize(7.5)
+    .fillColor('#111827')
+    .text(
+     `${date} · ${type}${callsign} · Gross ${invoiceMoney(item.grossFee)} · FaivoPay ${invoiceMoney(item.faivopayShare)}`
+    );
+  }
+
+  doc.moveDown(1.5);
+
+  doc
+   .font('Helvetica')
+   .fontSize(8)
+   .fillColor('#667085')
+   .text(
+    'This invoice was generated from immutable FaivoPay fee records for the stated accounting period.'
+   );
+
+  doc.end();
+ });
+}
+
+app.get(
+ '/api/admin/fee-invoices',
+ adminAuth,
+ requireStaffRole('administrator','finance','office','readonly'),
+ (req,res)=>{
+  const company=officeCompanyRow(req);
+
+  if(!company){
+   return res.status(409).json({
+    error:'Select a company before viewing fee invoices.'
+   });
+  }
+
+  const invoices=db.prepare(`
+   SELECT *
+   FROM fee_invoices
+   WHERE company_id=?
+   ORDER BY period_end DESC,created_at DESC
+   LIMIT 250
+  `).all(company.id).map(row=>serializeFeeInvoice(row));
+
+  res.json({company:companyPublic(company),invoices});
+ }
+);
+
+app.get(
+ '/api/admin/fee-invoices/:id',
+ adminAuth,
+ requireStaffRole('administrator','finance','office','readonly'),
+ (req,res)=>{
+  const invoice=feeInvoiceById(
+   req.params.id,
+   {items:true}
+  );
+
+  if(!invoice){
+   return res.status(404).json({
+    error:'Invoice not found'
+   });
+  }
+
+  res.json({invoice});
+ }
+);
+
+app.post(
+ '/api/admin/fee-invoices/manual-create',
+ adminAuth,
+ requireStaffRole('administrator','finance'),
+ (req,res)=>{
+  try{
+   const company=officeCompanyRow(req);
+
+   if(!company){
+    return res.status(409).json({
+     error:'Select a company before creating an invoice.'
+    });
+   }
+
+   const fallback=previousCompleteInvoiceWeek();
+
+   const periodStart=String(
+    req.body?.periodStart||
+    fallback.periodStart
+   );
+
+   const periodEnd=String(
+    req.body?.periodEnd||
+    fallback.periodEnd
+   );
+
+   const invoiceSettings=
+    companyWeeklyInvoiceSettings(company.id);
+
+   const billingEmail=safeEmail(
+    req.body?.billingEmail||
+    invoiceSettings?.billingEmail||
+    company.support_email||
+    ''
+   );
+
+   if(!billingEmail){
+    return res.status(400).json({
+     error:'A billing email is required before creating the invoice.'
+    });
+   }
+
+   const result=createManualFeeInvoice({
+    companyId:company.id,
+    periodStart,
+    periodEnd,
+    billingEmail,
+    createdBy:req.auth.email
+   });
+
+   if(!result.alreadyExists){
+    audit(
+     req,
+     'staff',
+     req.auth.email,
+     'fee_invoice_created',
+     'fee_invoice',
+     result.invoice.id,
+     {
+      invoiceNumber:result.invoice.invoiceNumber,
+      companyId:company.id,
+      periodStart,
+      periodEnd,
+      feeCount:result.invoice.feeCount,
+      grossFeeTotal:result.invoice.grossFeeTotal,
+      faivopayShareTotal:result.invoice.faivopayShareTotal,
+      taxiCompanyShareTotal:result.invoice.taxiCompanyShareTotal
+     }
+    );
+   }
+
+   res.json({
+    ok:true,
+    alreadyExists:result.alreadyExists,
+    invoice:result.invoice
+   });
+
+  }catch(e){
+   const code=
+    /No uninvoiced fees|Invoice period|Weekly invoice|fully completed|Invalid invoice/i.test(
+     e.message
+    )
+     ?400
+     :500;
+
+   res.status(code).json({error:e.message});
+  }
+ }
+);
+
+app.get(
+ '/api/admin/fee-invoices/:id/pdf',
+ adminAuth,
+ requireStaffRole('administrator','finance','office','readonly'),
+ async(req,res)=>{
+  try{
+   const invoice=feeInvoiceById(
+    req.params.id,
+    {items:true}
+   );
+
+   if(!invoice){
+    return res.status(404).json({
+     error:'Invoice not found'
+    });
+   }
+
+   const pdf=await feeInvoicePdfBuffer(invoice);
+
+   res.setHeader(
+    'Content-Type',
+    'application/pdf'
+   );
+
+   res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="${invoice.invoiceNumber}.pdf"`
+   );
+
+   res.setHeader(
+    'Content-Length',
+    String(pdf.length)
+   );
+
+   res.send(pdf);
+
+  }catch(e){
+   res.status(500).json({error:e.message});
+  }
+ }
+);
 
 app.get('/api/admin/fees',adminAuth,(req,res)=>{
  const rawRows=db.prepare(`
