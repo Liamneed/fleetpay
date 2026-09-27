@@ -11937,3 +11937,104 @@ body {
   grid-template-columns:1fr;
  }
 }
+
+/* =========================================================
+   Live Data Test Lab — Phase 2A read-only snapshots
+   ========================================================= */
+
+.liveTestActions{
+ display:flex;
+ flex-wrap:wrap;
+ gap:7px;
+}
+
+.liveTestActions .mini{
+ white-space:nowrap;
+}
+
+.liveTestActions svg{
+ width:14px;
+ height:14px;
+}
+
+.liveTestSnapshotPanel{
+ border-color:rgba(34,197,94,.22);
+}
+
+.liveTestComparisonGrid{
+ display:grid;
+ grid-template-columns:repeat(4,minmax(0,1fr));
+ gap:12px;
+ margin-top:16px;
+}
+
+.liveTestComparisonGrid>div{
+ min-width:0;
+ display:flex;
+ flex-direction:column;
+ gap:4px;
+ padding:15px;
+ border:1px solid var(--border);
+ border-radius:14px;
+ background:rgba(127,127,127,.035);
+}
+
+.liveTestComparisonGrid span{
+ font-size:12px;
+ opacity:.68;
+}
+
+.liveTestComparisonGrid b{
+ font-size:20px;
+}
+
+.liveTestComparisonGrid small{
+ font-size:12px;
+ opacity:.7;
+}
+
+.liveTestSnapshotTimes{
+ margin-top:12px;
+ display:grid;
+ grid-template-columns:repeat(4,minmax(0,1fr));
+ gap:10px;
+}
+
+.liveTestSnapshotTimes>span{
+ display:flex;
+ flex-direction:column;
+ gap:3px;
+ padding:12px 14px;
+ border-radius:12px;
+ background:rgba(127,127,127,.035);
+ font-size:12px;
+ opacity:.72;
+}
+
+.liveTestSnapshotTimes b{
+ font-size:13px;
+ opacity:1;
+}
+
+.liveTestHistoryPanel td small{
+ display:block;
+ margin-top:3px;
+}
+
+.liveTestHistoryPanel .callsign{
+ min-width:38px;
+}
+
+@media (max-width:1100px){
+ .liveTestComparisonGrid,
+ .liveTestSnapshotTimes{
+  grid-template-columns:repeat(2,minmax(0,1fr));
+ }
+}
+
+@media (max-width:680px){
+ .liveTestComparisonGrid,
+ .liveTestSnapshotTimes{
+  grid-template-columns:1fr;
+ }
+}
