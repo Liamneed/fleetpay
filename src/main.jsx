@@ -2617,9 +2617,42 @@ function AdminApp(){
  const weeklyExcluded=weeklyItems.filter(x=>x.approvalStatus==='excluded');
 
  /*
-  * Monday outgoing:
-  * Previous Balance is the gross amount before FaivoPay deductions.
-  * The final approved amount is the actual driver payout.
+  * Proposed Monday outgoing:
+  * Includes pending + approved payouts.
+  * Excluded drivers are removed from the proposed payable position.
+  */
+ const weeklyProposed=weeklyItems.filter(
+  x=>x.approvalStatus!=='excluded'
+ );
+
+ const weeklyProposedTotal=weeklyProposed.reduce(
+  (a,x)=>a+Number(x.amount||0),
+  0
+ );
+
+ const weeklyProposedBeforeFees=weeklyProposed.reduce(
+  (a,x)=>a+Math.max(0,Number(x.previousBalance||0)),
+  0
+ );
+
+ const weeklyProposedWeeklyFees=weeklyProposed.reduce(
+  (a,x)=>a+Number(x.weeklyFee||0),
+  0
+ );
+
+ const weeklyProposedCarriedCharges=weeklyProposed.reduce(
+  (a,x)=>a+Number(x.carriedCharges||0),
+  0
+ );
+
+ const weeklyProposedPlanDeductions=weeklyProposed.reduce(
+  (a,x)=>a+Number(x.planAllocation||0),
+  0
+ );
+
+ /*
+  * Approved Monday outgoing:
+  * Used for payment-run creation and actual approved cash exposure.
   */
  const weeklyApprovedTotal=weeklyApproved.reduce(
   (a,x)=>a+Number(x.amount||0),
@@ -6707,39 +6740,39 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
        <div className="panelHead"><div><span className="sectionKicker">{activeMonday.runDate||'MONDAY RUN'}</span><h3>Settlement summary</h3><p>{activeMonday.id}</p></div><Pill tone="warn">{String(activeMonday.status||'active').replaceAll('_',' ')}</Pill></div>
        <div className="mondayFinanceSummary">
         <div>
-         <span>Gross outgoing</span>
-         <b>{money(weeklyPayoutBeforeFees)}</b>
-         <small>Before FaivoPay deductions</small>
+         <span>Proposed gross outgoing</span>
+         <b>{money(weeklyProposedBeforeFees)}</b>
+         <small>Pending + approved drivers before deductions</small>
         </div>
 
         <div>
-         <span>FaivoPay fees</span>
-         <b>{money(weeklyPayoutWeeklyFees)}</b>
-         <small>Weekly driver fees</small>
+         <span>Proposed FaivoPay fees</span>
+         <b>{money(weeklyProposedWeeklyFees)}</b>
+         <small>Weekly fees on proposed payouts</small>
         </div>
 
         <div>
          <span>Other deductions</span>
-         <b>{money(weeklyPayoutCarriedCharges)}</b>
-         <small>Carried charges</small>
+         <b>{money(weeklyProposedCarriedCharges)}</b>
+         <small>Proposed carried charges</small>
         </div>
 
         <div>
          <span>Plan deductions</span>
-         <b>{money(weeklyPayoutPlanDeductions)}</b>
-         <small>Applied to repayment plans</small>
+         <b>{money(weeklyProposedPlanDeductions)}</b>
+         <small>Proposed repayment-plan deductions</small>
         </div>
 
         <div>
-         <span>Net outgoing</span>
-         <b>{money(weeklyApprovedTotal)}</b>
-         <small>Actual approved driver payouts</small>
+         <span>Proposed net outgoing</span>
+         <b>{money(weeklyProposedTotal)}</b>
+         <small>Pending + approved driver payouts</small>
         </div>
 
         <div>
          <span>Drivers to pay</span>
-         <b>{weeklyApproved.length}</b>
-         <small>{weeklyPending.length} pending decision{weeklyPending.length===1?'':'s'}</small>
+         <b>{weeklyProposed.length}</b>
+         <small>{weeklyPending.length} pending · {weeklyApproved.length} approved</small>
         </div>
 
         <div>
