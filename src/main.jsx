@@ -9709,6 +9709,10 @@ function DriverApp(){
  const[customerPaymentBusy,setCustomerPaymentBusy]=useState(false);
  const[livePaymentPreview,setLivePaymentPreview]=useState(null);
  const[livePaymentPreviewBusy,setLivePaymentPreviewBusy]=useState(false);
+ const[liveFareEdit,setLiveFareEdit]=useState({
+  bookingId:'',
+  value:''
+ });
  const[showManualPayment,setShowManualPayment]=useState(false);
  const[activityFilter,setActivityFilter]=useState('account-work');
  const[activityDateFilter,setActivityDateFilter]=useState('this-week');
@@ -9811,6 +9815,33 @@ function DriverApp(){
    setCustomerBooking('');
   }
  },[customerPayment,me?.customerPayments]);
+
+ useEffect(()=>{
+  if(
+   !livePaymentPreview?.ok ||
+   !livePaymentPreview?.bookingId
+  )return;
+
+  const bookingId=String(livePaymentPreview.bookingId);
+
+  setLiveFareEdit(current=>{
+   if(current.bookingId===bookingId)return current;
+
+   const fare=Number(livePaymentPreview.fareAmount||0);
+
+   return {
+    bookingId,
+    value:
+     Number.isFinite(fare)&&fare>0
+      ?fare.toFixed(2)
+      :''
+   };
+  });
+ },[
+  livePaymentPreview?.bookingId,
+  livePaymentPreview?.ok
+ ]);
+
 
  function driverActivityRange(key){
   const now=new Date();
@@ -10074,11 +10105,41 @@ function DriverApp(){
  async function createLiveCustomerPayment(){
   if(!livePaymentPreview?.ok)return;
 
+  const bookingId=String(
+   livePaymentPreview.bookingId||''
+  );
+
+  const fareAmount=
+   liveFareEdit.bookingId===bookingId
+    ?Math.round(Number(liveFareEdit.value||0)*100)/100
+    :Math.round(Number(livePaymentPreview.fareAmount||0)*100)/100;
+
+  if(!Number.isFinite(fareAmount) || fareAmount<=0){
+   setErr('Enter a valid final journey fare.');
+   return;
+  }
+
+  const feeAmount=Math.round(
+   (
+    feeType==='percentage'
+     ?fareAmount*(feeValue/100)
+     :feeValue
+   )*100
+  )/100;
+
+  const totalAmount=Math.round(
+   (fareAmount+feeAmount)*100
+  )/100;
+
   const confirmed=window.confirm(
-   `Create customer payment for booking ${livePaymentPreview.bookingId}?\n\n`+
-   `Driver amount: ${money(livePaymentPreview.fareAmount)}\n`+
-   `FaivoPay fee: ${money(livePaymentPreview.feeAmount)}\n`+
-   `Customer total: ${money(livePaymentPreview.totalAmount)}`
+   `Create customer payment for booking ${livePaymentPreview.bookingId}?
+
+`+
+   `Final journey fare: ${money(fareAmount)}
+`+
+   `FaivoPay fee: ${money(feeAmount)}
+`+
+   `Customer total: ${money(totalAmount)}`
   );
 
   if(!confirmed)return;
@@ -10089,7 +10150,10 @@ function DriverApp(){
   try{
    const j=await api(
     '/api/driver/customer-payment/live',
-    {method:'POST'}
+    {
+     method:'POST',
+     body:JSON.stringify({fareAmount})
+    }
    );
 
    setCustomerPayment(j);
@@ -10121,7 +10185,7 @@ function DriverApp(){
 
  function logout(){
   localStorage.removeItem('fleetpay_driver');
-  setToken('');setMe(null);setErr('');setNotice('');setAmt('');setMode('login');setStep(1);setChallenge('');setDev('');setPushReady(false);setPushAvailable(false);setPaymentBusy(false);setCustomerPayment(null);setCustomerFare('');setCustomerBooking('');setDriverTab('home');setBankEditing(false);setBankBusy(false);setBankForm({accountHolder:'',sortCode:'',accountNumber:'',password:''});
+  setToken('');setMe(null);setErr('');setNotice('');setAmt('');setMode('login');setStep(1);setChallenge('');setDev('');setPushReady(false);setPushAvailable(false);setPaymentBusy(false);setCustomerPayment(null);setCustomerFare('');setCustomerBooking('');setLiveFareEdit({bookingId:'',value:''});setDriverTab('home');setBankEditing(false);setBankBusy(false);setBankForm({accountHolder:'',sortCode:'',accountNumber:'',password:''});
   setF({callsign:'',email:'',mobileLast4:'',code:'',password:''});
  }
 
@@ -10965,20 +11029,78 @@ function DriverApp(){
 
   {activePaymentPlan&&PaymentPlanCard({compact:true})}
 
-  <button
-   className={`mockJobStatus ${livePaymentPreview?.ok?'live':'clear'}`}
-   type="button"
-   onClick={()=>changeTab('pay')}
-  >
-   <span><i/>{livePaymentPreview?.ok?'On a job':'Clear'}</span>
-   <small>
-    {livePaymentPreview?.ok
-     ?'Customer payment available if this is a Cash booking'
-     :'No live customer payment required'
+  {(()=>{
+   const jobState=
+    livePaymentPaid
+     ?'paid'
+     :livePaymentReady
+     ?'ready'
+     :livePaymentPreview?.ok
+     ?'cash'
+     :livePaymentAccountBooking
+     ?'account'
+     :livePaymentCardBooking
+     ?'card'
+     :'clear';
+
+   const active=jobState!=='clear';
+
+   const payment=
+    matchingLivePayment||
+    lastLivePaid?.payment||
+    null;
+
+   const fare=Number(
+    payment?.fareAmount||
+    bookingSnapshot?.fareAmount||
+    0
+   );
+
+   const total=Number(
+    payment?.totalAmount||
+    bookingSnapshot?.totalAmount||
+    0
+   );
+
+   const detail=
+    jobState==='cash'
+     ?`Cash · ${money(fare)}`
+     :jobState==='ready'
+     ?`Payment ready · ${money(total)}`
+     :jobState==='paid'
+     ?`Payment received · ${money(total)}`
+     :jobState==='account'
+     ?'Account · No payment required'
+     :jobState==='card'
+     ?'Card · Payment already arranged'
+     :'No active customer payment';
+
+   const bookingId=
+    bookingSnapshot?.bookingId||
+    livePaymentPreviousBookingId||
+    null;
+
+   return <button
+    className={`mockJobStatus job-${jobState} ${active?'live':'clear'}`}
+    type="button"
+    onClick={()=>changeTab('pay')}
+   >
+    <span className="mockJobStatusDot"><i/></span>
+
+    <span className="mockJobStatusCopy">
+     <b>{active?'Live booking':'No active booking'}</b>
+     <small>{detail}</small>
+    </span>
+
+    {bookingId&&
+     <span className="mockJobStatusRef">
+      #{bookingId}
+     </span>
     }
-   </small>
-   <ChevronRight/>
-  </button>
+
+    <ChevronRight/>
+   </button>;
+  })()}
 
   <button
    type="button"
@@ -11085,6 +11207,30 @@ function DriverApp(){
     :state==='ready'
     ?'Payment ready'
     :'Payment received';
+
+  const cashFareAmount=
+   state==='cash'
+    ?(
+      liveFareEdit.bookingId===
+      String(display?.bookingId||'')
+       ?Math.round(Number(liveFareEdit.value||0)*100)/100
+       :Math.round(Number(display?.fareAmount||0)*100)/100
+     )
+    :0;
+
+  const cashFeeAmount=
+   state==='cash' && Number.isFinite(cashFareAmount)
+    ?Math.round(
+      (
+       feeType==='percentage'
+        ?cashFareAmount*(feeValue/100)
+        :feeValue
+      )*100
+     )/100
+    :0;
+
+  const cashTotalAmount=
+   Math.round((cashFareAmount+cashFeeAmount)*100)/100;
 
   const bookingStatusText=
    state==='account'
@@ -11206,16 +11352,57 @@ function DriverApp(){
       </div>
 
       {display&&<>
-       <div className="mockDriverFare">
-        <strong>
-         {money(
-          display?.fareAmount||
-          lastLivePaid?.payment?.fareAmount||
-          0
-         )}
-        </strong>
-        <span>Driver fare</span>
-       </div>
+       {state==='cash'
+        ?<div className="mockFareEditor">
+          <div className="mockFareEditorHead">
+           <div>
+            <span>FINAL JOURNEY FARE</span>
+            <small>
+             Change this if waiting, an extra stop or another adjustment changed the final fare.
+            </small>
+           </div>
+
+           <span className="mockFareSource">
+            Autocab {money(display?.fareAmount||0)}
+           </span>
+          </div>
+
+          <label className="mockFareInput">
+           <span>£</span>
+           <input
+            type="number"
+            inputMode="decimal"
+            min="0.01"
+            step="0.01"
+            value={
+             liveFareEdit.bookingId===
+             String(display?.bookingId||'')
+              ?liveFareEdit.value
+              :Number(display?.fareAmount||0).toFixed(2)
+            }
+            onChange={e=>
+             setLiveFareEdit({
+              bookingId:String(display?.bookingId||''),
+              value:e.target.value
+             })
+            }
+            aria-label="Final journey fare"
+           />
+          </label>
+         </div>
+        :<div className="mockDriverFare">
+          <strong>
+           {money(
+            readyPayment?.fareAmount||
+            lastLivePaid?.payment?.fareAmount||
+            matchingLivePayment?.fareAmount||
+            display?.fareAmount||
+            0
+           )}
+          </strong>
+          <span>Journey fare</span>
+         </div>
+       }
 
        <MockRoute preview={display}/>
       </>}
@@ -11223,10 +11410,10 @@ function DriverApp(){
       {state==='cash'&&<>
        <div className="mockCustomerTotal">
         <span>Customer pays</span>
-        <strong>{money(display?.totalAmount)}</strong>
+        <strong>{money(cashTotalAmount)}</strong>
         <small>
-         {money(display?.fareAmount)} journey + {
-          money(display?.feeAmount)
+         {money(cashFareAmount)} journey + {
+          money(cashFeeAmount)
          } FaivoPay fee
         </small>
        </div>

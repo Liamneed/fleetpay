@@ -18915,29 +18915,72 @@ app.post('/api/driver/customer-payment/live',driverAuth,async(req,res)=>{
 
   const pricing=booking.pricing ?? booking.Pricing ?? {};
 
-  const fareAmount=Math.round(
-   Number(pricing.cost ?? pricing.Cost ?? 0)*100
+  const currentFareAmount=Math.round(
+   Number(
+    pricing.cost ??
+    pricing.Cost ??
+    0
+   )*100
   )/100;
 
-  if(!Number.isFinite(fareAmount) || fareAmount<=0){
+  if(
+   !Number.isFinite(currentFareAmount) ||
+   currentFareAmount<=0
+  ){
    return res.status(409).json({
     error:'The current Autocab driver cost is not available yet.'
    });
   }
 
-  const feeAmount=customerPaymentFeeFor(fareAmount);
-  const totalAmount=Math.round((fareAmount+feeAmount)*100)/100;
+  /*
+   * Driver may confirm a different final journey fare before
+   * the payment link exists.
+   *
+   * If no fare is supplied, use the current Autocab Cost.
+   */
+  const requestedFareRaw=req.body?.fareAmount;
+
+  let fareAmount=currentFareAmount;
+
+  if(
+   requestedFareRaw!==undefined &&
+   requestedFareRaw!==null &&
+   String(requestedFareRaw).trim()!==''
+  ){
+   fareAmount=Math.round(
+    Number(requestedFareRaw)*100
+   )/100;
+
+   if(
+    !Number.isFinite(fareAmount) ||
+    fareAmount<=0
+   ){
+    return res.status(400).json({
+     error:'Enter a valid final journey fare.'
+    });
+   }
+  }
+
+  const feeAmount=
+   customerPaymentFeeFor(fareAmount);
+
+  const totalAmount=Math.round(
+   (fareAmount+feeAmount)*100
+  )/100;
 
   /*
-   * Prevent two FaivoPay payments being created for the same Autocab
-   * booking, including bookings already created by the legacy
-   * BookingCreated + capability flow.
+   * Existing payment links are amount-locked.
+   *
+   * This check MUST happen before any Autocab pricing write.
    */
   const existing=db.prepare(`
    SELECT *
    FROM customer_payments
    WHERE booking_id=?
-     AND source IN ('autocab_booking_created','driver_live_booking')
+     AND source IN (
+      'autocab_booking_created',
+      'driver_live_booking'
+     )
    ORDER BY created_at DESC
    LIMIT 1
   `).get(String(bookingId));
@@ -18956,21 +18999,29 @@ app.post('/api/driver/customer-payment/live',driverAuth,async(req,res)=>{
      fareAmount:Number(existing.fare_amount||0),
      feeAmount:Number(existing.fee_amount||0),
      totalAmount:Number(existing.total_amount||0),
-     paymentUrl:existing.payment_url||`${PUBLIC_BASE_URL}/pay/${existing.id}`
+     paymentUrl:
+      existing.payment_url||
+      `${PUBLIC_BASE_URL}/pay/${existing.id}`
     });
    }
 
    if(existing.status!=='open'){
     return res.status(409).json({
-     error:'A previous FaivoPay payment already exists for this booking and cannot be reused safely.'
+     error:
+      'A previous FaivoPay payment already exists for this booking '+
+      'and cannot be reused safely.'
     });
    }
 
    const existingFare=
-    Math.round(Number(existing.fare_amount||0)*100)/100;
+    Math.round(
+     Number(existing.fare_amount||0)*100
+    )/100;
 
    const existingFee=
-    Math.round(Number(existing.fee_amount||0)*100)/100;
+    Math.round(
+     Number(existing.fee_amount||0)*100
+    )/100;
 
    if(
     existingFare!==fareAmount ||
@@ -18978,8 +19029,8 @@ app.post('/api/driver/customer-payment/live',driverAuth,async(req,res)=>{
    ){
     return res.status(409).json({
      error:
-      'An existing payment link for this booking has a different amount. '+
-      'FaivoPay has not changed it automatically.'
+      'A payment link already exists for this booking at a different amount. '+
+      'The amount is locked once the payment link has been created.'
     });
    }
 
@@ -18995,6 +19046,260 @@ app.post('/api/driver/customer-payment/live',driverAuth,async(req,res)=>{
      existing.payment_url||
      `${PUBLIC_BASE_URL}/pay/${existing.id}`
    });
+  }
+
+  /*
+   * No FaivoPay payment exists yet.
+   *
+   * For an edited fare:
+   *
+   * pricing.cost       = driver's final journey fare
+   * pricing.cashAmount = live Cash allocation
+   *
+   * pricing.price is deliberately preserved.
+   *
+   * FaivoPay's customer service fee is NEVER written to Autocab.
+   */
+  if(
+   Math.abs(
+    fareAmount-currentFareAmount
+   )>0.00001
+  ){
+   const beforeVehicleId=Number(
+    booking.vehicle?.id ??
+    booking.Vehicle?.Id ??
+    booking.vehicleId ??
+    booking.VehicleId ??
+    0
+   );
+
+   const originalPrice=Math.round(
+    Number(
+     pricing.price ??
+     pricing.Price ??
+     0
+    )*100
+   )/100;
+
+   const originalAccountAmount=Math.round(
+    Number(
+     pricing.accountAmount ??
+     pricing.AccountAmount ??
+     0
+    )*100
+   )/100;
+
+   const originalCardAmount=Math.round(
+    Number(
+     pricing.cardAmount ??
+     pricing.CardAmount ??
+     0
+    )*100
+   )/100;
+
+   pricing.cost=fareAmount;
+   pricing.cashAmount=fareAmount;
+
+   await postJson(
+    `${BASE_URL}/booking/v1/booking/${encodeURIComponent(bookingId)}`,
+    booking
+   );
+
+   /*
+    * Re-read Autocab and verify the booking after the write.
+    */
+   const verified=await getJson(
+    `${BASE_URL}/booking/v1/booking/${encodeURIComponent(bookingId)}`
+   );
+
+   if(!verified || typeof verified!=='object'){
+    return res.status(502).json({
+     error:
+      'Autocab did not return the booking after the fare update. '+
+      'No payment link was created.'
+    });
+   }
+
+   const verifiedDriverId=Number(
+    verified.driver?.id ??
+    verified.Driver?.Id ??
+    verified.driverId ??
+    verified.DriverId ??
+    0
+   );
+
+   const verifiedVehicleId=Number(
+    verified.vehicle?.id ??
+    verified.Vehicle?.Id ??
+    verified.vehicleId ??
+    verified.VehicleId ??
+    0
+   );
+
+   const verifiedPaymentValues=[
+    verified.paymentType ??
+     verified.PaymentType,
+    verified.paymentMethod ??
+     verified.PaymentMethod
+   ]
+    .filter(
+     v=>
+      v!==null &&
+      v!==undefined &&
+      String(v).trim()!==''
+    )
+    .map(
+     v=>String(v).trim().toLowerCase()
+    );
+
+   const verifiedStillCash=
+    verifiedPaymentValues.length>0 &&
+    verifiedPaymentValues.every(
+     v=>v==='cash'
+    );
+
+   const verifiedPricing=
+    verified.pricing ??
+    verified.Pricing ??
+    {};
+
+   const verifiedCost=Math.round(
+    Number(
+     verifiedPricing.cost ??
+     verifiedPricing.Cost ??
+     0
+    )*100
+   )/100;
+
+   const verifiedCashAmount=Math.round(
+    Number(
+     verifiedPricing.cashAmount ??
+     verifiedPricing.CashAmount ??
+     0
+    )*100
+   )/100;
+
+   const verifiedPrice=Math.round(
+    Number(
+     verifiedPricing.price ??
+     verifiedPricing.Price ??
+     0
+    )*100
+   )/100;
+
+   const verifiedAccountAmount=Math.round(
+    Number(
+     verifiedPricing.accountAmount ??
+     verifiedPricing.AccountAmount ??
+     0
+    )*100
+   )/100;
+
+   const verifiedCardAmount=Math.round(
+    Number(
+     verifiedPricing.cardAmount ??
+     verifiedPricing.CardAmount ??
+     0
+    )*100
+   )/100;
+
+   if(verifiedDriverId!==driverId){
+    return res.status(409).json({
+     error:
+      'The booking changed driver while the final fare was being updated. '+
+      'No payment link was created.'
+    });
+   }
+
+   if(
+    beforeVehicleId>0 &&
+    verifiedVehicleId!==beforeVehicleId
+   ){
+    return res.status(409).json({
+     error:
+      'The booking changed vehicle while the final fare was being updated. '+
+      'No payment link was created.'
+    });
+   }
+
+   if(!verifiedStillCash){
+    return res.status(409).json({
+     error:
+      'The booking is no longer Cash. No payment link was created.'
+    });
+   }
+
+   if(
+    Math.abs(
+     verifiedCost-fareAmount
+    )>0.00001
+   ){
+    return res.status(502).json({
+     error:
+      `Autocab did not retain the final driver Cost of £${
+       fareAmount.toFixed(2)
+      }. No payment link was created.`
+    });
+   }
+
+   if(
+    Math.abs(
+     verifiedCashAmount-fareAmount
+    )>0.00001
+   ){
+    return res.status(502).json({
+     error:
+      `Autocab did not retain the Cash amount of £${
+       fareAmount.toFixed(2)
+      }. No payment link was created.`
+    });
+   }
+
+   if(
+    Math.abs(
+     verifiedPrice-originalPrice
+    )>0.00001
+   ){
+    return res.status(502).json({
+     error:
+      'Autocab unexpectedly changed the booking Price while updating '+
+      'the driver fare. No payment link was created.'
+    });
+   }
+
+   if(
+    Math.abs(
+     verifiedAccountAmount-originalAccountAmount
+    )>0.00001 ||
+    Math.abs(
+     verifiedCardAmount-originalCardAmount
+    )>0.00001
+   ){
+    return res.status(502).json({
+     error:
+      'Autocab unexpectedly changed the Account/Card payment split. '+
+      'No payment link was created.'
+    });
+   }
+
+   audit(
+    driverId,
+    'driver',
+    'autocab',
+    'live_booking_fare_updated',
+    'booking',
+    String(bookingId),
+    {
+     callsign:driver.callsign,
+     originalFare:currentFareAmount,
+     finalFare:fareAmount,
+     originalPrice,
+     verifiedPrice,
+     verifiedCashAmount,
+     driverId:verifiedDriverId,
+     vehicleId:verifiedVehicleId
+    }
+   );
   }
 
   const pickup=booking.pickup ?? booking.Pickup ?? {};

@@ -13225,3 +13225,238 @@ body {
   background:#192d48;
  }
 }
+
+
+/* FaivoPay live booking payment refinement */
+
+.mockJobStatus{
+ display:grid!important;
+ grid-template-columns:16px minmax(0,1fr) auto 18px!important;
+ gap:9px!important;
+ align-items:center!important;
+ min-height:58px!important;
+ padding:9px 11px!important;
+ text-align:left!important;
+}
+
+.mockJobStatusDot{
+ display:grid!important;
+ place-items:center!important;
+}
+
+.mockJobStatusDot i{
+ width:9px!important;
+ height:9px!important;
+ margin:0!important;
+}
+
+.mockJobStatusCopy{
+ display:block!important;
+ min-width:0;
+}
+
+.mockJobStatusCopy b{
+ display:block;
+ font-size:calc(11px * var(--driver-text-scale));
+ line-height:1.2;
+}
+
+.mockJobStatusCopy small{
+ display:block;
+ margin-top:3px;
+ color:inherit;
+ opacity:.78;
+ font-size:calc(9px * var(--driver-text-scale));
+ font-weight:650;
+ line-height:1.25;
+ white-space:normal;
+}
+
+.mockJobStatusRef{
+ display:block!important;
+ font-size:calc(8px * var(--driver-text-scale));
+ font-weight:800;
+ opacity:.58;
+ white-space:nowrap;
+}
+
+.mockJobStatus.job-ready{
+ background:#eef7ff!important;
+ color:#176aab!important;
+}
+
+.mockJobStatus.job-paid{
+ background:#edf9f1!important;
+ color:#176a42!important;
+}
+
+.mockJobStatus.job-account{
+ background:#f4f1fb!important;
+ color:#59447d!important;
+}
+
+.mockJobStatus.job-card{
+ background:#edf5fc!important;
+ color:#316b9e!important;
+}
+
+.mockPaymentSurface{
+ min-height:0!important;
+ padding:14px!important;
+ border-radius:15px!important;
+ box-shadow:0 6px 18px rgba(2,17,35,.075)!important;
+}
+
+.mockFareEditor{
+ margin-top:14px;
+ padding:13px;
+ border:1px solid #dce5ef;
+ border-radius:13px;
+ background:#f8fafc;
+}
+
+.mockFareEditorHead{
+ display:flex;
+ justify-content:space-between;
+ align-items:flex-start;
+ gap:10px;
+}
+
+.mockFareEditorHead>div>span{
+ display:block;
+ color:#65748a;
+ font-size:calc(8px * var(--driver-text-scale));
+ font-weight:900;
+ letter-spacing:.08em;
+}
+
+.mockFareEditorHead small{
+ display:block;
+ margin-top:4px;
+ color:#718096;
+ font-size:calc(8.5px * var(--driver-text-scale));
+ line-height:1.3;
+}
+
+.mockFareSource{
+ color:#718096;
+ font-size:calc(8px * var(--driver-text-scale));
+ font-weight:750;
+ white-space:nowrap;
+}
+
+.mockFareInput{
+ display:flex;
+ align-items:center;
+ margin-top:10px;
+ border:1px solid #cbd7e4;
+ border-radius:11px;
+ background:#fff;
+ overflow:hidden;
+}
+
+.mockFareInput>span{
+ padding-left:13px;
+ font-size:calc(22px * var(--driver-text-scale));
+ font-weight:850;
+ color:#172940;
+}
+
+.mockFareInput input{
+ width:100%;
+ min-width:0;
+ height:48px;
+ padding:0 12px 0 5px;
+ border:0;
+ outline:0;
+ background:transparent;
+ color:#172940;
+ font:inherit;
+ font-size:calc(24px * var(--driver-text-scale));
+ font-weight:900;
+ letter-spacing:-.035em;
+}
+
+.mockCustomerTotal{
+ margin-top:11px!important;
+ padding:12px 13px!important;
+}
+
+.mockCustomerTotal strong{
+ font-size:calc(24px * var(--driver-text-scale))!important;
+}
+
+.mockQrBox{
+ width:146px;
+ height:146px;
+ margin:10px auto 4px!important;
+ padding:7px!important;
+}
+
+.mockQrBox svg{
+ width:132px!important;
+ max-width:132px!important;
+ height:132px!important;
+}
+
+.mockTakePayment,
+.mockPrimaryNavy,
+.mockOutlineAction{
+ min-height:44px!important;
+ margin-top:9px!important;
+}
+
+.mockRoute{
+ margin:12px 0 10px!important;
+ gap:9px!important;
+}
+
+.mockDriverFare{
+ margin-top:13px!important;
+}
+
+.mockDriverFare strong{
+ font-size:calc(26px * var(--driver-text-scale))!important;
+}
+
+.mockDriverApp.theme-dark .mockFareEditor{
+ background:#192d48;
+ border-color:rgba(255,255,255,.1);
+}
+
+.mockDriverApp.theme-dark .mockFareInput{
+ background:#14233a;
+ border-color:rgba(255,255,255,.14);
+}
+
+.mockDriverApp.theme-dark .mockFareInput>span,
+.mockDriverApp.theme-dark .mockFareInput input{
+ color:#f5f7fb;
+}
+
+.mockDriverApp.theme-dark .mockFareEditorHead small,
+.mockDriverApp.theme-dark .mockFareSource{
+ color:#9aabc0;
+}
+
+@media(max-width:430px){
+ .mockJobStatus{
+  grid-template-columns:15px minmax(0,1fr) auto 16px!important;
+  gap:7px!important;
+ }
+
+ .mockJobStatusRef{
+  font-size:7px;
+ }
+
+ .mockQrBox{
+  width:136px;
+  height:136px;
+ }
+
+ .mockQrBox svg{
+  width:122px!important;
+  max-width:122px!important;
+  height:122px!important;
+ }
+}
