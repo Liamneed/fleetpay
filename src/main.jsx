@@ -10282,14 +10282,21 @@ function DriverApp(){
  const paidCustomerPayments=customerPayments.filter(x=>x.status==='paid');
  const openCustomerPayments=customerPayments.filter(x=>x.status==='open');
 
+ const livePaymentBookingId=
+  livePaymentPreview?.bookingId ||
+  livePaymentPreview?.previousBookingId ||
+  customerPayment?.bookingId ||
+  lastLivePaid?.payment?.bookingId ||
+  null;
+
  const matchingLivePayment=
-  livePaymentPreview?.ok
+  livePaymentBookingId
    ?(
      customerPayment &&
-     String(customerPayment.bookingId||'')===String(livePaymentPreview.bookingId||'')
+     String(customerPayment.bookingId||'')===String(livePaymentBookingId)
       ?customerPayment
       :customerPayments.find(
-        x=>String(x.bookingId||'')===String(livePaymentPreview.bookingId||'')
+        x=>String(x.bookingId||'')===String(livePaymentBookingId)
        )||null
     )
    :null;
@@ -10300,12 +10307,10 @@ function DriverApp(){
  );
 
  const livePaymentReady=Boolean(
-  livePaymentPreview?.ok &&
   matchingLivePayment?.status==='open'
  );
 
  const livePaymentPaid=Boolean(
-  livePaymentPreview?.ok &&
   matchingLivePayment?.status==='paid'
  );
 
@@ -10314,11 +10319,25 @@ function DriverApp(){
  const livePaymentAccountBooking=Boolean(
   livePaymentPreview &&
   !livePaymentPreview.ok &&
-  /account|no longer cash|not cash|only available for cash bookings/i.test(livePaymentPreviewError)
+  (
+   livePaymentPreview.bookingType==='account' ||
+   /already on account|account booking/i.test(livePaymentPreviewError)
+  )
+ );
+
+ const livePaymentCardBooking=Boolean(
+  livePaymentPreview &&
+  !livePaymentPreview.ok &&
+  (
+   livePaymentPreview.bookingType==='card' ||
+   /card booking/i.test(livePaymentPreviewError)
+  )
  );
 
  const livePaymentPreviousBookingId=
-  livePaymentPreview?.previousBookingId||null;
+  livePaymentPreview?.bookingId||
+  livePaymentPreview?.previousBookingId||
+  null;
 
  const feeType=me.settings?.customerPaymentFeeType||'fixed';
  const feeValue=Number(me.settings?.customerPaymentFeeValue||0);
@@ -10751,7 +10770,18 @@ function DriverApp(){
   return {pickup,destination};
  };
 
- const bookingSnapshot=livePaymentPreview?.ok?livePaymentPreview:lastLivePreview;
+ const bookingSnapshot=
+  livePaymentPreview?.ok
+   ?livePaymentPreview
+   :(
+     lastLivePreview &&
+     livePaymentBookingId &&
+     String(lastLivePreview.bookingId||'')===String(livePaymentBookingId)
+      ?lastLivePreview
+      :livePaymentPreview?.bookingId
+      ?livePaymentPreview
+      :lastLivePreview
+    );
  const bookingRoute=routeLine(bookingSnapshot);
  const noActiveBooking=Boolean(
   livePaymentPreview &&
@@ -11018,11 +11048,20 @@ function DriverApp(){
 
  const PayPage=()=>{
   const display=bookingSnapshot;
-  const accountState=livePaymentAccountBooking&&!paidLiveView;
+  const accountState=
+   livePaymentAccountBooking &&
+   !paidLiveView &&
+   !livePaymentReady;
+
+  const cardState=
+   livePaymentCardBooking &&
+   !paidLiveView &&
+   !livePaymentReady;
+
   const readyPayment=livePaymentReady?matchingLivePayment:null;
 
   const state=
-   paidLiveView
+   paidLiveView || livePaymentPaid
     ?'paid'
     :readyPayment
     ?'ready'
@@ -11030,13 +11069,17 @@ function DriverApp(){
     ?'cash'
     :accountState
     ?'account'
+    :cardState
+    ?'card'
     :'empty';
 
   const bookingStatusTitle=
    state==='account'
     ?'Account booking'
+    :state==='card'
+    ?'Card booking'
     :state==='empty'
-    ?'Clear'
+    ?'No payment required'
     :state==='cash'
     ?'Cash booking'
     :state==='ready'
@@ -11045,14 +11088,16 @@ function DriverApp(){
 
   const bookingStatusText=
    state==='account'
-    ?'No customer payment required for this job.'
+    ?'Already on account — customer payment is disabled.'
+    :state==='card'
+    ?'Card payment is already being handled for this booking.'
     :state==='empty'
-    ?'Customer payment will appear automatically on an eligible Cash booking.'
+    ?'An eligible Cash booking will appear here automatically.'
     :state==='cash'
     ?'Customer payment is available for this booking.'
     :state==='ready'
-    ?'The secure payment link is ready to share.'
-    :'Customer payment has been received.';
+    ?'Secure payment link ready for the customer.'
+    :'Customer payment received successfully.';
 
   return <div className="driverPageView mockPaymentsPage financePaymentsPage">
    <div className="financePaymentsIntro compact">
@@ -11072,7 +11117,7 @@ function DriverApp(){
      <small>{bookingStatusText}</small>
     </span>
 
-    {(state==='cash'||state==='ready'||state==='paid'||state==='account')&&
+    {(state==='cash'||state==='ready'||state==='paid'||state==='account'||state==='card')&&
      <span className="financeBookingRef">
       #{display?.bookingId||livePaymentPreviousBookingId||'—'}
      </span>
@@ -11092,6 +11137,46 @@ function DriverApp(){
     <div className="mockSecondaryStack financeEarlySection">
      {EarlyPayoutCard()}
     </div>
+   }
+
+   {(state==='account'||state==='card')&&
+    <section className="financeCustomerPaymentSection">
+     <div className="financeSectionHeading">
+      <div>
+       <span>CURRENT BOOKING</span>
+       <h3>Customer payment</h3>
+      </div>
+      <small>{state==='account'?'Account':'Card'} booking</small>
+     </div>
+
+     <section className={`mockPaymentSurface state-${state} nonPayableBooking`}>
+      <div className="mockPaymentStatusRow">
+       <span className={`mockBookingBadge ${state}`}>
+        {state==='account'?'▣ ACCOUNT BOOKING':'💳 CARD BOOKING'}
+       </span>
+
+       <small>
+        Booking #{livePaymentPreview?.bookingId||livePaymentPreviousBookingId||'—'}
+       </small>
+      </div>
+
+      <div className={`mockAccountNotice ${state}`}>
+       <CreditCard/>
+       <div>
+        <b>
+         {state==='account'
+          ?'No customer payment required'
+          :'Payment already arranged'}
+        </b>
+        <span>
+         {state==='account'
+          ?'This booking is already on account, so the driver cannot take another payment through FaivoPay.'
+          :'This booking is already set to Card. FaivoPay will not allow the driver to create a second customer payment.'}
+        </span>
+       </div>
+      </div>
+     </section>
+    </section>
    }
 
    {(state==='cash'||state==='ready'||state==='paid')&&
@@ -11201,27 +11286,37 @@ function DriverApp(){
        </button>
       </>}
 
-      {state==='paid'&&
-       <div className="mockPaidPanel">
+      {state==='paid'&&(()=>{
+       const paidPayment=
+        lastLivePaid?.payment||
+        matchingLivePayment;
+
+       if(!paidPayment)return null;
+
+       return <div className="mockPaidPanel">
         <div>
          <span>Customer paid</span>
-         <strong>{money(lastLivePaid.payment.totalAmount)}</strong>
+         <strong>{money(paidPayment.totalAmount)}</strong>
          <small>
-          {money(lastLivePaid.payment.fareAmount)} journey + {
-           money(lastLivePaid.payment.feeAmount)
+          {money(paidPayment.fareAmount)} journey + {
+           money(paidPayment.feeAmount)
           } FaivoPay fee
          </small>
 
-         {lastLivePaid.payment.paidAt&&
+         {paidPayment.paidAt&&
           <small>
-           <Clock3/> Paid {dt(lastLivePaid.payment.paidAt)}
+           <Clock3/> Paid {dt(paidPayment.paidAt)}
           </small>
          }
+
+         <small className="mockPaidConfirmed">
+          ✓ Booking payment updated in FaivoPay
+         </small>
         </div>
 
         <CheckCircle2/>
-       </div>
-      }
+       </div>;
+      })()}
      </section>
     </section>
    }

@@ -18679,8 +18679,42 @@ app.get('/api/driver/customer-payment/preview',driverAuth,async(req,res)=>{
    paymentValues.every(v=>v==='cash');
 
   if(!isCash){
-   return res.status(409).json({
-    error:'FaivoPay customer payment is only available for cash bookings.'
+   const paymentType=String(
+    booking.paymentType ??
+    booking.PaymentType ??
+    ''
+   );
+
+   const paymentMethod=String(
+    booking.paymentMethod ??
+    booking.PaymentMethod ??
+    ''
+   );
+
+   const bookingType=
+    paymentValues.some(v=>v==='account')
+     ?'account'
+     :paymentValues.some(v=>v==='card')
+     ?'card'
+     :'other';
+
+   const message=
+    bookingType==='account'
+     ?'This booking is already on account. No customer payment is required.'
+     :bookingType==='card'
+     ?'This is a Card booking. Payment is already being handled for this booking.'
+     :'Customer payment is not available for this booking.';
+
+   return res.json({
+    ok:false,
+    eligible:false,
+    bookingId,
+    callsign:driver.callsign,
+    vehicleStatus:live.vehicle_status||'',
+    bookingType,
+    paymentType,
+    paymentMethod,
+    error:message
    });
   }
 
@@ -18860,8 +18894,22 @@ app.post('/api/driver/customer-payment/live',driverAuth,async(req,res)=>{
    paymentValues.every(v=>v==='cash');
 
   if(!isCash){
+   const paymentLabel=paymentValues.join(' / ');
+
+   if(paymentValues.some(v=>v==='account')){
+    return res.status(409).json({
+     error:'This booking is already on account. No customer payment is required.'
+    });
+   }
+
+   if(paymentValues.some(v=>v==='card')){
+    return res.status(409).json({
+     error:'This is a Card booking. Payment is already being handled for this booking.'
+    });
+   }
+
    return res.status(409).json({
-    error:'FaivoPay customer payment is only available for cash bookings.'
+    error:`Customer payment is not available for this ${paymentLabel||'non-cash'} booking.`
    });
   }
 

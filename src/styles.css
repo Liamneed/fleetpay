@@ -13130,3 +13130,98 @@ body {
     font-size:calc(8.2px * var(--driver-text-scale))!important;
   }
 }
+
+
+/* ===== FaivoPay customer payment state polish ===== */
+
+.financeBookingStatus.state-paid{
+ border-color:rgba(25,149,76,.28);
+ background:linear-gradient(135deg,#f2fbf5,#e9f8ee);
+}
+
+.financeBookingStatus.state-ready{
+ border-color:rgba(5,102,182,.24);
+ background:linear-gradient(135deg,#f3f9ff,#eaf5ff);
+}
+
+.financeBookingStatus.state-cash{
+ border-color:rgba(222,150,10,.26);
+ background:linear-gradient(135deg,#fffaf0,#fff4d9);
+}
+
+.financeBookingStatus.state-account{
+ border-color:rgba(87,70,145,.18);
+ background:linear-gradient(135deg,#faf8ff,#f3efff);
+}
+
+.financeBookingStatus.state-card{
+ border-color:rgba(30,94,163,.18);
+ background:linear-gradient(135deg,#f6f9fd,#edf4fb);
+}
+
+.financeBookingDot.card{
+ background:#3978b8;
+ box-shadow:0 0 0 5px rgba(57,120,184,.11);
+}
+
+.mockBookingBadge.card{
+ background:#deebf8;
+ color:#285f94;
+}
+
+.mockPaymentSurface.state-paid{
+ border-color:rgba(25,149,76,.16);
+}
+
+.mockPaymentSurface.state-ready{
+ border-color:rgba(5,102,182,.15);
+}
+
+.mockPaymentSurface.state-cash{
+ border-color:rgba(222,150,10,.16);
+}
+
+.mockPaymentSurface.nonPayableBooking{
+ min-height:210px;
+}
+
+.mockAccountNotice.account{
+ background:linear-gradient(135deg,#f6f2ff,#f1ecff);
+}
+
+.mockAccountNotice.card{
+ background:linear-gradient(135deg,#f1f7fd,#eaf3fb);
+}
+
+.mockAccountNotice.card>svg{
+ color:#3978b8;
+}
+
+.mockPaidConfirmed{
+ margin-top:9px!important;
+ font-weight:800;
+ color:#237447!important;
+}
+
+.mockPaidPanel{
+ border:1px solid rgba(21,149,76,.12);
+ box-shadow:0 8px 20px rgba(22,113,63,.06);
+}
+
+.mockQrBox{
+ border:1px solid rgba(10,57,105,.08);
+}
+
+@media (prefers-color-scheme:dark){
+ .mockDriverApp.theme-dark .financeBookingStatus.state-paid,
+ .mockDriverApp.theme-dark .financeBookingStatus.state-ready,
+ .mockDriverApp.theme-dark .financeBookingStatus.state-cash,
+ .mockDriverApp.theme-dark .financeBookingStatus.state-account,
+ .mockDriverApp.theme-dark .financeBookingStatus.state-card{
+  background:#182941;
+ }
+ .mockDriverApp.theme-dark .mockAccountNotice.account,
+ .mockDriverApp.theme-dark .mockAccountNotice.card{
+  background:#192d48;
+ }
+}
