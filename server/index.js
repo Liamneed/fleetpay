@@ -735,6 +735,13 @@ ON customer_payments(booking_id)
 WHERE source IN ('autocab_booking_created','driver_live_booking');
 `);
 
+db.exec(`
+CREATE UNIQUE INDEX IF NOT EXISTS idx_settlement_runs_active_monday_date
+ON settlement_runs(run_date)
+WHERE run_date IS NOT NULL
+  AND status IN ('draft','approved','batched');
+`);
+
 const defaultSettings = {
  negativeThreshold: 20,
  minimumPayoutThreshold: 0,
@@ -760,6 +767,7 @@ const defaultSettings = {
  manualPayInReasonDefault: 'FaivoPay Manual Pay In',
  manualPayoutReasonDefault: 'FaivoPay Manual Payout',
  outstandingDueTime: '17:00',
+  outstandingExternalCommunicationsEnabled: false,
  outstandingSmsTemplate: 'FaivoPay: £{amount} is outstanding on your driver account. Payment is due by {dueTime} on {dueDate} to avoid suspension. Open FaivoPay to pay securely.',
  outstandingEmailSubject: 'FaivoPay payment due – £{amount}',
  outstandingEmailBody: 'Hello {driver},\n\nYour FaivoPay account has an outstanding commission payment of £{amount}. Payment is due by {dueTime} on {dueDate} to avoid suspension.\n\nPlease open FaivoPay to pay securely.\n\nFaivoPay',
@@ -6977,7 +6985,7 @@ app.get('/api/admin/users',adminAuth,(req,res)=>{res.json(db.prepare('SELECT id,
 app.patch('/api/admin/users/:id',adminAuth,requireStaffRole('administrator','office'),(req,res)=>{const u=db.prepare('SELECT * FROM driver_users WHERE id=?').get(req.params.id);if(!u)return res.status(404).json({error:'User not found'});const approved='approved'in req.body?(req.body.approved?1:0):u.approved;db.prepare('UPDATE driver_users SET approved=?,updated_at=? WHERE id=?').run(approved,new Date().toISOString(),u.id);audit(req,'admin',req.auth.email,approved?'driver_user_approved':'driver_user_suspended','driver_user',u.id,{driverId:u.driver_id,callsign:u.callsign});res.json({ok:true})});
 
 app.get('/api/admin/settlements',adminAuth,(req,res)=>{const runs=db.prepare('SELECT * FROM settlement_runs ORDER BY created_at DESC').all().map(r=>({id:r.id,createdAt:r.created_at,status:r.status,settings:JSON.parse(r.settings_json),items:JSON.parse(r.items_json)}));const payouts=db.prepare('SELECT *, driver_id driverId, driver_name driverName, gross_balance grossBalance, weekly_fee weeklyFee, carried_charges carriedCharges, gross_amount grossAmount, net_amount netAmount, payout_run_id payoutRunId, created_at createdAt, updated_at updatedAt, paid_at paidAt, decline_reason declineReason, eligible_run_date eligibleRunDate, submitted_after_cutoff submittedAfterCutoff FROM payouts ORDER BY created_at DESC').all();const paymentRequests=db.prepare('SELECT *, driver_id driverId, driver_name driverName, weekly_fee weeklyFee, carried_charges carriedCharges, payment_url paymentUrl, provider_session_id providerSessionId, created_at createdAt, updated_at updatedAt, paid_at paidAt FROM payment_requests ORDER BY created_at DESC').all();const payoutRuns=db.prepare('SELECT * FROM payout_runs ORDER BY created_at DESC').all().map(serializePayoutRun);res.json({runs,payoutRuns,payouts,paymentRequests,earlyPayoutRequests:payouts.filter(x=>x.type==='early')})});
-app.post('/api/admin/settlements/monday',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{const settings=getSettings(),sync=await syncAutocab(),drivers=sync.drivers,runId=id('run'),createdAt=new Date().toISOString(),items=[];const insP=db.prepare('INSERT INTO payouts(id,run_id,driver_id,callsign,driver_name,gross_balance,weekly_fee,carried_charges,amount,type,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)');const insR=db.prepare('INSERT INTO payment_requests(id,run_id,driver_id,callsign,driver_name,balance,weekly_fee,carried_charges,amount,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)');for(const d of drivers){if(d.currentBalance==null)continue;const row=db.prepare('SELECT amount FROM carried_charges WHERE driver_id=?').get(d.driverId);const carried=Number(row?.amount||0),fee=Number(settings.weeklyAppFee||0),adjusted=Number(d.currentBalance)-fee-carried;let action='none',amount=0;if(adjusted>0.00001){action='payout';amount=adjusted;insP.run(id('payout'),runId,d.driverId,d.callsign,d.fullName,d.currentBalance,fee,carried,amount,'weekly','queued',createdAt);db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,0) ON CONFLICT(driver_id) DO UPDATE SET amount=0').run(d.driverId)}else if(adjusted<-0.00001){const due=Math.abs(adjusted);amount=due;if(due>=Number(settings.negativeThreshold||0)){action='payment_request';const requestId=id('request');insR.run(requestId,runId,d.driverId,d.callsign,d.fullName,d.currentBalance,fee,carried,due,'open',createdAt);notify(d.driverId,'Payment due',`Your Monday FaivoPay settlement has an amount due of £${due.toFixed(2)}. Open FaivoPay to pay securely by card.`,'warning',requestId);db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,0) ON CONFLICT(driver_id) DO UPDATE SET amount=0').run(d.driverId)}else{action='carry_forward';db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,?) ON CONFLICT(driver_id) DO UPDATE SET amount=excluded.amount').run(d.driverId,due)}}else{db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,0) ON CONFLICT(driver_id) DO UPDATE SET amount=0').run(d.driverId)}if(fee>0)ledger(d.driverId,'weekly_fee','debit',fee,fee,'Weekly FaivoPay fee',runId,'charged');items.push({driverId:d.driverId,callsign:d.callsign,driverName:d.fullName,currentBalance:d.currentBalance,previousBalance:d.previousBalance,weeklyFee:fee,carriedCharges:carried,adjustedBalance:adjusted,action,amount})}db.prepare('INSERT INTO settlement_runs(id,created_at,status,settings_json,items_json) VALUES(?,?,?,?,?)').run(runId,createdAt,'completed',JSON.stringify(settings),JSON.stringify(items));audit(req,'admin',req.auth.email,'monday_settlement_run','settlement_run',runId,{drivers:items.length,payouts:items.filter(x=>x.action==='payout').length,paymentRequests:items.filter(x=>x.action==='payment_request').length});res.json({id:runId,createdAt,status:'completed',settings,items})}catch(e){res.status(500).json({error:e.message})}});
+
 app.patch('/api/admin/payouts/:id',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{const item=db.prepare('SELECT * FROM payouts WHERE id=?').get(req.params.id);if(!item)return res.status(404).json({error:'Payout not found'});const status=String(req.body.status||item.status),reason=String(req.body.reason||'').trim(),now=new Date().toISOString();if(status==='declined'&&!reason)return res.status(400).json({error:'A decline reason is required'});db.prepare('UPDATE payouts SET status=?,decline_reason=?,decision_at=?,decision_by=?,updated_at=? WHERE id=?').run(status,status==='declined'?reason:null,['approved','declined'].includes(status)?now:item.decision_at,['approved','declined'].includes(status)?req.auth.email:item.decision_by,now,item.id);if(item.type==='early'&&status==='approved'&&item.status!=='approved'){const runDate=item.eligible_run_date||londonWindow().date;const today=londonWindow().date;const timing=runDate===today?'Payment will be made to your assigned bank account by midday today.':`It has been approved for the ${formatRunDate(runDate)} payment run.`;notify(item.driver_id,'Early payout approved',`Your early payout of £${Number(item.net_amount||item.amount||0).toFixed(2)} has been approved. ${timing}`,'success',item.id)}if(item.type==='early'&&status==='declined'&&item.status!=='declined'){notify(item.driver_id,'Early payout declined',`Your early payout request was declined. Reason: ${reason}`,'warning',item.id)}if(status==='paid'&&item.status!=='paid'){await markPayoutPaid(item,req)}audit(req,'admin',req.auth.email,'payout_status_changed','payout',item.id,{from:item.status,to:status,reason});res.json({ok:true,status,reason})});
 
 app.post('/api/admin/payout-runs',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{
@@ -7989,12 +7997,6 @@ function liveTestMondaySimulation(driverId,liveAccount){
 
  const settledWeekStart=previousMondayWeekStart(runDate);
 
- const carriedRow=db.prepare(`
-  SELECT amount
-  FROM carried_charges
-  WHERE driver_id=?
- `).get(numericDriverId);
-
  const activityRow=db.prepare(`
   SELECT worked
   FROM driver_weekly_activity
@@ -8012,7 +8014,7 @@ function liveTestMondaySimulation(driverId,liveAccount){
  const chargeInactive=
   settings.chargeWeeklyFeeWhenInactive!==false;
 
- const weeklyFee=
+ const potentialWeeklyFee=
   chargeInactive||workedThisWeek
    ?configuredWeeklyFee
    :0;
@@ -8022,18 +8024,35 @@ function liveTestMondaySimulation(driverId,liveAccount){
   !workedThisWeek &&
   configuredWeeklyFee>0;
 
- const carriedCharges=Number(carriedRow?.amount||0);
+ const carriedCharges=0;
  const previousBalance=Number(liveAccount.previousBalance||0);
+
+ const crossesPositiveThreshold=
+  previousBalance>0.00001 &&
+  previousBalance+0.00001>=Number(
+   settings.minimumPayoutThreshold||0
+  );
+
+ const crossesNegativeThreshold=
+  previousBalance<-0.00001 &&
+  Math.abs(previousBalance)+0.00001>=Number(
+   settings.negativeThreshold||0
+  );
+
+ const weeklyFee=
+  crossesPositiveThreshold||crossesNegativeThreshold
+   ?potentialWeeklyFee
+   :0;
 
  const adjustedBalance=Number(
   (
    previousBalance-
-   weeklyFee-
-   carriedCharges
+   weeklyFee
   ).toFixed(2)
  );
 
  const planSettlement=
+  crossesPositiveThreshold &&
   adjustedBalance>0.00001
    ?paymentPlanSettlementCandidate(
      numericDriverId,
@@ -8072,32 +8091,17 @@ function liveTestMondaySimulation(driverId,liveAccount){
  let proposedCarryForward=0;
  let approvalStatus=null;
 
- if(adjustedBalance>0.00001){
+ if(previousBalance>0.00001){
 
-  if(payoutAvailable<=0.00001){
+  if(!crossesPositiveThreshold){
+   action='payout_carry_forward';
+   amount=previousBalance;
+   proposedCarryForward=0;
+
+  }else if(payoutAvailable<=0.00001){
    action='plan_allocation';
    amount=0;
-
-   proposedCarryForward=Number(
-    (
-     carriedCharges+
-     weeklyFee
-    ).toFixed(2)
-   );
-
-  }else if(
-   payoutAvailable+0.00001<
-   minimumPayoutThreshold
-  ){
-   action='payout_carry_forward';
-   amount=payoutAvailable;
-
-   proposedCarryForward=Number(
-    (
-     carriedCharges+
-     weeklyFee
-    ).toFixed(2)
-   );
+   proposedCarryForward=0;
 
   }else{
    action='payout';
@@ -8110,31 +8114,24 @@ function liveTestMondaySimulation(driverId,liveAccount){
      :'pending';
   }
 
- }else if(adjustedBalance<-0.00001){
+ }else if(previousBalance<-0.00001){
 
-  const owing=Math.abs(adjustedBalance);
-  amount=owing;
+  const rawOwing=Math.abs(previousBalance);
+  amount=rawOwing;
 
-  if(owing>=negativeThreshold){
+  if(crossesNegativeThreshold){
    action='payment_request';
+   amount=Math.abs(adjustedBalance);
    proposedCarryForward=0;
   }else{
    action='carry_forward';
-   proposedCarryForward=Number(
-    owing.toFixed(2)
-   );
+   proposedCarryForward=0;
   }
 
  }else{
   action='carry_forward';
   amount=0;
-
-  proposedCarryForward=Number(
-   (
-    carriedCharges+
-    weeklyFee
-   ).toFixed(2)
-  );
+  proposedCarryForward=0;
  }
 
  return {
@@ -11123,7 +11120,7 @@ app.get(
 
 app.put('/api/admin/operations-settings',adminAuth,requireStaffRole('administrator'),(req,res)=>{
  const cur=getSettings(),x=req.body||{},num=(k,min=0,max=Infinity)=>Math.min(max,Math.max(min,Number(x[k]??cur[k]??0))),str=k=>String(x[k]??cur[k]??'');let cutoff=str('earlyPayoutCutoffTime');if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(cutoff))cutoff='11:00';let dueTime=str('outstandingDueTime');if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(dueTime))dueTime='17:00';
- const next={...cur,negativeThreshold:num('negativeThreshold'),minimumPayoutThreshold:num('minimumPayoutThreshold'),chargeWeeklyFeeWhenInactive:Boolean(x.chargeWeeklyFeeWhenInactive??cur.chargeWeeklyFeeWhenInactive??true),weeklyAppFee:num('weeklyAppFee'),earlyPayoutFee:num('earlyPayoutFee'),customerPaymentFeeType:['fixed','percentage'].includes(str('customerPaymentFeeType'))?str('customerPaymentFeeType'):'fixed',customerPaymentFeeValue:num('customerPaymentFeeValue'),earlyPayoutCutoffTime:cutoff,earlyPayoutCutoffHour:Number(cutoff.split(':')[0]),syncMinutes:num('syncMinutes',2,60),weeklyPayoutReasonTemplate:str('weeklyPayoutReasonTemplate'),earlyPayoutReasonTemplate:str('earlyPayoutReasonTemplate'),manualPayInReasonDefault:str('manualPayInReasonDefault'),manualPayoutReasonDefault:str('manualPayoutReasonDefault'),outstandingDueTime:dueTime,outstandingSmsTemplate:str('outstandingSmsTemplate'),outstandingEmailSubject:str('outstandingEmailSubject'),outstandingEmailBody:str('outstandingEmailBody'),customerPaymentSmsTemplate:str('customerPaymentSmsTemplate'),customerPaymentEmailSubject:str('customerPaymentEmailSubject'),smsEndpoint:str('smsEndpoint'),smsMethod:['POST','PUT','PATCH'].includes(str('smsMethod').toUpperCase())?str('smsMethod').toUpperCase():'POST',smsAuthHeader:str('smsAuthHeader'),smsBodyTemplate:str('smsBodyTemplate'),twilioEnabled:Boolean(x.twilioEnabled??cur.twilioEnabled),orionEnabled:Boolean(x.orionEnabled??cur.orionEnabled),paymentSmsProvider:['twilio','orion'].includes(str('paymentSmsProvider').toLowerCase())?str('paymentSmsProvider').toLowerCase():'twilio',generalSmsProvider:['twilio','orion'].includes(str('generalSmsProvider').toLowerCase())?str('generalSmsProvider').toLowerCase():'orion',smsFallbackEnabled:Boolean(x.smsFallbackEnabled??cur.smsFallbackEnabled),twilioLowBalanceAlertsEnabled:Boolean(x.twilioLowBalanceAlertsEnabled??cur.twilioLowBalanceAlertsEnabled),twilioLowBalanceThreshold:num('twilioLowBalanceThreshold',0),twilioLowBalanceEmail:safeEmail(str('twilioLowBalanceEmail')),smtpHost:str('smtpHost'),smtpPort:num('smtpPort',1,65535),smtpSecure:Boolean(x.smtpSecure??cur.smtpSecure),smtpUser:str('smtpUser'),smtpFromName:str('smtpFromName'),smtpFromEmail:str('smtpFromEmail'),officeNotificationEmail:safeEmail(str('officeNotificationEmail')),customerFeeFleetPayPercent:num('customerFeeFleetPayPercent',0,100),earlyPayoutFeeFleetPayPercent:num('earlyPayoutFeeFleetPayPercent',0,100),weeklyFeeFleetPayPercent:num('weeklyFeeFleetPayPercent',0,100),requireAdminApproval:Boolean(x.requireAdminApproval??cur.requireAdminApproval),companyName:str('companyName')||cur.companyName,productName:'FaivoPay'};
+ const next={...cur,negativeThreshold:num('negativeThreshold'),minimumPayoutThreshold:num('minimumPayoutThreshold'),chargeWeeklyFeeWhenInactive:Boolean(x.chargeWeeklyFeeWhenInactive??cur.chargeWeeklyFeeWhenInactive??true),weeklyAppFee:num('weeklyAppFee'),earlyPayoutFee:num('earlyPayoutFee'),customerPaymentFeeType:['fixed','percentage'].includes(str('customerPaymentFeeType'))?str('customerPaymentFeeType'):'fixed',customerPaymentFeeValue:num('customerPaymentFeeValue'),earlyPayoutCutoffTime:cutoff,earlyPayoutCutoffHour:Number(cutoff.split(':')[0]),syncMinutes:num('syncMinutes',2,60),weeklyPayoutReasonTemplate:str('weeklyPayoutReasonTemplate'),earlyPayoutReasonTemplate:str('earlyPayoutReasonTemplate'),manualPayInReasonDefault:str('manualPayInReasonDefault'),manualPayoutReasonDefault:str('manualPayoutReasonDefault'),outstandingDueTime:dueTime,outstandingExternalCommunicationsEnabled:Boolean(x.outstandingExternalCommunicationsEnabled??cur.outstandingExternalCommunicationsEnabled??false),outstandingSmsTemplate:str('outstandingSmsTemplate'),outstandingEmailSubject:str('outstandingEmailSubject'),outstandingEmailBody:str('outstandingEmailBody'),customerPaymentSmsTemplate:str('customerPaymentSmsTemplate'),customerPaymentEmailSubject:str('customerPaymentEmailSubject'),smsEndpoint:str('smsEndpoint'),smsMethod:['POST','PUT','PATCH'].includes(str('smsMethod').toUpperCase())?str('smsMethod').toUpperCase():'POST',smsAuthHeader:str('smsAuthHeader'),smsBodyTemplate:str('smsBodyTemplate'),twilioEnabled:Boolean(x.twilioEnabled??cur.twilioEnabled),orionEnabled:Boolean(x.orionEnabled??cur.orionEnabled),paymentSmsProvider:['twilio','orion'].includes(str('paymentSmsProvider').toLowerCase())?str('paymentSmsProvider').toLowerCase():'twilio',generalSmsProvider:['twilio','orion'].includes(str('generalSmsProvider').toLowerCase())?str('generalSmsProvider').toLowerCase():'orion',smsFallbackEnabled:Boolean(x.smsFallbackEnabled??cur.smsFallbackEnabled),twilioLowBalanceAlertsEnabled:Boolean(x.twilioLowBalanceAlertsEnabled??cur.twilioLowBalanceAlertsEnabled),twilioLowBalanceThreshold:num('twilioLowBalanceThreshold',0),twilioLowBalanceEmail:safeEmail(str('twilioLowBalanceEmail')),smtpHost:str('smtpHost'),smtpPort:num('smtpPort',1,65535),smtpSecure:Boolean(x.smtpSecure??cur.smtpSecure),smtpUser:str('smtpUser'),smtpFromName:str('smtpFromName'),smtpFromEmail:str('smtpFromEmail'),officeNotificationEmail:safeEmail(str('officeNotificationEmail')),customerFeeFleetPayPercent:num('customerFeeFleetPayPercent',0,100),earlyPayoutFeeFleetPayPercent:num('earlyPayoutFeeFleetPayPercent',0,100),weeklyFeeFleetPayPercent:num('weeklyFeeFleetPayPercent',0,100),requireAdminApproval:Boolean(x.requireAdminApproval??cur.requireAdminApproval),companyName:str('companyName')||cur.companyName,productName:'FaivoPay'};
  setSettings(next);if(String(x.smsAuthValue||'').trim())setSecureSetting('smsAuthValue',String(x.smsAuthValue));if(String(x.smtpPassword||'').trim())setSecureSetting('smtpPassword',String(x.smtpPassword));audit(req,'staff',req.auth.email,'operations_settings_updated','settings','operations',{...next,smsAuthValue:undefined,smtpPassword:undefined});res.json(officeSettingsPayload())
 });
 app.post('/api/admin/communications/test-sms',adminAuth,requireStaffRole('administrator'),async(req,res)=>{try{const to=String(req.body.to||'').trim();if(!to)return res.status(400).json({error:'Enter a mobile number'});const message=String(req.body.message||'FaivoPay test SMS – communications are configured correctly.');const out=await sendConfiguredSms(to,message,{templateKey:'test_sms',entityType:'settings',entityId:'communications'});audit(req,'staff',req.auth.email,'test_sms_sent','settings','communications',{to});res.json({ok:true,out})}catch(e){res.status(500).json({error:e.message})}});
@@ -11133,9 +11130,14 @@ app.post('/api/admin/manual-payment',adminAuth,requireStaffRole('administrator',
 
 app.post('/api/admin/monday-runs',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{
  const today=londonWindow().date,existing=db.prepare("SELECT * FROM settlement_runs WHERE run_date=? AND status IN ('draft','approved','batched') ORDER BY created_at DESC LIMIT 1").get(today);if(existing)return res.status(409).json({error:'A Monday draft already exists for today. Open Monday Run to continue it.',runId:existing.id});const settings=getSettings(),sync=await syncAutocab(),drivers=sync.drivers,runId=id('run'),createdAt=new Date().toISOString(),items=[],allocationRows=[];const insP=db.prepare('INSERT INTO payouts(id,run_id,driver_id,callsign,driver_name,gross_balance,weekly_fee,carried_charges,gross_amount,net_amount,amount,type,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)');const insR=db.prepare('INSERT INTO payment_requests(id,run_id,driver_id,callsign,driver_name,balance,weekly_fee,carried_charges,amount,status,created_at,due_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)');const due=nextTuesdayDueLabel(),settledWeekStart=previousMondayWeekStart(today);
- for(const d of drivers){if(d.previousBalance==null)continue;const row=db.prepare('SELECT amount FROM carried_charges WHERE driver_id=?').get(d.driverId),activityRow=db.prepare('SELECT worked FROM driver_weekly_activity WHERE driver_id=? AND week_start=?').get(d.driverId,settledWeekStart),workedThisWeek=Boolean(activityRow?.worked),configuredWeeklyFee=Number(settings.weeklyAppFee||0),chargeInactive=settings.chargeWeeklyFeeWhenInactive!==false,fee=chargeInactive||workedThisWeek?configuredWeeklyFee:0,weeklyFeeWaivedInactive=!chargeInactive&&!workedThisWeek&&configuredWeeklyFee>0,carried=Number(row?.amount||0),base=Number(d.previousBalance||0),adjusted=Number((base-fee-carried).toFixed(2)),planSettlement=adjusted>0.00001?paymentPlanSettlementCandidate(d.driverId,adjusted):null,planAllocation=Number(planSettlement?.allocatedAmount||0),payoutAvailable=Number(Math.max(0,adjusted-planAllocation).toFixed(2));let action='none',amount=0,payoutId=null,requestId=null,approvalStatus=null;if(adjusted>0.00001){const payoutThreshold=Number(settings.minimumPayoutThreshold||0);if(payoutAvailable<=0.00001){action='plan_allocation';amount=0;db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,?) ON CONFLICT(driver_id) DO UPDATE SET amount=excluded.amount').run(d.driverId,Number((carried+fee).toFixed(2)))}else if(payoutAvailable+0.00001<payoutThreshold){action='payout_carry_forward';amount=payoutAvailable;db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,?) ON CONFLICT(driver_id) DO UPDATE SET amount=excluded.amount').run(d.driverId,Number((carried+fee).toFixed(2)))}else{action='payout';amount=payoutAvailable;payoutId=id('payout');const cached=cachedDriver(d.driverId),persistentlyExcluded=Boolean(cached?.payoutExcluded),persistentReason=cached?.payoutExclusionReason||'';approvalStatus=persistentlyExcluded?'excluded':'pending';insP.run(payoutId,runId,d.driverId,d.callsign,d.fullName,base,fee,carried,adjusted,payoutAvailable,payoutAvailable,'weekly',persistentlyExcluded?'declined':'pending_approval',createdAt);if(persistentlyExcluded)db.prepare('UPDATE payouts SET decline_reason=?,decision_at=?,decision_by=? WHERE id=?').run(persistentReason,new Date().toISOString(),'persistent_driver_setting',payoutId);db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,0) ON CONFLICT(driver_id) DO UPDATE SET amount=0').run(d.driverId)}}else if(adjusted<-0.00001){const owing=Math.abs(adjusted);amount=owing;if(owing>=Number(settings.negativeThreshold||0)){action='payment_request';requestId=id('request');insR.run(requestId,runId,d.driverId,d.callsign,d.fullName,base,fee,carried,owing,'open',createdAt,due.dueAt);notify(d.driverId,'Payment due',`Your Monday FaivoPay settlement has an amount due of £${owing.toFixed(2)}. Payment is due by ${settings.outstandingDueTime||'17:00'} on ${due.label}.`,'warning',requestId);db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,0) ON CONFLICT(driver_id) DO UPDATE SET amount=0').run(d.driverId);setTimeout(()=>{const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(requestId);sendOutstandingCommunications(item,d).catch(()=>{})},50)}else{action='carry_forward';db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,?) ON CONFLICT(driver_id) DO UPDATE SET amount=excluded.amount').run(d.driverId,owing)}}else{action='carry_forward';amount=0;db.prepare('INSERT INTO carried_charges(driver_id,amount) VALUES(?,?) ON CONFLICT(driver_id) DO UPDATE SET amount=excluded.amount').run(d.driverId,Number((carried+fee).toFixed(2)))}if(fee>0){ledger(d.driverId,'weekly_fee','debit',fee,fee,'Weekly FaivoPay fee',runId,'charged');recordFee({feeType:'weekly',sourceType:'settlement',sourceId:`${runId}:${d.driverId}`,driverId:d.driverId,callsign:d.callsign,description:'Weekly FaivoPay fee',amount:fee,createdAt})}items.push({driverId:d.driverId,callsign:d.callsign,driverName:d.fullName,currentBalance:d.currentBalance,previousBalance:base,weeklyFee:fee,configuredWeeklyFee,workedThisWeek,weeklyFeeWaivedInactive,settledWeekStart,carriedCharges:carried,adjustedBalance:adjusted,planAllocation,payoutAvailable,planId:planSettlement?.plan?.id||null,planInstalmentId:planSettlement?.instalment?.id||null,planInstalmentScheduledAmount:Number(planSettlement?.scheduledAmount||0),planInstalmentPaidAmount:Number(planSettlement?.alreadyPaidAmount||0),planInstalmentRemaining:Number(planSettlement?.instalmentRemaining||0),planRemainingAmount:Number(planSettlement?.planRemaining||0),action,amount,payoutId,requestId,approvalStatus,persistentPayoutExclusion:Boolean(cachedDriver(d.driverId)?.payoutExcluded),exclusionReason:approvalStatus==='excluded'?(cachedDriver(d.driverId)?.payoutExclusionReason||'Persistent payout exclusion'):''});if(planSettlement&&planAllocation>0.00001){allocationRows.push({id:id('planalloc'),runId,payoutId,driverId:d.driverId,callsign:d.callsign,planId:planSettlement.plan.id,instalmentId:planSettlement.instalment.id,paymentRequestId:planSettlement.paymentRequestId||null,scheduledAmount:Number(planSettlement.scheduledAmount||0),allocatedAmount:planAllocation,autocabEventKey:`plan:${planSettlement.plan.id}:monday:${runId}:${planSettlement.instalment.id}`,createdAt})}}
+ for(const d of drivers){if(d.previousBalance==null)continue;const activityRow=db.prepare('SELECT worked FROM driver_weekly_activity WHERE driver_id=? AND week_start=?').get(d.driverId,settledWeekStart),workedThisWeek=Boolean(activityRow?.worked),configuredWeeklyFee=Number(settings.weeklyAppFee||0),chargeInactive=settings.chargeWeeklyFeeWhenInactive!==false,potentialFee=chargeInactive||workedThisWeek?configuredWeeklyFee:0,weeklyFeeWaivedInactive=!chargeInactive&&!workedThisWeek&&configuredWeeklyFee>0,carried=0,base=Number(d.previousBalance||0),crossesPositiveThreshold=base>0.00001&&base+0.00001>=Number(settings.minimumPayoutThreshold||0),crossesNegativeThreshold=base<-0.00001&&Math.abs(base)+0.00001>=Number(settings.negativeThreshold||0),fee=crossesPositiveThreshold||crossesNegativeThreshold?potentialFee:0,adjusted=Number((base-fee).toFixed(2)),planSettlement=crossesPositiveThreshold&&adjusted>0.00001?paymentPlanSettlementCandidate(d.driverId,adjusted):null,planAllocation=Number(planSettlement?.allocatedAmount||0),payoutAvailable=Number(Math.max(0,adjusted-planAllocation).toFixed(2));let action='none',amount=0,payoutId=null,requestId=null,approvalStatus=null;if(base>0.00001){const payoutThreshold=Number(settings.minimumPayoutThreshold||0);if(base+0.00001<payoutThreshold){action='payout_carry_forward';amount=base;}else if(payoutAvailable<=0.00001){action='plan_allocation';amount=0;}else{action='payout';amount=payoutAvailable;payoutId=id('payout');const cached=cachedDriver(d.driverId),persistentlyExcluded=Boolean(cached?.payoutExcluded),persistentReason=cached?.payoutExclusionReason||'';approvalStatus=persistentlyExcluded?'excluded':'pending';insP.run(payoutId,runId,d.driverId,d.callsign,d.fullName,base,fee,carried,adjusted,payoutAvailable,payoutAvailable,'weekly',persistentlyExcluded?'declined':'pending_approval',createdAt);if(persistentlyExcluded)db.prepare('UPDATE payouts SET decline_reason=?,decision_at=?,decision_by=? WHERE id=?').run(persistentReason,new Date().toISOString(),'persistent_driver_setting',payoutId);}}else if(base<-0.00001){const rawOwing=Math.abs(base);const owing=Number((rawOwing+fee).toFixed(2));amount=rawOwing;if(rawOwing>=Number(settings.negativeThreshold||0)){amount=owing;action='payment_request';requestId=id('request');insR.run(requestId,runId,d.driverId,d.callsign,d.fullName,base,fee,carried,owing,'open',createdAt,due.dueAt);notify(d.driverId,'Payment due',`Your Monday FaivoPay settlement has an amount due of £${owing.toFixed(2)}. Payment is due by ${settings.outstandingDueTime||'17:00'} on ${due.label}.`,'warning',requestId);if(settings.outstandingExternalCommunicationsEnabled){setTimeout(()=>{const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(requestId);sendOutstandingCommunications(item,d).catch(()=>{})},50)}}else{action='carry_forward';}}else{action='carry_forward';amount=0;}if(fee>0&&['payout','payment_request','plan_allocation'].includes(action)){ledger(d.driverId,'weekly_fee','debit',fee,fee,'Weekly FaivoPay fee',runId,'charged');recordFee({feeType:'weekly',sourceType:'settlement',sourceId:`${runId}:${d.driverId}`,driverId:d.driverId,callsign:d.callsign,description:'Weekly FaivoPay fee',amount:fee,createdAt})}items.push({driverId:d.driverId,callsign:d.callsign,driverName:d.fullName,currentBalance:d.currentBalance,previousBalance:base,weeklyFee:fee,configuredWeeklyFee,workedThisWeek,weeklyFeeWaivedInactive,settledWeekStart,carriedCharges:carried,adjustedBalance:adjusted,planAllocation,payoutAvailable,planId:planSettlement?.plan?.id||null,planInstalmentId:planSettlement?.instalment?.id||null,planInstalmentScheduledAmount:Number(planSettlement?.scheduledAmount||0),planInstalmentPaidAmount:Number(planSettlement?.alreadyPaidAmount||0),planInstalmentRemaining:Number(planSettlement?.instalmentRemaining||0),planRemainingAmount:Number(planSettlement?.planRemaining||0),action,amount,payoutId,requestId,approvalStatus,persistentPayoutExclusion:Boolean(cachedDriver(d.driverId)?.payoutExcluded),exclusionReason:approvalStatus==='excluded'?(cachedDriver(d.driverId)?.payoutExclusionReason||'Persistent payout exclusion'):''});if(planSettlement&&planAllocation>0.00001){allocationRows.push({id:id('planalloc'),runId,payoutId,driverId:d.driverId,callsign:d.callsign,planId:planSettlement.plan.id,instalmentId:planSettlement.instalment.id,paymentRequestId:planSettlement.paymentRequestId||null,scheduledAmount:Number(planSettlement.scheduledAmount||0),allocatedAmount:planAllocation,autocabEventKey:`plan:${planSettlement.plan.id}:monday:${runId}:${planSettlement.instalment.id}`,createdAt})}}
  db.prepare('INSERT INTO settlement_runs(id,created_at,status,settings_json,items_json,run_date,created_by) VALUES(?,?,?,?,?,?,?)').run(runId,createdAt,'draft',JSON.stringify(settings),JSON.stringify(items),today,req.auth.email);const insA=db.prepare(`INSERT INTO payment_plan_settlement_allocations(id,run_id,payout_id,driver_id,callsign,plan_id,instalment_id,payment_request_id,scheduled_amount,allocated_amount,status,autocab_event_key,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`);for(const a of allocationRows){insA.run(a.id,a.runId,a.payoutId,a.driverId,a.callsign,a.planId,a.instalmentId,a.paymentRequestId,a.scheduledAmount,a.allocatedAmount,'pending',a.autocabEventKey,a.createdAt)}audit(req,'staff',req.auth.email,'monday_draft_created','settlement_run',runId,{runDate:today,drivers:items.length,payouts:items.filter(x=>x.action==='payout').length,paymentRequests:items.filter(x=>x.action==='payment_request').length,sourceBalance:'previousBalance'});res.json({id:runId,createdAt,status:'draft',runDate:today,items})
- }catch(e){res.status(500).json({error:e.message})}});
+ }catch(e){
+ if(String(e?.message||'').includes('idx_settlement_runs_active_monday_date')||String(e?.message||'').includes('UNIQUE constraint failed: settlement_runs.run_date')){
+  return res.status(409).json({error:'A Monday run already exists for today. Open Monday Run to continue it.'})
+ }
+ res.status(500).json({error:e.message})
+}});
 app.get('/api/admin/monday-runs',adminAuth,(req,res)=>{const runs=db.prepare("SELECT * FROM settlement_runs WHERE run_date IS NOT NULL ORDER BY created_at DESC LIMIT 40").all().map(r=>({id:r.id,createdAt:r.created_at,status:r.status,runDate:r.run_date,createdBy:r.created_by,approvedAt:r.approved_at,payoutRunId:r.payout_run_id,settings:JSON.parse(r.settings_json||'{}'),items:JSON.parse(r.items_json||'[]')}));res.json({runs})});
 
 app.get(
