@@ -2744,6 +2744,7 @@ function recordFee({
  description='',
  amount=0,
  createdAt=null,
+ serviceDate=null,
  companyId=null
 }){
  const gross=Math.max(0,Number(amount||0));
@@ -2770,6 +2771,9 @@ function recordFee({
  const resolvedCompanyId=resolveFeeCompanyId(companyId);
  const rowId=id('fee');
  const at=createdAt||new Date().toISOString();
+ const accountingDate=String(
+  serviceDate||londonDateFromIso(at)
+ ).trim();
 
  db.prepare(`
   INSERT INTO fee_ledger(
@@ -2785,9 +2789,10 @@ function recordFee({
    taxi_company_share,
    status,
    created_at,
+   service_date,
    company_id
   )
-  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
  `).run(
   rowId,
   feeType,
@@ -2801,6 +2806,7 @@ function recordFee({
   taxi,
   'uninvoiced',
   at,
+  accountingDate,
   resolvedCompanyId
  );
 
@@ -7416,6 +7422,7 @@ function ensureTableColumn(table,column,definition){
 ensureTableColumn('fee_ledger','company_id','TEXT');
 ensureTableColumn('fee_ledger','invoice_id','TEXT');
 ensureTableColumn('fee_ledger','invoiced_at','TEXT');
+ensureTableColumn('fee_ledger','service_date','TEXT');
 
 ensureTableColumn('fee_invoice_items','fee_type','TEXT');
 ensureTableColumn('fee_invoice_items','source_type','TEXT');
@@ -7423,6 +7430,54 @@ ensureTableColumn('fee_invoice_items','source_id','TEXT');
 ensureTableColumn('fee_invoice_items','callsign','TEXT');
 ensureTableColumn('fee_invoice_items','description','TEXT');
 ensureTableColumn('fee_invoice_items','fee_created_at','TEXT');
+
+/*
+ * Accounting date for legacy fee rows.
+ *
+ * Most fees belong to the London calendar date on which they were created.
+ * Weekly settlement fees are different: the Monday run settles the week
+ * ending on the preceding Sunday.
+ */
+db.exec(`
+ UPDATE fee_ledger
+ SET service_date=
+  CASE
+   WHEN fee_type='weekly'
+    AND source_type='settlement'
+    AND instr(source_id,':')>1
+   THEN COALESCE(
+    (
+     SELECT
+      CASE
+       WHEN EXISTS(
+        SELECT 1
+        FROM fee_invoices fi
+        WHERE fi.company_id=fee_ledger.company_id
+          AND date(sr.run_date,'-1 day')
+              BETWEEN fi.period_start AND fi.period_end
+       )
+       AND fee_ledger.status='uninvoiced'
+       THEN date(fee_ledger.created_at)
+       ELSE date(sr.run_date,'-1 day')
+      END
+     FROM settlement_runs sr
+     WHERE sr.id=substr(
+      fee_ledger.source_id,
+      1,
+      instr(fee_ledger.source_id,':')-1
+     )
+     LIMIT 1
+    ),
+    date(created_at)
+   )
+   ELSE date(created_at)
+  END
+ WHERE service_date IS NULL
+    OR trim(service_date)='';
+
+ CREATE INDEX IF NOT EXISTS idx_fee_ledger_company_status_service
+ ON fee_ledger(company_id,status,service_date);
+`);
 
 db.exec(`
  CREATE INDEX IF NOT EXISTS idx_fee_ledger_company_status_created
@@ -11277,7 +11332,7 @@ app.post('/api/admin/manual-payment',adminAuth,requireStaffRole('administrator',
 
 app.post('/api/admin/monday-runs',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{
  const today=londonWindow().date,existing=db.prepare("SELECT * FROM settlement_runs WHERE run_date=? AND status IN ('draft','approved','batched') ORDER BY created_at DESC LIMIT 1").get(today);if(existing)return res.status(409).json({error:'A Monday draft already exists for today. Open Monday Run to continue it.',runId:existing.id});const settings=getSettings(),sync=await syncAutocab(),drivers=sync.drivers,runId=id('run'),createdAt=new Date().toISOString(),items=[],allocationRows=[];const insP=db.prepare('INSERT INTO payouts(id,run_id,driver_id,callsign,driver_name,gross_balance,weekly_fee,carried_charges,gross_amount,net_amount,amount,type,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)');const insR=db.prepare('INSERT INTO payment_requests(id,run_id,driver_id,callsign,driver_name,balance,weekly_fee,carried_charges,amount,status,created_at,due_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)');const due=nextTuesdayDueLabel(),settledWeekStart=previousMondayWeekStart(today);
- for(const d of drivers){if(d.previousBalance==null)continue;const activityRow=db.prepare('SELECT worked FROM driver_weekly_activity WHERE driver_id=? AND week_start=?').get(d.driverId,settledWeekStart),workedThisWeek=Boolean(activityRow?.worked),configuredWeeklyFee=Number(settings.weeklyAppFee||0),chargeInactive=settings.chargeWeeklyFeeWhenInactive!==false,potentialFee=chargeInactive||workedThisWeek?configuredWeeklyFee:0,weeklyFeeWaivedInactive=!chargeInactive&&!workedThisWeek&&configuredWeeklyFee>0,carried=0,base=Number(d.previousBalance||0),crossesPositiveThreshold=base>0.00001&&base+0.00001>=Number(settings.minimumPayoutThreshold||0),crossesNegativeThreshold=base<-0.00001&&Math.abs(base)+0.00001>=Number(settings.negativeThreshold||0),fee=crossesPositiveThreshold||crossesNegativeThreshold?potentialFee:0,adjusted=Number((base-fee).toFixed(2)),planSettlement=crossesPositiveThreshold&&adjusted>0.00001?paymentPlanSettlementCandidate(d.driverId,adjusted):null,planAllocation=Number(planSettlement?.allocatedAmount||0),payoutAvailable=Number(Math.max(0,adjusted-planAllocation).toFixed(2));let action='none',amount=0,payoutId=null,requestId=null,approvalStatus=null;if(base>0.00001){const payoutThreshold=Number(settings.minimumPayoutThreshold||0);if(base+0.00001<payoutThreshold){action='payout_carry_forward';amount=base;}else if(payoutAvailable<=0.00001){action='plan_allocation';amount=0;}else{action='payout';amount=payoutAvailable;payoutId=id('payout');const cached=cachedDriver(d.driverId),persistentlyExcluded=Boolean(cached?.payoutExcluded),persistentReason=cached?.payoutExclusionReason||'';approvalStatus=persistentlyExcluded?'excluded':'pending';insP.run(payoutId,runId,d.driverId,d.callsign,d.fullName,base,fee,carried,adjusted,payoutAvailable,payoutAvailable,'weekly',persistentlyExcluded?'declined':'pending_approval',createdAt);if(persistentlyExcluded)db.prepare('UPDATE payouts SET decline_reason=?,decision_at=?,decision_by=? WHERE id=?').run(persistentReason,new Date().toISOString(),'persistent_driver_setting',payoutId);}}else if(base<-0.00001){const rawOwing=Math.abs(base);const owing=Number((rawOwing+fee).toFixed(2));amount=rawOwing;if(rawOwing>=Number(settings.negativeThreshold||0)){amount=owing;action='payment_request';requestId=id('request');insR.run(requestId,runId,d.driverId,d.callsign,d.fullName,base,fee,carried,owing,'open',createdAt,due.dueAt);notify(d.driverId,'Payment due',`Your Monday FaivoPay settlement has an amount due of £${owing.toFixed(2)}. Payment is due by ${settings.outstandingDueTime||'17:00'} on ${due.label}.`,'warning',requestId);if(settings.outstandingExternalCommunicationsEnabled){setTimeout(()=>{const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(requestId);sendOutstandingCommunications(item,d).catch(()=>{})},50)}}else{action='carry_forward';}}else{action='carry_forward';amount=0;}if(fee>0&&['payout','payment_request','plan_allocation'].includes(action)){ledger(d.driverId,'weekly_fee','debit',fee,fee,'Weekly FaivoPay fee',runId,'charged');recordFee({feeType:'weekly',sourceType:'settlement',sourceId:`${runId}:${d.driverId}`,driverId:d.driverId,callsign:d.callsign,description:'Weekly FaivoPay fee',amount:fee,createdAt})}items.push({driverId:d.driverId,callsign:d.callsign,driverName:d.fullName,currentBalance:d.currentBalance,previousBalance:base,weeklyFee:fee,configuredWeeklyFee,workedThisWeek,weeklyFeeWaivedInactive,settledWeekStart,carriedCharges:carried,adjustedBalance:adjusted,planAllocation,payoutAvailable,planId:planSettlement?.plan?.id||null,planInstalmentId:planSettlement?.instalment?.id||null,planInstalmentScheduledAmount:Number(planSettlement?.scheduledAmount||0),planInstalmentPaidAmount:Number(planSettlement?.alreadyPaidAmount||0),planInstalmentRemaining:Number(planSettlement?.instalmentRemaining||0),planRemainingAmount:Number(planSettlement?.planRemaining||0),action,amount,payoutId,requestId,approvalStatus,persistentPayoutExclusion:Boolean(cachedDriver(d.driverId)?.payoutExcluded),exclusionReason:approvalStatus==='excluded'?(cachedDriver(d.driverId)?.payoutExclusionReason||'Persistent payout exclusion'):''});if(planSettlement&&planAllocation>0.00001){allocationRows.push({id:id('planalloc'),runId,payoutId,driverId:d.driverId,callsign:d.callsign,planId:planSettlement.plan.id,instalmentId:planSettlement.instalment.id,paymentRequestId:planSettlement.paymentRequestId||null,scheduledAmount:Number(planSettlement.scheduledAmount||0),allocatedAmount:planAllocation,autocabEventKey:`plan:${planSettlement.plan.id}:monday:${runId}:${planSettlement.instalment.id}`,createdAt})}}
+ for(const d of drivers){if(d.previousBalance==null)continue;const activityRow=db.prepare('SELECT worked FROM driver_weekly_activity WHERE driver_id=? AND week_start=?').get(d.driverId,settledWeekStart),workedThisWeek=Boolean(activityRow?.worked),configuredWeeklyFee=Number(settings.weeklyAppFee||0),chargeInactive=settings.chargeWeeklyFeeWhenInactive!==false,potentialFee=chargeInactive||workedThisWeek?configuredWeeklyFee:0,weeklyFeeWaivedInactive=!chargeInactive&&!workedThisWeek&&configuredWeeklyFee>0,carried=0,base=Number(d.previousBalance||0),crossesPositiveThreshold=base>0.00001&&base+0.00001>=Number(settings.minimumPayoutThreshold||0),crossesNegativeThreshold=base<-0.00001&&Math.abs(base)+0.00001>=Number(settings.negativeThreshold||0),fee=crossesPositiveThreshold||crossesNegativeThreshold?potentialFee:0,adjusted=Number((base-fee).toFixed(2)),planSettlement=crossesPositiveThreshold&&adjusted>0.00001?paymentPlanSettlementCandidate(d.driverId,adjusted):null,planAllocation=Number(planSettlement?.allocatedAmount||0),payoutAvailable=Number(Math.max(0,adjusted-planAllocation).toFixed(2));let action='none',amount=0,payoutId=null,requestId=null,approvalStatus=null;if(base>0.00001){const payoutThreshold=Number(settings.minimumPayoutThreshold||0);if(base+0.00001<payoutThreshold){action='payout_carry_forward';amount=base;}else if(payoutAvailable<=0.00001){action='plan_allocation';amount=0;}else{action='payout';amount=payoutAvailable;payoutId=id('payout');const cached=cachedDriver(d.driverId),persistentlyExcluded=Boolean(cached?.payoutExcluded),persistentReason=cached?.payoutExclusionReason||'';approvalStatus=persistentlyExcluded?'excluded':'pending';insP.run(payoutId,runId,d.driverId,d.callsign,d.fullName,base,fee,carried,adjusted,payoutAvailable,payoutAvailable,'weekly',persistentlyExcluded?'declined':'pending_approval',createdAt);if(persistentlyExcluded)db.prepare('UPDATE payouts SET decline_reason=?,decision_at=?,decision_by=? WHERE id=?').run(persistentReason,new Date().toISOString(),'persistent_driver_setting',payoutId);}}else if(base<-0.00001){const rawOwing=Math.abs(base);const owing=Number((rawOwing+fee).toFixed(2));amount=rawOwing;if(rawOwing>=Number(settings.negativeThreshold||0)){amount=owing;action='payment_request';requestId=id('request');insR.run(requestId,runId,d.driverId,d.callsign,d.fullName,base,fee,carried,owing,'open',createdAt,due.dueAt);notify(d.driverId,'Payment due',`Your Monday FaivoPay settlement has an amount due of £${owing.toFixed(2)}. Payment is due by ${settings.outstandingDueTime||'17:00'} on ${due.label}.`,'warning',requestId);if(settings.outstandingExternalCommunicationsEnabled){setTimeout(()=>{const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(requestId);sendOutstandingCommunications(item,d).catch(()=>{})},50)}}else{action='carry_forward';}}else{action='carry_forward';amount=0;}if(fee>0&&['payout','payment_request','plan_allocation'].includes(action)){ledger(d.driverId,'weekly_fee','debit',fee,fee,'Weekly FaivoPay fee',runId,'charged');recordFee({feeType:'weekly',sourceType:'settlement',sourceId:`${runId}:${d.driverId}`,driverId:d.driverId,callsign:d.callsign,description:'Weekly FaivoPay fee',amount:fee,createdAt,serviceDate:isoDateShift(settledWeekStart,6)})}items.push({driverId:d.driverId,callsign:d.callsign,driverName:d.fullName,currentBalance:d.currentBalance,previousBalance:base,weeklyFee:fee,configuredWeeklyFee,workedThisWeek,weeklyFeeWaivedInactive,settledWeekStart,carriedCharges:carried,adjustedBalance:adjusted,planAllocation,payoutAvailable,planId:planSettlement?.plan?.id||null,planInstalmentId:planSettlement?.instalment?.id||null,planInstalmentScheduledAmount:Number(planSettlement?.scheduledAmount||0),planInstalmentPaidAmount:Number(planSettlement?.alreadyPaidAmount||0),planInstalmentRemaining:Number(planSettlement?.instalmentRemaining||0),planRemainingAmount:Number(planSettlement?.planRemaining||0),action,amount,payoutId,requestId,approvalStatus,persistentPayoutExclusion:Boolean(cachedDriver(d.driverId)?.payoutExcluded),exclusionReason:approvalStatus==='excluded'?(cachedDriver(d.driverId)?.payoutExclusionReason||'Persistent payout exclusion'):''});if(planSettlement&&planAllocation>0.00001){allocationRows.push({id:id('planalloc'),runId,payoutId,driverId:d.driverId,callsign:d.callsign,planId:planSettlement.plan.id,instalmentId:planSettlement.instalment.id,paymentRequestId:planSettlement.paymentRequestId||null,scheduledAmount:Number(planSettlement.scheduledAmount||0),allocatedAmount:planAllocation,autocabEventKey:`plan:${planSettlement.plan.id}:monday:${runId}:${planSettlement.instalment.id}`,createdAt})}}
  db.prepare('INSERT INTO settlement_runs(id,created_at,status,settings_json,items_json,run_date,created_by) VALUES(?,?,?,?,?,?,?)').run(runId,createdAt,'draft',JSON.stringify(settings),JSON.stringify(items),today,req.auth.email);const insA=db.prepare(`INSERT INTO payment_plan_settlement_allocations(id,run_id,payout_id,driver_id,callsign,plan_id,instalment_id,payment_request_id,scheduled_amount,allocated_amount,status,autocab_event_key,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`);for(const a of allocationRows){insA.run(a.id,a.runId,a.payoutId,a.driverId,a.callsign,a.planId,a.instalmentId,a.paymentRequestId,a.scheduledAmount,a.allocatedAmount,'pending',a.autocabEventKey,a.createdAt)}audit(req,'staff',req.auth.email,'monday_draft_created','settlement_run',runId,{runDate:today,drivers:items.length,payouts:items.filter(x=>x.action==='payout').length,paymentRequests:items.filter(x=>x.action==='payment_request').length,sourceBalance:'previousBalance'});res.json({id:runId,createdAt,status:'draft',runDate:today,items})
  }catch(e){
  if(String(e?.message||'').includes('idx_settlement_runs_active_monday_date')||String(e?.message||'').includes('UNIQUE constraint failed: settlement_runs.run_date')){
@@ -15526,7 +15581,9 @@ function invoiceCandidateFees(
   */
  return rows
   .filter(row=>{
-   const date=londonDateFromIso(row.created_at);
+   const date=String(
+    row.service_date||londonDateFromIso(row.created_at)
+   );
    return date>=periodStart && date<=periodEnd;
   })
   .map(effectiveUninvoicedFeeRow);
