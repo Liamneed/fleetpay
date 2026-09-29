@@ -53,9 +53,14 @@ const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '';
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || 'mailto:admin@example.com';
 if(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY){ webpush.setVapidDetails(VAPID_SUBJECT,VAPID_PUBLIC_KEY,VAPID_PRIVATE_KEY); }
 // Stripe client is resolved dynamically from company configuration with env fallback.
-const DATA_DIR = path.resolve('data');
+const DATA_DIR = path.resolve(
+ process.env.DATA_DIR||'data'
+);
 fs.mkdirSync(DATA_DIR, { recursive: true });
-const DB_PATH = path.join(DATA_DIR, 'fleetpay.sqlite');
+
+const DB_PATH = process.env.DB_PATH
+ ?path.resolve(process.env.DB_PATH)
+ :path.join(DATA_DIR,'fleetpay.sqlite');
 const db = new DatabaseSync(DB_PATH);
 db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
 
@@ -16752,14 +16757,268 @@ app.post(
  }
 );
 
+function feeInvoiceSendError(message,statusCode=500){
+ const error=new Error(message);
+ error.statusCode=statusCode;
+ return error;
+}
+
+async function sendFeeInvoiceById({
+ invoiceId,
+ companyId,
+ actorType='system',
+ actorId='weekly_invoice_scheduler',
+ req=null
+}){
+ let invoice=null;
+ let claimed=false;
+
+ try{
+  const company=db.prepare(`
+   SELECT *
+   FROM companies
+   WHERE id=?
+  `).get(companyId);
+
+  if(!company){
+   throw feeInvoiceSendError('Invoice company not found.',404);
+  }
+
+  invoice=feeInvoiceById(
+   invoiceId,
+   {
+    items:true,
+    companyId:company.id
+   }
+  );
+
+  if(!invoice){
+   throw feeInvoiceSendError('Invoice not found',404);
+  }
+
+  if(!invoice.billingEmail){
+   throw feeInvoiceSendError(
+    'This invoice has no billing email.',
+    400
+   );
+  }
+
+  if(invoice.emailStatus==='sent'){
+   throw feeInvoiceSendError(
+    `Invoice ${invoice.invoiceNumber} has already been emailed.`,
+    409
+   );
+  }
+
+  if(invoice.emailStatus==='sending'){
+   throw feeInvoiceSendError(
+    `Invoice ${invoice.invoiceNumber} is already being sent.`,
+    409
+   );
+  }
+
+  if(invoice.emailStatus==='failed'){
+   throw feeInvoiceSendError(
+    'The previous invoice email attempt failed. Automatic retry is blocked until the failed delivery has been reviewed.',
+    409
+   );
+  }
+
+  /*
+   * Generate the immutable PDF before taking the email claim.
+   * A PDF failure therefore cannot leave an invoice stuck in sending.
+   */
+  const pdf=await feeInvoicePdfBuffer(invoice);
+  const claimAt=new Date().toISOString();
+
+  const claim=db.prepare(`
+   UPDATE fee_invoices
+   SET email_status='sending',
+       updated_at=?
+   WHERE id=?
+     AND company_id=?
+     AND COALESCE(email_status,'not_sent')='not_sent'
+  `).run(
+   claimAt,
+   invoice.id,
+   company.id
+  );
+
+  if(Number(claim.changes||0)!==1){
+   const current=feeInvoiceById(
+    invoice.id,
+    {companyId:company.id}
+   );
+
+   throw feeInvoiceSendError(
+    current?.emailStatus==='sent'
+     ?`Invoice ${invoice.invoiceNumber} has already been emailed.`
+     :'Invoice email status changed. Refresh the invoice list before trying again.',
+    409
+   );
+  }
+
+  claimed=true;
+
+  const companyName=String(company.name||'Taxi company');
+  const subject=`FaivoPay invoice ${invoice.invoiceNumber}`;
+
+  const html=`
+   <div style="font-family:Arial,sans-serif;line-height:1.55;color:#18212f">
+    <h2 style="margin:0 0 16px">FaivoPay weekly fee invoice</h2>
+    <p>Hello ${companyName},</p>
+    <p>
+     Please find attached invoice <strong>${invoice.invoiceNumber}</strong>
+     for FaivoPay fees covering
+     <strong>${invoice.periodStart}</strong> to
+     <strong>${invoice.periodEnd}</strong>.
+    </p>
+    <p>
+     Amount due to FaivoPay:
+     <strong>£${Number(invoice.faivopayShareTotal||0).toFixed(2)}</strong>
+    </p>
+    <p>
+     The attached PDF contains the invoice summary and transaction detail.
+    </p>
+    <p>Kind regards,<br><strong>FaivoPay</strong></p>
+   </div>
+  `;
+
+  const result=await sendEmail(
+   invoice.billingEmail,
+   subject,
+   html,
+   {
+    companyId:company.id,
+    attachments:[
+     {
+      filename:`${invoice.invoiceNumber}.pdf`,
+      content:pdf,
+      contentType:'application/pdf'
+     }
+    ]
+   }
+  );
+
+  if(!result?.sent){
+   throw new Error(
+    'No email provider is configured for invoice delivery.'
+   );
+  }
+
+  const sentAt=new Date().toISOString();
+
+  const sentUpdate=db.prepare(`
+   UPDATE fee_invoices
+   SET email_status='sent',
+       email_provider=?,
+       email_provider_ref=?,
+       emailed_at=?,
+       updated_at=?
+   WHERE id=?
+     AND company_id=?
+     AND email_status='sending'
+  `).run(
+   result.provider||'',
+   result.id||'',
+   sentAt,
+   sentAt,
+   invoice.id,
+   company.id
+  );
+
+  if(Number(sentUpdate.changes||0)!==1){
+   throw new Error(
+    'Invoice delivery completed but the local sent status could not be finalised. Manual review is required before any retry.'
+   );
+  }
+
+  logCommunication({
+   channel:'email',
+   recipient:invoice.billingEmail,
+   templateKey:'weekly_fee_invoice',
+   entityType:'fee_invoice',
+   entityId:invoice.id,
+   status:'sent',
+   providerRef:result.id||''
+  });
+
+  audit(
+   req,
+   actorType,
+   actorId,
+   'fee_invoice_emailed',
+   'fee_invoice',
+   invoice.id,
+   {
+    companyId:company.id,
+    invoiceNumber:invoice.invoiceNumber,
+    recipient:invoice.billingEmail,
+    provider:result.provider||'',
+    providerRef:result.id||''
+   }
+  );
+
+  return feeInvoiceById(
+   invoice.id,
+   {
+    items:true,
+    companyId:company.id
+   }
+  );
+
+ }catch(e){
+  if(claimed && invoice){
+   const failedAt=new Date().toISOString();
+
+   db.prepare(`
+    UPDATE fee_invoices
+    SET email_status='failed',
+        updated_at=?
+    WHERE id=?
+      AND company_id=?
+      AND email_status='sending'
+   `).run(
+    failedAt,
+    invoice.id,
+    companyId
+   );
+
+   logCommunication({
+    channel:'email',
+    recipient:invoice.billingEmail||'',
+    templateKey:'weekly_fee_invoice',
+    entityType:'fee_invoice',
+    entityId:invoice.id,
+    status:'failed',
+    error:e.message
+   });
+
+   audit(
+    req,
+    actorType,
+    actorId,
+    'fee_invoice_email_failed',
+    'fee_invoice',
+    invoice.id,
+    {
+     companyId,
+     invoiceNumber:invoice.invoiceNumber,
+     recipient:invoice.billingEmail||'',
+     error:e.message
+    }
+   );
+  }
+
+  throw e;
+ }
+}
+
 app.post(
  '/api/admin/fee-invoices/:id/send',
  adminAuth,
  requireStaffRole('administrator','finance'),
  async(req,res)=>{
-  let invoice=null;
-  let claimed=false;
-
   try{
    const company=officeCompanyRow(req);
 
@@ -16769,232 +17028,29 @@ app.post(
     });
    }
 
-   invoice=feeInvoiceById(
-    req.params.id,
-    {
-     items:true,
-     companyId:company.id
-    }
-   );
-
-   if(!invoice){
-    return res.status(404).json({
-     error:'Invoice not found'
-    });
-   }
-
-   if(!invoice.billingEmail){
-    return res.status(400).json({
-     error:'This invoice has no billing email.'
-    });
-   }
-
-   if(invoice.emailStatus==='sent'){
-    return res.status(409).json({
-     error:`Invoice ${invoice.invoiceNumber} has already been emailed.`
-    });
-   }
-
-   if(invoice.emailStatus==='sending'){
-    return res.status(409).json({
-     error:`Invoice ${invoice.invoiceNumber} is already being sent.`
-    });
-   }
-
-   if(invoice.emailStatus==='failed'){
-    return res.status(409).json({
-     error:'The previous invoice email attempt failed. Automatic retry is blocked until the failed delivery has been reviewed.'
-    });
-   }
-
-   /*
-    * Generate the immutable invoice PDF before taking the send lock.
-    * A PDF failure therefore cannot leave the invoice stuck in sending.
-    */
-   const pdf=await feeInvoicePdfBuffer(invoice);
-
-   const claimAt=new Date().toISOString();
-
-   const claim=db.prepare(`
-    UPDATE fee_invoices
-    SET email_status='sending',
-        updated_at=?
-    WHERE id=?
-      AND company_id=?
-      AND COALESCE(email_status,'not_sent')='not_sent'
-   `).run(
-    claimAt,
-    invoice.id,
-    company.id
-   );
-
-   if(Number(claim.changes||0)!==1){
-    const current=feeInvoiceById(
-     invoice.id,
-     {companyId:company.id}
-    );
-
-    return res.status(409).json({
-     error:
-      current?.emailStatus==='sent'
-       ?`Invoice ${invoice.invoiceNumber} has already been emailed.`
-       :'Invoice email status changed. Refresh the invoice list before trying again.'
-    });
-   }
-
-   claimed=true;
-
-   const companyName=String(company.name||'Taxi company');
-
-   const subject=
-    `FaivoPay invoice ${invoice.invoiceNumber}`;
-
-   const html=`
-    <div style="font-family:Arial,sans-serif;line-height:1.55;color:#18212f">
-     <h2 style="margin:0 0 16px">FaivoPay weekly fee invoice</h2>
-     <p>Hello ${companyName},</p>
-     <p>
-      Please find attached invoice <strong>${invoice.invoiceNumber}</strong>
-      for FaivoPay fees covering
-      <strong>${invoice.periodStart}</strong> to
-      <strong>${invoice.periodEnd}</strong>.
-     </p>
-     <p>
-      Amount due to FaivoPay:
-      <strong>£${Number(invoice.faivopayShareTotal||0).toFixed(2)}</strong>
-     </p>
-     <p>
-      The attached PDF contains the invoice summary and transaction detail.
-     </p>
-     <p>Kind regards,<br><strong>FaivoPay</strong></p>
-    </div>
-   `;
-
-   const result=await sendEmail(
-    invoice.billingEmail,
-    subject,
-    html,
-    {
-     companyId:company.id,
-     attachments:[
-      {
-       filename:`${invoice.invoiceNumber}.pdf`,
-       content:pdf,
-       contentType:'application/pdf'
-      }
-     ]
-    }
-   );
-
-   if(!result?.sent){
-    throw new Error(
-     'No email provider is configured for invoice delivery.'
-    );
-   }
-
-   const sentAt=new Date().toISOString();
-
-   db.prepare(`
-    UPDATE fee_invoices
-    SET email_status='sent',
-        email_provider=?,
-        email_provider_ref=?,
-        emailed_at=?,
-        updated_at=?
-    WHERE id=?
-      AND company_id=?
-      AND email_status='sending'
-   `).run(
-    result.provider||'',
-    result.id||'',
-    sentAt,
-    sentAt,
-    invoice.id,
-    company.id
-   );
-
-   logCommunication({
-    channel:'email',
-    recipient:invoice.billingEmail,
-    templateKey:'weekly_fee_invoice',
-    entityType:'fee_invoice',
-    entityId:invoice.id,
-    status:'sent',
-    providerRef:result.id||''
+   const invoice=await sendFeeInvoiceById({
+    invoiceId:req.params.id,
+    companyId:company.id,
+    actorType:'staff',
+    actorId:req.auth.email,
+    req
    });
-
-   audit(
-    req,
-    'staff',
-    req.auth.email,
-    'fee_invoice_emailed',
-    'fee_invoice',
-    invoice.id,
-    {
-     companyId:company.id,
-     invoiceNumber:invoice.invoiceNumber,
-     recipient:invoice.billingEmail,
-     provider:result.provider||'',
-     providerRef:result.id||''
-    }
-   );
-
-   const updated=feeInvoiceById(
-    invoice.id,
-    {
-     items:true,
-     companyId:company.id
-    }
-   );
 
    res.json({
     ok:true,
-    invoice:updated
+    invoice
    });
+
   }catch(e){
-   if(claimed && invoice){
-    const failedAt=new Date().toISOString();
-
-    db.prepare(`
-     UPDATE fee_invoices
-     SET email_status='failed',
-         updated_at=?
-     WHERE id=?
-       AND email_status='sending'
-    `).run(
-     failedAt,
-     invoice.id
-    );
-
-    logCommunication({
-     channel:'email',
-     recipient:invoice.billingEmail||'',
-     templateKey:'weekly_fee_invoice',
-     entityType:'fee_invoice',
-     entityId:invoice.id,
-     status:'failed',
-     error:e.message
-    });
-
-    audit(
-     req,
-     'staff',
-     req.auth.email,
-     'fee_invoice_email_failed',
-     'fee_invoice',
-     invoice.id,
-     {
-      invoiceNumber:invoice.invoiceNumber,
-      recipient:invoice.billingEmail||'',
-      error:e.message
-     }
-    );
-   }
-
-   res.status(500).json({error:e.message});
+   res.status(
+    Number(e?.statusCode||500)
+   ).json({
+    error:e.message
+   });
   }
  }
 );
+
 
 app.get(
  '/api/admin/fee-invoices/:id/pdf',
@@ -20319,15 +20375,405 @@ const __filename=fileURLToPath(import.meta.url),__dirname=path.dirname(__filenam
 function scheduleSync(){if(!getAutocabApiKey())return;const minutes=Math.max(2,Number(getSettings().syncMinutes||10));setTimeout(async()=>{try{const r=await syncAutocab();console.log(`FaivoPay scheduled sync: ${r.drivers.length} drivers`)}catch(e){console.error('Scheduled Autocab sync failed:',e.message)}finally{scheduleSync()}},minutes*60000)}
 function scheduleEarlySummary(){setTimeout(async()=>{try{await sendEarlyPayoutOfficeSummary()}catch(e){console.error('Early payout office summary failed:',e.message)}finally{scheduleEarlySummary()}},60000)}
 function schedulePaymentPlanStatusRefresh(){setTimeout(()=>{try{const r=refreshPaymentPlanStatuses();if(r.overdueInstalments||r.defaultedPlans)console.log(`FaivoPay payment plan refresh: ${r.overdueInstalments} overdue instalment(s), ${r.defaultedPlans} newly defaulted plan(s)`)}catch(e){console.error('Payment plan status refresh failed:',e.message)}finally{schedulePaymentPlanStatusRefresh()}},15*60000)}
+
+function backgroundJobsDisabled(){
+ return ['1','true','yes','on'].includes(
+  String(
+   process.env.BACKGROUND_JOBS_DISABLED||''
+  ).trim().toLowerCase()
+ );
+}
+
+function weeklyInvoiceSchedulerPlatformEnabled(){
+ return ['1','true','yes','on'].includes(
+  String(
+   process.env.WEEKLY_INVOICE_SCHEDULER_ENABLED||''
+  ).trim().toLowerCase()
+ );
+}
+
+function invoiceWeekContaining(dateValue){
+ const date=String(dateValue||'').slice(0,10);
+ const parsed=invoiceDateParts(date);
+
+ if(!parsed)return null;
+
+ const daysSinceMonday=(parsed.getUTCDay()+6)%7;
+ const periodStart=isoDateShift(date,-daysSinceMonday);
+ const periodEnd=isoDateShift(periodStart,6);
+
+ return {periodStart,periodEnd};
+}
+
+function oldestCompletedUninvoicedFeeWeek(companyId){
+ const rows=db.prepare(`
+  SELECT
+   id,
+   created_at,
+   COALESCE(
+    NULLIF(TRIM(service_date),''),
+    substr(created_at,1,10)
+   ) accounting_date
+  FROM fee_ledger
+  WHERE company_id=?
+    AND status='uninvoiced'
+    AND invoice_id IS NULL
+  ORDER BY accounting_date ASC,created_at ASC,id ASC
+ `).all(companyId);
+
+ const today=londonWindow().date;
+ const seen=new Set();
+
+ for(const row of rows){
+  const period=invoiceWeekContaining(row.accounting_date);
+
+  if(!period)continue;
+  if(period.periodEnd>=today)continue;
+
+  const key=`${period.periodStart}:${period.periodEnd}`;
+  if(seen.has(key))continue;
+  seen.add(key);
+
+  const existing=db.prepare(`
+   SELECT id
+   FROM fee_invoices
+   WHERE company_id=?
+     AND period_start=?
+     AND period_end=?
+   LIMIT 1
+  `).get(
+   companyId,
+   period.periodStart,
+   period.periodEnd
+  );
+
+  if(existing)continue;
+
+  return period;
+ }
+
+ return null;
+}
+
+async function runWeeklyInvoiceAutomation(){
+ if(!weeklyInvoiceSchedulerPlatformEnabled()){
+  return {skipped:true,reason:'platform_scheduler_disabled'};
+ }
+
+ const companies=db.prepare(`
+  SELECT *
+  FROM companies
+  WHERE status IN ('active','live')
+  ORDER BY CASE WHEN id='company_primary' THEN 0 ELSE 1 END,created_at
+ `).all();
+
+ if(companies.length!==1){
+  return {
+   skipped:true,
+   reason:'operational_company_count',
+   count:companies.length
+  };
+ }
+
+ const company=companies[0];
+ const invoiceSettings=companyWeeklyInvoiceSettings(company.id);
+
+ if(!invoiceSettings?.enabled){
+  return {
+   skipped:true,
+   reason:'company_weekly_invoicing_disabled'
+  };
+ }
+
+ if(invoiceSettings.timezone!=='Europe/London'){
+  return {
+   skipped:true,
+   reason:'unsupported_invoice_timezone',
+   timezone:invoiceSettings.timezone
+  };
+ }
+
+ if(!invoiceSettings.billingEmail){
+  return {
+   skipped:true,
+   reason:'missing_billing_email'
+  };
+ }
+
+ /*
+  * Recover only invoices previously created by this scheduler.
+  * Do not automatically send operator-created manual invoices.
+  */
+ const pendingSchedulerInvoiceRow=db.prepare(`
+  SELECT id
+  FROM fee_invoices
+  WHERE company_id=?
+    AND created_by='weekly_invoice_scheduler'
+    AND COALESCE(email_status,'not_sent')='not_sent'
+  ORDER BY period_end ASC,created_at ASC
+  LIMIT 1
+ `).get(company.id);
+
+ if(pendingSchedulerInvoiceRow){
+  const pendingInvoice=feeInvoiceById(
+   pendingSchedulerInvoiceRow.id,
+   {
+    items:true,
+    companyId:company.id
+   }
+  );
+
+  if(pendingInvoice){
+   const sent=await sendFeeInvoiceById({
+    invoiceId:pendingInvoice.id,
+    companyId:company.id,
+    actorType:'system',
+    actorId:'weekly_invoice_scheduler'
+   });
+
+   return {
+    ok:true,
+    action:'recovered_and_sent_scheduler_invoice',
+    invoiceId:sent.id,
+    invoiceNumber:sent.invoiceNumber,
+    periodStart:sent.periodStart,
+    periodEnd:sent.periodEnd
+   };
+  }
+ }
+
+ const period=oldestCompletedUninvoicedFeeWeek(company.id);
+
+ if(!period){
+  return {
+   skipped:true,
+   reason:'no_completed_uninvoiced_fee_week'
+  };
+ }
+
+ /*
+  * Weekly fees for periodEnd are created by the following Monday run.
+  * Never create/send the invoice before that settlement has been built
+  * and its payout/payment-plan review is resolved.
+  */
+ const settlementDate=isoDateShift(period.periodEnd,1);
+
+ const settlement=db.prepare(`
+  SELECT *
+  FROM settlement_runs
+  WHERE run_date=?
+    AND status IN ('draft','approved','batched','completed')
+  ORDER BY created_at DESC
+  LIMIT 1
+ `).get(settlementDate);
+
+ if(!settlement){
+  return {
+   skipped:true,
+   reason:'monday_settlement_not_ready',
+   settlementDate,
+   ...period
+  };
+ }
+
+ const pendingPayouts=Number(
+  db.prepare(`
+   SELECT COUNT(*) count
+   FROM payouts
+   WHERE run_id=?
+     AND type='weekly'
+     AND status='pending_approval'
+  `).get(settlement.id)?.count||0
+ );
+
+ if(pendingPayouts>0){
+  return {
+   skipped:true,
+   reason:'weekly_payout_review_pending',
+   pendingPayouts,
+   settlementRunId:settlement.id,
+   ...period
+  };
+ }
+
+ const unresolvedPlanAllocations=Number(
+  db.prepare(`
+   SELECT COUNT(*) count
+   FROM payment_plan_settlement_allocations
+   WHERE run_id=?
+     AND status!='applied'
+  `).get(settlement.id)?.count||0
+ );
+
+ if(unresolvedPlanAllocations>0){
+  return {
+   skipped:true,
+   reason:'payment_plan_allocations_pending',
+   unresolvedPlanAllocations,
+   settlementRunId:settlement.id,
+   ...period
+  };
+ }
+
+ const existingRow=db.prepare(`
+  SELECT id
+  FROM fee_invoices
+  WHERE company_id=?
+    AND period_start=?
+    AND period_end=?
+  LIMIT 1
+ `).get(
+  company.id,
+  period.periodStart,
+  period.periodEnd
+ );
+
+ if(existingRow){
+  const existing=feeInvoiceById(
+   existingRow.id,
+   {
+    items:true,
+    companyId:company.id
+   }
+  );
+
+  return {
+   skipped:true,
+   reason:`existing_invoice_${existing?.emailStatus||'unknown'}`,
+   invoiceId:existing?.id||existingRow.id,
+   invoiceNumber:existing?.invoiceNumber||null,
+   ...period
+  };
+ }
+
+ const candidates=invoiceCandidateFees(
+  company.id,
+  period.periodStart,
+  period.periodEnd
+ );
+
+ if(!candidates.length){
+  return {
+   skipped:true,
+   reason:'no_invoice_candidates',
+   ...period
+  };
+ }
+
+ const preview=buildFeeInvoicePreview({
+  companyId:company.id,
+  periodStart:period.periodStart,
+  periodEnd:period.periodEnd,
+  billingEmail:invoiceSettings.billingEmail
+ });
+
+ const created=createManualFeeInvoice({
+  companyId:company.id,
+  periodStart:period.periodStart,
+  periodEnd:period.periodEnd,
+  billingEmail:invoiceSettings.billingEmail,
+  createdBy:'weekly_invoice_scheduler',
+  previewKey:preview.previewKey
+ });
+
+ if(!created.alreadyExists){
+  audit(
+   null,
+   'system',
+   'weekly_invoice_scheduler',
+   'fee_invoice_created',
+   'fee_invoice',
+   created.invoice.id,
+   {
+    invoiceNumber:created.invoice.invoiceNumber,
+    companyId:company.id,
+    periodStart:period.periodStart,
+    periodEnd:period.periodEnd,
+    feeCount:created.invoice.feeCount,
+    grossFeeTotal:created.invoice.grossFeeTotal,
+    faivopayShareTotal:created.invoice.faivopayShareTotal,
+    taxiCompanyShareTotal:created.invoice.taxiCompanyShareTotal,
+    settlementRunId:settlement.id
+   }
+  );
+ }
+
+ const sent=await sendFeeInvoiceById({
+  invoiceId:created.invoice.id,
+  companyId:company.id,
+  actorType:'system',
+  actorId:'weekly_invoice_scheduler'
+ });
+
+ return {
+  ok:true,
+  action:created.alreadyExists
+   ?'sent_existing_invoice'
+   :'created_and_sent_invoice',
+  invoiceId:sent.id,
+  invoiceNumber:sent.invoiceNumber,
+  settlementRunId:settlement.id,
+  ...period
+ };
+}
+
+function scheduleWeeklyInvoiceAutomation(delayMs=60*60*1000){
+ setTimeout(
+  async()=>{
+   try{
+    const result=await runWeeklyInvoiceAutomation();
+
+    if(result?.ok){
+     console.log(
+      'FaivoPay weekly invoice automation:',
+      JSON.stringify(result)
+     );
+    }else if(result?.skipped){
+     console.log(
+      'FaivoPay weekly invoice automation skipped:',
+      JSON.stringify(result)
+     );
+    }
+   }catch(e){
+    console.error(
+     'Weekly invoice automation failed:',
+     e.message
+    );
+   }finally{
+    scheduleWeeklyInvoiceAutomation();
+   }
+  },
+  delayMs
+ );
+}
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`FaivoPay server running on port ${PORT} · DB ${DB_PATH}`);
 
-  if (getAutocabApiKey()) {
-    syncAutocab()
-      .then(r => console.log(`FaivoPay initial Autocab sync: ${r.drivers.length} drivers`))
-      .catch(e => console.error('Initial Autocab sync failed:', e.message))
-      .finally(scheduleSync);
+  if(!backgroundJobsDisabled()){
+   if (getAutocabApiKey()) {
+     syncAutocab()
+       .then(r => console.log(`FaivoPay initial Autocab sync: ${r.drivers.length} drivers`))
+       .catch(e => console.error('Initial Autocab sync failed:', e.message))
+       .finally(scheduleSync);
+   }
+
+   scheduleEarlySummary();
+   schedulePaymentPlanStatusRefresh();
+  }else{
+   console.log(
+    'FaivoPay background jobs disabled'
+   );
   }
-  scheduleEarlySummary();
-  schedulePaymentPlanStatusRefresh();
+
+  if(weeklyInvoiceSchedulerPlatformEnabled()){
+   console.log(
+    'FaivoPay weekly invoice scheduler enabled'
+   );
+   scheduleWeeklyInvoiceAutomation(60000);
+  }else{
+   console.log(
+    'FaivoPay weekly invoice scheduler disabled'
+   );
+  }
 });
