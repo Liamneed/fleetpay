@@ -8327,7 +8327,7 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
        <div>
         <span className="sectionKicker">WEEKLY INVOICING</span>
         <h3>Automatic FaivoPay fee invoice</h3>
-        <p>Invoice recorded uninvoiced fees for this company each Monday. Automatic invoice generation is not enabled until the invoicing engine is completed.</p>
+        <p>FaivoPay can create and send weekly service-fee invoices from recorded uninvoiced fees. Manual invoicing has been validated; automatic scheduling remains disabled until explicitly enabled.</p>
        </div>
       </div>
 
@@ -8337,7 +8337,7 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
          <label className="toggleRow">
           <span className="toggleCopy">
            <b>Enable weekly invoicing</b>
-           <small>Company-level switch. The scheduler will respect this setting once enabled in a later controlled step.</small>
+           <small>Company-level switch for weekly invoicing. Automatic scheduling will only run after the platform scheduler is explicitly enabled.</small>
           </span>
           <span className="toggleSwitch">
            <input
@@ -8414,6 +8414,7 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
       <small>The branded email layout is controlled by FaivoPay; this field changes the email subject only.</small>
      </section>
      <section className="panel settingsCardV2"><div className="settingsHead"><Mail/><div><h3>Outstanding-payment messages</h3><p>Control and edit the messages drivers receive after the Monday run.</p></div></div><label className="toggleRow"><span className="toggleCopy"><b>Automatic outstanding email & SMS</b><small>Send payment-demand email and SMS automatically when a Monday payment request is created. Keep this OFF during development and testing.</small></span><span className="toggleSwitch"><input type="checkbox" checked={Boolean(settings.outstandingExternalCommunicationsEnabled)} onChange={e=>setSettings({...settings,outstandingExternalCommunicationsEnabled:e.target.checked})}/><span className="toggleSlider"/></span></label><label>Email subject<input value={settings.outstandingEmailSubject||''} onChange={e=>setSettings({...settings,outstandingEmailSubject:e.target.value})}/></label><label>Email message<textarea rows="7" value={settings.outstandingEmailBody||''} onChange={e=>setSettings({...settings,outstandingEmailBody:e.target.value})}/></label><label>SMS message<textarea rows="5" value={settings.outstandingSmsTemplate||''} onChange={e=>setSettings({...settings,outstandingSmsTemplate:e.target.value})}/></label><small>Available variables: {'{driver}'}, {'{callsign}'}, {'{amount}'}, {'{dueDate}'}, {'{dueTime}'}, {'{paymentLink}'}</small></section>
+     {isPlatformAdmin&&<>
      <div className="settingsSectionLabel">
       <span>TEST & DEMO</span>
       <b>Training and controlled live-data testing</b>
@@ -8446,6 +8447,7 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
      </div>
 
      <section className="panel settingsCardV2 dangerZone"><div className="settingsHead"><AlertTriangle/><div><h3>Pre-launch data reset</h3><p>Use once before the live launch. FaivoPay creates a timestamped SQLite backup first, then clears operational test data while keeping office users, MFA, settings and integrations.</p></div></div><div className="launchResetInfo"><b>Cleared:</b><span>payments, payment plans, payout runs, settlement runs, fee records, notifications, communication history, adjustments and demo data.</span></div><label className="toggleRow"><span className="toggleCopy"><b>Also clear driver app registrations</b><small>Include driver logins and push subscriptions in the pre-launch reset.</small></span><span className="toggleSwitch"><input type="checkbox" checked={resetDrivers} onChange={e=>setResetDrivers(e.target.checked)}/><span className="toggleSlider"/></span></label><label>Confirmation phrase<input value={resetPhrase} onChange={e=>setResetPhrase(e.target.value)} placeholder="RESET FAIVOPAY FOR LIVE LAUNCH"/></label><button className="dangerAction" disabled={resetPhrase!=='RESET FAIVOPAY FOR LIVE LAUNCH'} onClick={launchReset}><AlertTriangle/>Create backup & reset operational data</button></section>
+     </>}
 
      <div className="settingsSectionLabel">
       <span>DATA & AUDIT</span>
