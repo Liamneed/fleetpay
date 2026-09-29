@@ -13794,3 +13794,53 @@ body {
     height:130px!important;
   }
 }
+
+
+/* FAIVOPAY LIVE CUSTOMER PAYMENT PRIORITY */
+
+.financePaymentsPage{
+  display:flex;
+  flex-direction:column;
+}
+
+.financePaymentsPage .financePaymentsIntro{
+  order:0;
+}
+
+.financePaymentsPage .financeBookingStatus{
+  order:1;
+}
+
+/*
+ * When a customer is waiting to pay, make that workflow the first
+ * actionable card on the Payments page.
+ */
+.financePaymentsPage.payment-state-cash .financeCustomerPaymentSection,
+.financePaymentsPage.payment-state-ready .financeCustomerPaymentSection,
+.financePaymentsPage.payment-state-paid .financeCustomerPaymentSection{
+  order:2;
+}
+
+.financePaymentsPage.payment-state-cash .financePaymentsPriority,
+.financePaymentsPage.payment-state-ready .financePaymentsPriority,
+.financePaymentsPage.payment-state-paid .financePaymentsPriority,
+.financePaymentsPage.payment-state-cash .financeEarlySection,
+.financePaymentsPage.payment-state-ready .financeEarlySection,
+.financePaymentsPage.payment-state-paid .financeEarlySection{
+  order:3;
+}
+
+/* Non-payable booking states keep the existing financial priority order. */
+.financePaymentsPage.payment-state-account .financePaymentsPriority,
+.financePaymentsPage.payment-state-card .financePaymentsPriority,
+.financePaymentsPage.payment-state-empty .financePaymentsPriority,
+.financePaymentsPage.payment-state-account .financeEarlySection,
+.financePaymentsPage.payment-state-card .financeEarlySection,
+.financePaymentsPage.payment-state-empty .financeEarlySection{
+  order:2;
+}
+
+.financePaymentsPage.payment-state-account .financeCustomerPaymentSection,
+.financePaymentsPage.payment-state-card .financeCustomerPaymentSection{
+  order:3;
+}

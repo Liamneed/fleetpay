@@ -11232,7 +11232,7 @@ function DriverApp(){
     ?'Secure payment link ready for the customer.'
     :'Customer payment received successfully.';
 
-  return <div className="driverPageView mockPaymentsPage financePaymentsPage">
+  return <div className={`driverPageView mockPaymentsPage financePaymentsPage payment-state-${state}`}>
    <div className="financePaymentsIntro compact">
     <span>YOUR MONEY</span>
     <h2>Payments</h2>
