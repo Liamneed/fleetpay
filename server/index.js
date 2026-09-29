@@ -2847,7 +2847,18 @@ function ensureBootstrapAdmin(){
  const email=safeEmail(ADMIN_EMAIL);if(!email||!ADMIN_PASSWORD)return;
  const existing=db.prepare('SELECT id FROM staff_users WHERE email=?').get(email);
  if(existing){
-  ensurePlatformAdminGrant(existing.id,'bootstrap');
+  const platformAdminCount=Number(
+   db.prepare(`
+    SELECT COUNT(*) count
+    FROM platform_admins p
+    JOIN staff_users s ON s.id=p.staff_id
+    WHERE s.active=1
+      AND s.role='administrator'
+   `).get()?.count||0
+  );
+  if(platformAdminCount===0){
+   ensurePlatformAdminGrant(existing.id,'bootstrap');
+  }
   return;
  }
  const hp=hashPassword(ADMIN_PASSWORD),now=new Date().toISOString(),staffId=id('staff');
@@ -4972,9 +4983,139 @@ app.post('/api/admin/staff',adminAuth,requireStaffRole('administrator'),async(re
   res.status(500).json({error:e.message});
  }
 });
-app.patch('/api/admin/staff/:id',adminAuth,requireStaffRole('administrator'),(req,res)=>{const u=db.prepare('SELECT * FROM staff_users WHERE id=?').get(req.params.id);if(!u)return res.status(404).json({error:'Office user not found'});const role='role'in req.body?String(req.body.role):u.role,active='active'in req.body?(req.body.active?1:0):u.active;if(!['administrator','finance','office','readonly'].includes(role))return res.status(400).json({error:'Invalid role'});if(u.id===req.auth.staffId&&!active)return res.status(400).json({error:'You cannot disable your own account'});db.prepare('UPDATE staff_users SET role=?,active=?,updated_at=? WHERE id=?').run(role,active,new Date().toISOString(),u.id);audit(req,'staff',req.auth.email,'office_user_updated','staff_user',u.id,{role,active:Boolean(active)});res.json({staff:staffSafe(db.prepare('SELECT * FROM staff_users WHERE id=?').get(u.id))})});
+app.patch('/api/admin/staff/:id',adminAuth,requireStaffRole('administrator'),(req,res)=>{
+ const u=db.prepare('SELECT * FROM staff_users WHERE id=?').get(req.params.id);
+ if(!u)return res.status(404).json({error:'Office user not found'});
+
+ const role='role'in req.body?String(req.body.role):u.role;
+ const active='active'in req.body?(req.body.active?1:0):u.active;
+
+ if(!['administrator','finance','office','readonly'].includes(role)){
+  return res.status(400).json({error:'Invalid role'});
+ }
+
+ if(u.id===req.auth.staffId&&!active){
+  return res.status(400).json({error:'You cannot disable your own account'});
+ }
+
+ if(isPlatformAdmin(u.id)){
+  if(!isPlatformAdmin(req.auth.staffId)){
+   return res.status(403).json({
+    error:'Super Admin access is required to change this account.'
+   });
+  }
+
+  if(role!=='administrator'||!active){
+   return res.status(409).json({
+    error:'Revoke Super Admin access before changing this account role or disabling it.'
+   });
+  }
+ }
+
+ db.prepare(
+  'UPDATE staff_users SET role=?,active=?,updated_at=? WHERE id=?'
+ ).run(role,active,new Date().toISOString(),u.id);
+
+ audit(
+  req,
+  'staff',
+  req.auth.email,
+  'office_user_updated',
+  'staff_user',
+  u.id,
+  {role,active:Boolean(active)}
+ );
+
+ res.json({
+  staff:staffSafe(
+   db.prepare('SELECT * FROM staff_users WHERE id=?').get(u.id)
+  )
+ });
+});
 
 
+
+app.patch(
+ '/api/admin/staff/:id/super-admin',
+ adminAuth,
+ requirePlatformAdmin,
+ (req,res)=>{
+  const target=db.prepare(
+   'SELECT * FROM staff_users WHERE id=?'
+  ).get(req.params.id);
+
+  if(!target){
+   return res.status(404).json({error:'Office user not found'});
+  }
+
+  const grant=Boolean(req.body?.enabled);
+
+  if(grant){
+   if(!target.active||target.role!=='administrator'){
+    return res.status(409).json({
+     error:'Super Admin access can only be granted to an active Administrator.'
+    });
+   }
+
+   ensurePlatformAdminGrant(target.id,req.auth.email);
+
+   audit(
+    req,
+    'staff',
+    req.auth.email,
+    'super_admin_granted',
+    'staff_user',
+    target.id,
+    {email:target.email}
+   );
+  }else{
+   if(target.id===req.auth.staffId){
+    return res.status(409).json({
+     error:'You cannot revoke your own Super Admin access. Sign in as another Super Admin.'
+    });
+   }
+
+   if(isPlatformAdmin(target.id)){
+    const remaining=Number(
+     db.prepare(`
+      SELECT COUNT(*) count
+      FROM platform_admins p
+      JOIN staff_users s ON s.id=p.staff_id
+      WHERE s.active=1
+        AND s.role='administrator'
+        AND p.staff_id<>?
+     `).get(target.id)?.count||0
+    );
+
+    if(remaining<1){
+     return res.status(409).json({
+      error:'FaivoPay must always have at least one active Super Admin.'
+     });
+    }
+
+    db.prepare(
+     'DELETE FROM platform_admins WHERE staff_id=?'
+    ).run(target.id);
+
+    audit(
+     req,
+     'staff',
+     req.auth.email,
+     'super_admin_revoked',
+     'staff_user',
+     target.id,
+     {email:target.email}
+    );
+   }
+  }
+
+  res.json({
+   staff:staffSafe(
+    db.prepare('SELECT * FROM staff_users WHERE id=?').get(target.id)
+   )
+  });
+ }
+);
 
 app.get('/api/admin/office-overview',adminAuth,(req,res)=>{
  refreshPaymentPlanStatuses();
