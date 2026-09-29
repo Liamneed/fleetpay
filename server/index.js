@@ -2723,14 +2723,14 @@ function resolveFeeCompanyId(companyId=null){
  const companies=db.prepare(`
   SELECT id
   FROM companies
-  WHERE status='active'
+  WHERE status IN ('active','live')
   ORDER BY created_at ASC
  `).all();
 
  /*
   * Existing payment flows predate multi-company fee attribution.
   * A missing company can only be inferred safely while exactly one
-  * active company exists.
+  * operational company exists.
   */
  return companies.length===1?companies[0].id:null;
 }
@@ -7491,8 +7491,8 @@ function defaultCompanyRow(){
  return db.prepare(`
   SELECT *
   FROM companies
-  WHERE status='active'
-  ORDER BY created_at ASC
+  WHERE status IN ('active','live')
+  ORDER BY CASE WHEN id='company_primary' THEN 0 ELSE 1 END, created_at ASC
   LIMIT 1
  `).get() || db.prepare(`
   SELECT *
@@ -7518,13 +7518,13 @@ function officeCompanyRow(req=null){
  const companies=db.prepare(`
   SELECT *
   FROM companies
-  WHERE status='active'
-  ORDER BY created_at ASC
+  WHERE status IN ('active','live')
+  ORDER BY CASE WHEN id='company_primary' THEN 0 ELSE 1 END, created_at ASC
  `).all();
 
  /*
   * Until office sessions carry an explicit company membership,
-  * implicit selection is safe only when exactly one active company
+  * implicit selection is safe only when exactly one operational company
   * exists.
   */
  return companies.length===1?companies[0]:null;
@@ -8618,19 +8618,19 @@ app.post(
     });
    }
 
-   const activeCompanyCount=Number(
+   const operationalCompanyCount=Number(
     db.prepare(`
      SELECT COUNT(*) c
      FROM companies
-     WHERE status='active'
+     WHERE status IN ('active','live')
     `).get()?.c||0
    );
 
-   if(activeCompanyCount!==1){
+   if(operationalCompanyCount!==1){
     return res.status(409).json({
      error:
       'Live Test Lab write previews are temporarily restricted '+
-      'to installations with exactly one active company.'
+      'to installations with exactly one operational company.'
     });
    }
 
