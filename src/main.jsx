@@ -1124,7 +1124,7 @@ function LiveTestLab({
           <span>Autocab reason</span>
           <b>
            {liveCreditPreview.proposed?.payload?.adjustmentReason||
-            'FleetPay Live Test'}
+            'FaivoPay Live Test'}
           </b>
          </div>
 
@@ -1325,7 +1325,7 @@ function LiveTestLab({
           <span>Autocab reason</span>
           <b>
            {liveReversalPreview.proposed?.payload?.adjustmentReason||
-            'FleetPay Live Test'}
+            'FaivoPay Live Test'}
           </b>
          </div>
 

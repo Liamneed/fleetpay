@@ -3593,14 +3593,14 @@ async function postAutocabAdjustment({driverId,callsign,amount,isCredit,descript
   liveTestIdentityApproved &&
   Boolean(isCredit)===true &&
   String(description)==='FaivoPay Live Test Credit' &&
-  String(adjustmentReason)==='FleetPay Live Test' &&
+  String(adjustmentReason)==='FaivoPay Live Test' &&
   String(eventKey)==='live-test:1112:first-credit-1gbp';
 
  const approvedLiveTestReversal=
   liveTestIdentityApproved &&
   Boolean(isCredit)===false &&
   String(description)==='FaivoPay Live Test Reversal' &&
-  String(adjustmentReason)==='FleetPay Live Test' &&
+  String(adjustmentReason)==='FaivoPay Live Test' &&
   String(eventKey)==='live-test:1112:first-credit-reversal-1gbp';
 
  const approvedLiveTestWrite=
@@ -8762,7 +8762,7 @@ app.post(
      amount:1,
      description:'FaivoPay Live Test Credit',
      isCredit:true,
-     adjustmentReason:'FleetPay Live Test'
+     adjustmentReason:'FaivoPay Live Test'
     },
     eventKey:'live-test:1112:first-credit-1gbp',
     expectedCurrentBalanceAfter:
@@ -9146,7 +9146,7 @@ app.post(
      amount:1,
      isCredit:true,
      description:'FaivoPay Live Test Credit',
-     adjustmentReason:'FleetPay Live Test',
+     adjustmentReason:'FaivoPay Live Test',
      eventKey:'live-test:1112:first-credit-1gbp',
      liveTestWrite:true
     });
@@ -9278,7 +9278,7 @@ app.post(
      amount:1,
      isCredit:true,
      description:'FaivoPay Live Test Credit',
-     adjustmentReason:'FleetPay Live Test'
+     adjustmentReason:'FaivoPay Live Test'
     },
     before:{
      previousBalance:beforeLive.previousBalance,
@@ -9558,7 +9558,7 @@ app.post(
      amount:1,
      description:'FaivoPay Live Test Reversal',
      isCredit:false,
-     adjustmentReason:'FleetPay Live Test'
+     adjustmentReason:'FaivoPay Live Test'
     },
     eventKey:'live-test:1112:first-credit-reversal-1gbp',
     reversalOfEventId:originalEvent.id,
@@ -9990,7 +9990,7 @@ app.post(
      amount:1,
      isCredit:false,
      description:'FaivoPay Live Test Reversal',
-     adjustmentReason:'FleetPay Live Test',
+     adjustmentReason:'FaivoPay Live Test',
      eventKey:'live-test:1112:first-credit-reversal-1gbp',
      liveTestWrite:true
     });
@@ -10124,7 +10124,7 @@ app.post(
      amount:1,
      isCredit:false,
      description:'FaivoPay Live Test Reversal',
-     adjustmentReason:'FleetPay Live Test'
+     adjustmentReason:'FaivoPay Live Test'
     },
     before:{
      previousBalance:beforeLive.previousBalance,
