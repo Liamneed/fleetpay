@@ -20203,6 +20203,7 @@ app.get('/api/driver/account-work',driverAuth,(req,res)=>{
     driver_name driverName,
     completed_at completedAt,
     posted_at postedAt,
+     first_seen_at firstSeenAt,
     account_id accountId,
     account_code accountCode,
     account_name accountName,

@@ -9757,6 +9757,7 @@ function DriverApp(){
  const[accountWork,setAccountWork]=useState(null);
  const[accountWorkLoading,setAccountWorkLoading]=useState(true);
  const[accountWorkError,setAccountWorkError]=useState('');
+ const[accountWorkNewCutoff,setAccountWorkNewCutoff]=useState(null);
  const[lastLivePreview,setLastLivePreview]=useState(null);
  const[lastLivePaid,setLastLivePaid]=useState(null);
  const[driverTab,setDriverTab]=useState('home');
@@ -10026,10 +10027,19 @@ function DriverApp(){
  }
 
  useEffect(()=>{
-  if(!token)return;
+  if(
+   !token ||
+   driverTab!=='activity' ||
+   activityFilter!=='account-work'
+  )return;
 
   loadAccountWorkForRange(activityDateFilter);
- },[token,activityDateFilter]);
+ },[
+  token,
+  driverTab,
+  activityFilter,
+  activityDateFilter
+ ]);
 
  useEffect(()=>{
   const params=new URLSearchParams(window.location.search);
@@ -10225,6 +10235,12 @@ function DriverApp(){
 
   if(Number(me?.accountWorkActivity?.newCount||0)<=0)return;
 
+  const previousSeenAt=me?.accountWorkActivity?.accountWorkSeenAt||null;
+
+  if(previousSeenAt){
+   setAccountWorkNewCutoff(current=>current||previousSeenAt);
+  }
+
   try{
    const result=await api(
     '/api/driver/account-work/read',
@@ -10257,6 +10273,15 @@ function DriverApp(){
   activityFilter,
   me?.accountWorkActivity?.newCount
  ]);
+
+ useEffect(()=>{
+  if(
+   driverTab!=='activity' ||
+   activityFilter!=='account-work'
+  ){
+   setAccountWorkNewCutoff(null);
+  }
+ },[driverTab,activityFilter]);
 
  async function sharePayment(x){
   try{
@@ -11679,6 +11704,11 @@ function DriverApp(){
         <span className="mockAccountWorkMain">
          <span className="mockAccountWorkTitle">
           <b>Booking {x.bookingId}</b>
+          {accountWorkNewCutoff&&
+           x.firstSeenAt&&
+           Date.parse(x.firstSeenAt)>Date.parse(accountWorkNewCutoff)&&
+           <i className="mockAccountWorkStatus new">NEW</i>
+          }
           {x.source&&
            <i className={`mockAccountWorkStatus ${
             String(x.source).toLowerCase()==='completed'

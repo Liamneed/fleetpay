@@ -10613,6 +10613,11 @@ body {
   white-space:nowrap;
 }
 
+.mockAccountWorkStatus.new{
+  background:rgba(48,92,210,.12);
+  color:#305cd2;
+}
+
 .mockAccountWorkStatus.completed{
   background:rgba(39,174,96,.12);
   color:#239154;
@@ -10626,6 +10631,11 @@ body {
 .mockAccountWorkStatus.cancelled{
   background:rgba(205,75,75,.12);
   color:#bd4e4e;
+}
+
+.mockDriverApp.theme-dark .mockAccountWorkStatus.new{
+  background:rgba(76,139,255,.15);
+  color:#83b5ff;
 }
 
 .mockDriverApp.theme-dark .mockAccountWorkStatus.completed{
