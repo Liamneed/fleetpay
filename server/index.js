@@ -3651,7 +3651,7 @@ async function postAutocabAdjustment({driverId,callsign,amount,isCredit,descript
  const adjustmentId=existing?.id||id('adj'),now=new Date().toISOString();
  if(!existing) db.prepare('INSERT INTO autocab_adjustments(id,event_key,driver_id,callsign,amount,is_credit,description,adjustment_reason,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(adjustmentId,eventKey,driverId,callsign,Number(amount),isCredit?1:0,description,adjustmentReason||'', 'pending', now);
  try{
-  const response=await putJson(`${BASE_URL}/driver/v1/accounts/driveraccounts/${driverId}/adjustment`,{amount:Number(amount),description,isCredit:Boolean(isCredit),adjustmentReason:adjustmentReason||'FleetPay'});
+  const response=await putJson(`${BASE_URL}/driver/v1/accounts/driveraccounts/${driverId}/adjustment`,{amount:Number(amount),description,isCredit:Boolean(isCredit),adjustmentReason:adjustmentReason||'FaivoPay'});
   const completedAt=new Date().toISOString();
   db.prepare('UPDATE autocab_adjustments SET status=?,response_json=?,completed_at=?,error=NULL WHERE id=?').run('completed',JSON.stringify(response||{}),completedAt,adjustmentId);
   db.prepare('UPDATE driver_cache SET current_balance=COALESCE(current_balance,0)+?,synced_at=? WHERE driver_id=?').run(isCredit?Number(amount):-Number(amount),completedAt,driverId);
@@ -3708,7 +3708,7 @@ async function settlePaymentPlanActivationInAutocab(plan,source){
     amount:fee,
     isCredit:false,
     description:'FaivoPay weekly app fee',
-    adjustmentReason:'FleetPay Fee',
+    adjustmentReason:'FaivoPay Fee',
     eventKey:`plan:${plan.id}:activation:fee`
    })
   );
@@ -3722,7 +3722,7 @@ async function settlePaymentPlanActivationInAutocab(plan,source){
     amount:carried,
     isCredit:false,
     description:'FaivoPay carried charge',
-    adjustmentReason:'FleetPay Carried Charge',
+    adjustmentReason:'FaivoPay Carried Charge',
     eventKey:`plan:${plan.id}:activation:carried`
    })
   );
@@ -3736,7 +3736,7 @@ async function settlePaymentPlanActivationInAutocab(plan,source){
     amount:principal,
     isCredit:true,
     description:'FaivoPay payment plan activated',
-    adjustmentReason:'FleetPay Payment Plan',
+    adjustmentReason:'FaivoPay Payment Plan',
     eventKey:`plan:${plan.id}:activation:principal`
    })
   );
@@ -3749,17 +3749,17 @@ async function settlePayoutInAutocab(item){
  const d=cachedDriver(item.driver_id); const callsign=item.callsign||d?.callsign||String(item.driver_id),settings=getSettings();
  const adjustments=[];
  const fee=Number(item.type==='early'?item.fee:item.weekly_fee||0); const carried=Number(item.type==='weekly'?item.carried_charges||0:0); const paid=Number(item.net_amount||item.amount||0);
- if(fee>0) adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:fee,isCredit:false,description:item.type==='early'?'FaivoPay early payout fee':'FaivoPay weekly app fee',adjustmentReason:'FleetPay Fee',eventKey:`payout:${item.id}:fee`}));
- if(carried>0) adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:carried,isCredit:false,description:'FaivoPay carried charge',adjustmentReason:'FleetPay Carried Charge',eventKey:`payout:${item.id}:carried`}));
- if(paid>0){const vars=dateTimeVars({callsign,amount:paid.toFixed(2)}),description=templateText(item.type==='early'?settings.earlyPayoutReasonTemplate:settings.weeklyPayoutReasonTemplate,vars)||`${item.type==='early'?'FaivoPay Early Payout':'FaivoPay Weekly Payout'} ${vars.date} ${vars.time}`;adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:paid,isCredit:false,description,adjustmentReason:item.type==='early'?'FleetPay Early Payout':'FleetPay Weekly Payout',eventKey:`payout:${item.id}:payment`}))}
+ if(fee>0) adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:fee,isCredit:false,description:item.type==='early'?'FaivoPay early payout fee':'FaivoPay weekly app fee',adjustmentReason:'FaivoPay Fee',eventKey:`payout:${item.id}:fee`}));
+ if(carried>0) adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:carried,isCredit:false,description:'FaivoPay carried charge',adjustmentReason:'FaivoPay Carried Charge',eventKey:`payout:${item.id}:carried`}));
+ if(paid>0){const vars=dateTimeVars({callsign,amount:paid.toFixed(2)}),description=templateText(item.type==='early'?settings.earlyPayoutReasonTemplate:settings.weeklyPayoutReasonTemplate,vars)||`${item.type==='early'?'FaivoPay Early Payout':'FaivoPay Weekly Payout'} ${vars.date} ${vars.time}`;adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:paid,isCredit:false,description,adjustmentReason:item.type==='early'?'FaivoPay Early Payout':'FaivoPay Weekly Payout',eventKey:`payout:${item.id}:payment`}))}
  return adjustments;
 }
 async function settlePaymentRequestInAutocab(item){
  const d=cachedDriver(item.driver_id); const callsign=item.callsign||d?.callsign||String(item.driver_id); const adjustments=[];
  const fee=Number(item.weekly_fee||0),carried=Number(item.carried_charges||0),received=Number(item.amount||0);
- if(fee>0) adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:fee,isCredit:false,description:'FaivoPay weekly app fee',adjustmentReason:'FleetPay Fee',eventKey:`request:${item.id}:fee`}));
- if(carried>0) adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:carried,isCredit:false,description:'FaivoPay carried charge',adjustmentReason:'FleetPay Carried Charge',eventKey:`request:${item.id}:carried`}));
- if(received>0) adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:received,isCredit:true,description:'FaivoPay payment received',adjustmentReason:'FleetPay Payment',eventKey:`request:${item.id}:payment`}));
+ if(fee>0) adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:fee,isCredit:false,description:'FaivoPay weekly app fee',adjustmentReason:'FaivoPay Fee',eventKey:`request:${item.id}:fee`}));
+ if(carried>0) adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:carried,isCredit:false,description:'FaivoPay carried charge',adjustmentReason:'FaivoPay Carried Charge',eventKey:`request:${item.id}:carried`}));
+ if(received>0) adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:received,isCredit:true,description:'FaivoPay payment received',adjustmentReason:'FaivoPay Payment',eventKey:`request:${item.id}:payment`}));
  return adjustments;
 }
 async function sendPush(driverId,title,message,url='/driver'){
@@ -7369,7 +7369,7 @@ app.get('/api/admin/integrations',adminAuth,(req,res)=>{
  });
 });
 app.post('/api/admin/integrations/wise/test',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{const out=await testWiseConnection();audit(req,'admin',req.auth.email,'wise_connection_test','integration','wise',{environment:WISE_ENV});res.json(out)}catch(e){res.status(500).json({error:e.message})}});
-app.post('/api/admin/autocab/test-adjustment',adminAuth,requireStaffRole('administrator'),async(req,res)=>{try{const callsign=String(req.body.callsign||'').trim();const d=cacheRows().find(x=>String(x.callsign)===callsign);if(!d)return res.status(404).json({error:'Callsign not found in FaivoPay cache'});const amount=Number(req.body.amount||0);if(!(amount>0))return res.status(400).json({error:'Amount must be greater than zero'});const result=await postAutocabAdjustment({driverId:d.driverId,callsign:d.callsign,amount,isCredit:Boolean(req.body.isCredit),description:String(req.body.description||'FaivoPay test adjustment'),adjustmentReason:String(req.body.adjustmentReason||'FleetPay Test'),eventKey:`test:${Date.now()}:${d.driverId}`,force:true});audit(req,'admin',req.auth.email,'autocab_test_adjustment','driver',d.callsign,{callsign:d.callsign,amount,isCredit:Boolean(req.body.isCredit)});setTimeout(()=>syncAutocab().catch(()=>{}),500);res.json({ok:true,driver:{driverId:d.driverId,callsign:d.callsign,fullName:d.fullName},result})}catch(e){res.status(500).json({error:e.message})}});
+app.post('/api/admin/autocab/test-adjustment',adminAuth,requireStaffRole('administrator'),async(req,res)=>{try{const callsign=String(req.body.callsign||'').trim();const d=cacheRows().find(x=>String(x.callsign)===callsign);if(!d)return res.status(404).json({error:'Callsign not found in FaivoPay cache'});const amount=Number(req.body.amount||0);if(!(amount>0))return res.status(400).json({error:'Amount must be greater than zero'});const result=await postAutocabAdjustment({driverId:d.driverId,callsign:d.callsign,amount,isCredit:Boolean(req.body.isCredit),description:String(req.body.description||'FaivoPay test adjustment'),adjustmentReason:String(req.body.adjustmentReason||'FaivoPay Test'),eventKey:`test:${Date.now()}:${d.driverId}`,force:true});audit(req,'admin',req.auth.email,'autocab_test_adjustment','driver',d.callsign,{callsign:d.callsign,amount,isCredit:Boolean(req.body.isCredit)});setTimeout(()=>syncAutocab().catch(()=>{}),500);res.json({ok:true,driver:{driverId:d.driverId,callsign:d.callsign,fullName:d.fullName},result})}catch(e){res.status(500).json({error:e.message})}});
 app.get('/api/admin/autocab/adjustments',adminAuth,(req,res)=>{const rows=db.prepare('SELECT id,event_key eventKey,driver_id driverId,callsign,amount,is_credit isCredit,description,adjustment_reason adjustmentReason,status,created_at createdAt,completed_at completedAt,error FROM autocab_adjustments ORDER BY created_at DESC LIMIT 250').all().map(x=>({...x,isCredit:Boolean(x.isCredit)}));res.json({adjustments:rows})});
 app.get('/api/admin/dashboard',adminAuth,(req,res)=>{const drivers=cacheRows();const matched=drivers.filter(d=>d.currentBalance!==null).length;const owedOut=drivers.reduce((s,d)=>s+Math.max(0,Number(d.currentBalance||0)),0),owedIn=drivers.reduce((s,d)=>s+Math.max(0,-Number(d.currentBalance||0)),0);const stats={count:drivers.length,matched,unmatched:drivers.length-matched,owedOut,owedIn,openPaymentRequests:Number(db.prepare("SELECT COUNT(*) c FROM payment_requests WHERE status='open'").get().c),queuedPayouts:Number(db.prepare("SELECT COUNT(*) c FROM payouts WHERE status IN ('queued','requested','approved','batched')").get().c),pendingUsers:Number(db.prepare('SELECT COUNT(*) c FROM driver_users WHERE approved=0').get().c)};const lastSync=db.prepare('SELECT MAX(synced_at) lastSync FROM driver_cache').get()?.lastSync||null;res.json({fetchedAt:new Date().toISOString(),lastSync,stats,drivers})});
 app.get('/api/drivers',adminAuth,(req,res)=>{const drivers=cacheRows().map(d=>({...d,bankAccount:adminBankAccountInfo(d.driverId)}));const matched=drivers.filter(d=>d.currentBalance!==null).length;const lastSync=db.prepare('SELECT MAX(synced_at) lastSync FROM driver_cache').get()?.lastSync||null;const bankReady=drivers.filter(d=>d.bankAccount?.ready).length,bankMissing=drivers.length-bankReady,bankRecentlyChanged=drivers.filter(d=>d.bankAccount?.changedRecently).length;res.json({fetchedAt:new Date().toISOString(),lastSync,count:drivers.length,matched,unmatched:drivers.length-matched,bankReady,bankMissing,bankRecentlyChanged,drivers})});
@@ -8745,7 +8745,7 @@ function liveTestAutocabWritePreview(driverId,simulation){
      amount:weeklyFee,
      description:'FaivoPay weekly app fee',
      isCredit:false,
-     adjustmentReason:'FleetPay Fee'
+     adjustmentReason:'FaivoPay Fee'
     },
     expectedRentSheetColumn:'Debits'
    });
@@ -8761,7 +8761,7 @@ function liveTestAutocabWritePreview(driverId,simulation){
      amount:carriedCharges,
      description:'FaivoPay carried charge',
      isCredit:false,
-     adjustmentReason:'FleetPay Carried Charge'
+     adjustmentReason:'FaivoPay Carried Charge'
     },
     expectedRentSheetColumn:'Debits'
    });
@@ -8789,7 +8789,7 @@ function liveTestAutocabWritePreview(driverId,simulation){
      amount:paid,
      description,
      isCredit:false,
-     adjustmentReason:'FleetPay Weekly Payout'
+     adjustmentReason:'FaivoPay Weekly Payout'
     },
     expectedRentSheetColumn:'Debits'
    });
@@ -11587,7 +11587,7 @@ app.put('/api/admin/operations-settings',adminAuth,requireStaffRole('administrat
 app.post('/api/admin/communications/test-sms',adminAuth,requireStaffRole('administrator'),async(req,res)=>{try{const to=String(req.body.to||'').trim();if(!to)return res.status(400).json({error:'Enter a mobile number'});const message=String(req.body.message||'FaivoPay test SMS – communications are configured correctly.');const out=await sendConfiguredSms(to,message,{templateKey:'test_sms',entityType:'settings',entityId:'communications'});audit(req,'staff',req.auth.email,'test_sms_sent','settings','communications',{to});res.json({ok:true,out})}catch(e){res.status(500).json({error:e.message})}});
 app.post('/api/admin/communications/test-email',adminAuth,requireStaffRole('administrator'),async(req,res)=>{try{const to=safeEmail(req.body.to||getSettings().officeNotificationEmail);if(!to)return res.status(400).json({error:'Enter an email address'});const out=await sendEmail(to,'FaivoPay test email','<div style="font-family:Arial,sans-serif"><h2>FaivoPay communications test</h2><p>Your FaivoPay office email settings are working.</p></div>');if(!out.sent)throw new Error('No email provider is configured');logCommunication({channel:'email',recipient:to,templateKey:'test_email',entityType:'settings',entityId:'communications',status:'sent',providerRef:out.id||out.provider||''});audit(req,'staff',req.auth.email,'test_email_sent','settings','communications',{to});res.json({ok:true,provider:out.provider})}catch(e){res.status(500).json({error:e.message})}});
 
-app.post('/api/admin/manual-payment',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{const callsign=String(req.body.callsign||'').trim(),type=String(req.body.type||'pay_in'),amount=Number(req.body.amount||0),reason=String(req.body.reason||'').trim();if(!callsign||!(amount>0)||!['pay_in','payout'].includes(type))return res.status(400).json({error:'Callsign, payment type and amount are required'});const d=cacheRows().find(x=>String(x.callsign)===callsign);if(!d)return res.status(404).json({error:'Callsign not found in FaivoPay cache'});const settings=getSettings(),finalReason=reason||(type==='pay_in'?settings.manualPayInReasonDefault:settings.manualPayoutReasonDefault),eventKey=`manual:${Date.now()}:${d.driverId}:${crypto.randomBytes(3).toString('hex')}`;const result=await postAutocabAdjustment({driverId:d.driverId,callsign:d.callsign,amount,isCredit:type==='pay_in',description:finalReason,adjustmentReason:type==='pay_in'?'FleetPay Manual Pay In':'FleetPay Manual Payout',eventKey});audit(req,'staff',req.auth.email,'manual_autocab_payment','driver',d.callsign,{driverId:d.driverId,callsign:d.callsign,type,amount,reason:finalReason});setTimeout(()=>syncAutocab().catch(()=>{}),500);res.json({ok:true,driver:{driverId:d.driverId,callsign:d.callsign,fullName:d.fullName},type,amount,reason:finalReason,result})}catch(e){res.status(500).json({error:e.message})}});
+app.post('/api/admin/manual-payment',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{const callsign=String(req.body.callsign||'').trim(),type=String(req.body.type||'pay_in'),amount=Number(req.body.amount||0),reason=String(req.body.reason||'').trim();if(!callsign||!(amount>0)||!['pay_in','payout'].includes(type))return res.status(400).json({error:'Callsign, payment type and amount are required'});const d=cacheRows().find(x=>String(x.callsign)===callsign);if(!d)return res.status(404).json({error:'Callsign not found in FaivoPay cache'});const settings=getSettings(),finalReason=reason||(type==='pay_in'?settings.manualPayInReasonDefault:settings.manualPayoutReasonDefault),eventKey=`manual:${Date.now()}:${d.driverId}:${crypto.randomBytes(3).toString('hex')}`;const result=await postAutocabAdjustment({driverId:d.driverId,callsign:d.callsign,amount,isCredit:type==='pay_in',description:finalReason,adjustmentReason:type==='pay_in'?'FaivoPay Manual Pay In':'FaivoPay Manual Payout',eventKey});audit(req,'staff',req.auth.email,'manual_autocab_payment','driver',d.callsign,{driverId:d.driverId,callsign:d.callsign,type,amount,reason:finalReason});setTimeout(()=>syncAutocab().catch(()=>{}),500);res.json({ok:true,driver:{driverId:d.driverId,callsign:d.callsign,fullName:d.fullName},type,amount,reason:finalReason,result})}catch(e){res.status(500).json({error:e.message})}});
 
 app.post('/api/admin/monday-runs',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{
  const today=londonWindow().date,existing=db.prepare("SELECT * FROM settlement_runs WHERE run_date=? AND status IN ('draft','approved','batched') ORDER BY created_at DESC LIMIT 1").get(today);if(existing)return res.status(409).json({error:'A Monday draft already exists for today. Open Monday Run to continue it.',runId:existing.id});const settings=getSettings(),sync=await syncAutocab(),drivers=sync.drivers,runId=id('run'),createdAt=new Date().toISOString(),items=[],allocationRows=[];const insP=db.prepare('INSERT INTO payouts(id,run_id,driver_id,callsign,driver_name,gross_balance,weekly_fee,carried_charges,gross_amount,net_amount,amount,type,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)');const insR=db.prepare('INSERT INTO payment_requests(id,run_id,driver_id,callsign,driver_name,balance,weekly_fee,carried_charges,amount,status,created_at,due_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)');const due=nextTuesdayDueLabel(),settledWeekStart=previousMondayWeekStart(today);
@@ -12110,7 +12110,7 @@ async function applyMondayPlanSettlementAllocation(allocationId){
    amount:allocatedAmount,
    isCredit:false,
    description:'FaivoPay Monday payment plan deduction',
-   adjustmentReason:'FleetPay Payment Plan',
+   adjustmentReason:'FaivoPay Payment Plan',
    eventKey:allocation.autocab_event_key
   });
 
@@ -14647,7 +14647,7 @@ app.post(
       amount:remaining,
       isCredit:false,
       description:'FaivoPay payment plan cancelled',
-      adjustmentReason:'FleetPay Payment Plan',
+      adjustmentReason:'FaivoPay Payment Plan',
       eventKey:`plan:${plan.id}:cancel:return`
      });
     }catch(e){
