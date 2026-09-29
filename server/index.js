@@ -18992,6 +18992,7 @@ app.post('/api/driver/customer-payment/live',driverAuth,async(req,res)=>{
    ){
     return res.json({
      ok:true,
+     status:'paid',
      alreadyPaid:true,
      reused:true,
      id:existing.id,
@@ -19036,6 +19037,7 @@ app.post('/api/driver/customer-payment/live',driverAuth,async(req,res)=>{
 
    return res.json({
     ok:true,
+    status:'open',
     reused:true,
     id:existing.id,
     bookingId,
@@ -19451,6 +19453,7 @@ app.post('/api/driver/customer-payment/live',driverAuth,async(req,res)=>{
 
   res.json({
    ok:true,
+   status:'open',
    reused:false,
    id:paymentId,
    bookingId,

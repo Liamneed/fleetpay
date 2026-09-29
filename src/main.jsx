@@ -10131,19 +10131,6 @@ function DriverApp(){
    (fareAmount+feeAmount)*100
   )/100;
 
-  const confirmed=window.confirm(
-   `Create customer payment for booking ${livePaymentPreview.bookingId}?
-
-`+
-   `Final journey fare: ${money(fareAmount)}
-`+
-   `FaivoPay fee: ${money(feeAmount)}
-`+
-   `Customer total: ${money(totalAmount)}`
-  );
-
-  if(!confirmed)return;
-
   setCustomerPaymentBusy(true);
   setErr('');
 
