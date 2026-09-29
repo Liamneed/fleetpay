@@ -5718,7 +5718,7 @@ function sendOfficeCsv(res,filename,rows,columns=null){
 app.get('/api/admin/exports/:dataset.csv',adminAuth,requireStaffRole('administrator','finance','office','readonly'),(req,res)=>{
  try{
   const dataset=String(req.params.dataset||'').trim().toLowerCase();
-  let rows=[],filename=`FaivoPay-${dataset}.csv`;
+  let rows=[],columns=null,filename=`FaivoPay-${dataset}.csv`;
 
   /*
    * Staff/access and audit exports contain security-sensitive office data.
@@ -5776,6 +5776,260 @@ app.get('/api/admin/exports/:dataset.csv',adminAuth,requireStaffRole('administra
    case 'early-payouts':
     rows=db.prepare(`SELECT * FROM payouts WHERE type='early' ORDER BY created_at DESC`).all();
     break;
+
+   case 'monday-drivers-to-pay':{
+    const runId=String(req.query.runId||'').trim();
+    if(!runId)return res.status(400).json({error:'A Monday settlement runId is required.'});
+
+    const run=db.prepare(`
+     SELECT id,run_date,items_json
+     FROM settlement_runs
+     WHERE id=?
+    `).get(runId);
+
+    if(!run)return res.status(404).json({error:'Monday settlement not found.'});
+
+    let items=[];
+    try{items=JSON.parse(run.items_json||'[]')}catch{}
+
+    rows=items
+     .filter(x=>x?.action==='payout')
+     .map(x=>({
+      settlementRunId:run.id,
+      runDate:run.run_date,
+      driverId:x.driverId,
+      callsign:x.callsign,
+      driverName:x.driverName,
+      previousBalance:x.previousBalance,
+      weeklyFee:x.weeklyFee,
+      carriedCharges:x.carriedCharges,
+      adjustedBalance:x.adjustedBalance,
+      payoutAmount:x.amount,
+      payoutId:x.payoutId,
+      decision:x.approvalStatus,
+      exclusionReason:x.exclusionReason||'',
+      decisionAt:x.decisionAt||''
+     }));
+
+    columns=[
+     'settlementRunId','runDate','driverId','callsign','driverName',
+     'previousBalance','weeklyFee','carriedCharges','adjustedBalance',
+     'payoutAmount','payoutId','decision','exclusionReason','decisionAt'
+    ];
+    filename=`FaivoPay-Monday-Drivers-To-Pay-${run.run_date||run.id}.csv`;
+    break;
+   }
+
+   case 'monday-drivers-owing':{
+    const runId=String(req.query.runId||'').trim();
+    if(!runId)return res.status(400).json({error:'A Monday settlement runId is required.'});
+
+    const run=db.prepare(`
+     SELECT id,run_date,items_json
+     FROM settlement_runs
+     WHERE id=?
+    `).get(runId);
+
+    if(!run)return res.status(404).json({error:'Monday settlement not found.'});
+
+    let items=[];
+    try{items=JSON.parse(run.items_json||'[]')}catch{}
+
+    rows=items
+     .filter(x=>x?.action==='payment_request')
+     .map(x=>({
+      settlementRunId:run.id,
+      runDate:run.run_date,
+      driverId:x.driverId,
+      callsign:x.callsign,
+      driverName:x.driverName,
+      previousBalance:x.previousBalance,
+      weeklyFee:x.weeklyFee,
+      carriedCharges:x.carriedCharges,
+      adjustedBalance:x.adjustedBalance,
+      amountDue:x.amount,
+      paymentRequestId:x.requestId
+     }));
+
+    columns=[
+     'settlementRunId','runDate','driverId','callsign','driverName',
+     'previousBalance','weeklyFee','carriedCharges','adjustedBalance',
+     'amountDue','paymentRequestId'
+    ];
+    filename=`FaivoPay-Monday-Drivers-Owing-${run.run_date||run.id}.csv`;
+    break;
+   }
+
+   case 'monday-carry-forward':{
+    const runId=String(req.query.runId||'').trim();
+    if(!runId)return res.status(400).json({error:'A Monday settlement runId is required.'});
+
+    const run=db.prepare(`
+     SELECT id,run_date,items_json
+     FROM settlement_runs
+     WHERE id=?
+    `).get(runId);
+
+    if(!run)return res.status(404).json({error:'Monday settlement not found.'});
+
+    let items=[];
+    try{items=JSON.parse(run.items_json||'[]')}catch{}
+
+    rows=items
+     .filter(x=>['carry_forward','payout_carry_forward'].includes(x?.action))
+     .map(x=>({
+      settlementRunId:run.id,
+      runDate:run.run_date,
+      driverId:x.driverId,
+      callsign:x.callsign,
+      driverName:x.driverName,
+      carryForwardType:x.action,
+      previousBalance:x.previousBalance,
+      weeklyFee:x.weeklyFee,
+      carriedCharges:x.carriedCharges,
+      adjustedBalance:x.adjustedBalance,
+      amountCarried:x.amount
+     }));
+
+    columns=[
+     'settlementRunId','runDate','driverId','callsign','driverName',
+     'carryForwardType','previousBalance','weeklyFee','carriedCharges',
+     'adjustedBalance','amountCarried'
+    ];
+    filename=`FaivoPay-Monday-Carry-Forward-${run.run_date||run.id}.csv`;
+    break;
+   }
+
+   case 'monday-plan-deductions':{
+    const runId=String(req.query.runId||'').trim();
+    if(!runId)return res.status(400).json({error:'A Monday settlement runId is required.'});
+
+    const run=db.prepare(`
+     SELECT id,run_date
+     FROM settlement_runs
+     WHERE id=?
+    `).get(runId);
+
+    if(!run)return res.status(404).json({error:'Monday settlement not found.'});
+
+    rows=db.prepare(`
+     SELECT
+      id,
+      run_id settlementRunId,
+      payout_id payoutId,
+      driver_id driverId,
+      callsign,
+      plan_id planId,
+      instalment_id instalmentId,
+      payment_request_id paymentRequestId,
+      scheduled_amount scheduledAmount,
+      allocated_amount allocatedAmount,
+      status,
+      autocab_event_key autocabEventKey,
+      error,
+      created_at createdAt,
+      updated_at updatedAt,
+      applied_at appliedAt
+     FROM payment_plan_settlement_allocations
+     WHERE run_id=?
+     ORDER BY created_at,driver_id
+    `).all(runId);
+
+    columns=[
+     'id','settlementRunId','payoutId','driverId','callsign','planId',
+     'instalmentId','paymentRequestId','scheduledAmount','allocatedAmount',
+     'status','autocabEventKey','error','createdAt','updatedAt','appliedAt'
+    ];
+    filename=`FaivoPay-Monday-Plan-Deductions-${run.run_date||run.id}.csv`;
+    break;
+   }
+
+   case 'early-payout-requests':{
+    const runDate=String(req.query.runDate||'').trim();
+
+    rows=db.prepare(`
+     SELECT
+      id,
+      driver_id driverId,
+      callsign,
+      driver_name driverName,
+      gross_amount requestedAmount,
+      fee,
+      net_amount driverReceives,
+      status,
+      decline_reason declineReason,
+      decision_at decisionAt,
+      decision_by decisionBy,
+      payout_run_id payoutRunId,
+      paid_at paidAt,
+      eligible_run_date eligibleRunDate,
+      submitted_after_cutoff submittedAfterCutoff,
+      created_at createdAt,
+      updated_at updatedAt
+     FROM payouts
+     WHERE type='early'
+       AND (?='' OR eligible_run_date=?)
+     ORDER BY created_at,driver_id
+    `).all(runDate,runDate);
+
+    columns=[
+     'id','driverId','callsign','driverName','requestedAmount','fee',
+     'driverReceives','status','declineReason','decisionAt','decisionBy',
+     'payoutRunId','paidAt','eligibleRunDate','submittedAfterCutoff',
+     'createdAt','updatedAt'
+    ];
+    filename=runDate
+     ?`FaivoPay-Early-Payout-Requests-${runDate}.csv`
+     :'FaivoPay-Early-Payout-Requests.csv';
+    break;
+   }
+
+   case 'early-payout-run-items':{
+    const runId=String(req.query.runId||'').trim();
+    if(!runId)return res.status(400).json({error:'An early payout runId is required.'});
+
+    const payoutRun=db.prepare(`
+     SELECT id,scheduled_for
+     FROM payout_runs
+     WHERE id=?
+       AND run_type='early'
+    `).get(runId);
+
+    if(!payoutRun)return res.status(404).json({error:'Early payout run not found.'});
+
+    rows=db.prepare(`
+     SELECT
+      id,
+      payout_run_id payoutRunId,
+      driver_id driverId,
+      callsign,
+      driver_name driverName,
+      gross_amount requestedAmount,
+      fee,
+      net_amount driverReceives,
+      status,
+      decline_reason declineReason,
+      decision_at decisionAt,
+      decision_by decisionBy,
+      paid_at paidAt,
+      eligible_run_date eligibleRunDate,
+      submitted_after_cutoff submittedAfterCutoff,
+      created_at createdAt,
+      updated_at updatedAt
+     FROM payouts
+     WHERE type='early'
+       AND payout_run_id=?
+     ORDER BY driver_id
+    `).all(runId);
+
+    columns=[
+     'id','payoutRunId','driverId','callsign','driverName','requestedAmount',
+     'fee','driverReceives','status','declineReason','decisionAt','decisionBy',
+     'paidAt','eligibleRunDate','submittedAfterCutoff','createdAt','updatedAt'
+    ];
+    filename=`FaivoPay-Early-Payout-Run-${payoutRun.scheduled_for||runId}.csv`;
+    break;
+   }
 
    case 'outstanding':
     rows=db.prepare(`
@@ -5954,7 +6208,7 @@ app.get('/api/admin/exports/:dataset.csv',adminAuth,requireStaffRole('administra
     return res.status(404).json({error:'Unknown export dataset'});
   }
 
-  sendOfficeCsv(res,filename,rows);
+  sendOfficeCsv(res,filename,rows,columns);
  }catch(e){
   res.status(500).json({error:e.message});
  }
