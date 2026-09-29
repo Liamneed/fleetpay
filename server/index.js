@@ -7602,6 +7602,12 @@ function liveTestDriverPayload(row){
  };
 }
 
+app.use(
+ '/api/admin/live-test',
+ adminAuth,
+ requirePlatformAdmin
+);
+
 app.get(
  '/api/admin/live-test',
  adminAuth,
@@ -17212,6 +17218,12 @@ function demoFunding(run,isEarly=false){run.fundingRequired=Number(demoTotal(run
 function demoPaidItem(x){x.wiseStatus='paid';x.autocabStatus='updated';x.paidAt=demoStamp();x.autocabAt=demoStamp();}
 function demoCanReconcile(run,isEarly=false){const approved=demoApproved(run,isEarly);return approved.length>0&&approved.every(x=>x.wiseStatus==='paid'&&x.autocabStatus==='updated')}
 
+app.use(
+ '/api/admin/demo',
+ adminAuth,
+ requirePlatformAdmin
+);
+
 app.get('/api/admin/demo',adminAuth,(req,res)=>res.json(readDemoState()));
 app.post('/api/admin/demo/reset',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const state=writeDemoState(freshDemoState());audit(req,'staff',req.auth.email,'demo_data_reset','demo','office_demo');res.json(state)});
 
@@ -18361,7 +18373,7 @@ app.post('/api/admin/demo/early/:id',adminAuth,requireStaffRole('administrator',
 app.post('/api/admin/demo/test-email',adminAuth,requireStaffRole('administrator'),async(req,res)=>{try{const to=safeEmail(req.body.to||getSettings().officeNotificationEmail);if(!to)return res.status(400).json({error:'Enter a test email address'});const state=readDemoState(),approved=state.early.items.filter(x=>['approved','paid'].includes(x.status)),total=approved.reduce((a,x)=>a+Number(x.netAmount||0),0);const html=`<div style="font-family:Arial,sans-serif;background:#f5f7fb;padding:24px"><div style="max-width:680px;margin:auto;background:#fff;border-radius:14px;overflow:hidden"><div style="background:#7c3aed;color:white;padding:24px"><b>FAIVOPAY DEMO · TEST MESSAGE</b><h2 style="margin:8px 0 0">Early payout demonstration</h2></div><div style="padding:24px"><p>This is a demonstration only. No real payment is due.</p><p><b>${approved.length} demo requests · £${total.toFixed(2)}</b></p></div></div></div>`;const out=await sendEmail(to,'FaivoPay DEMO – early payout summary',html);if(!out.sent)throw new Error('No email provider is configured');logCommunication({channel:'email',recipient:to,templateKey:'demo_email',entityType:'demo',entityId:'office_demo',status:'sent',providerRef:out.id||out.provider||''});res.json({ok:true})}catch(e){res.status(500).json({error:e.message})}});
 app.post('/api/admin/demo/test-sms',adminAuth,requireStaffRole('administrator'),async(req,res)=>{try{const to=String(req.body.to||'').trim();if(!to)return res.status(400).json({error:'Enter a test mobile number'});const out=await sendConfiguredSms(to,'FAIVOPAY DEMO – Test message only. No payment or action is required.',{templateKey:'demo_sms',entityType:'demo',entityId:'office_demo'});res.json({ok:true,out})}catch(e){res.status(500).json({error:e.message})}});
 
-app.post('/api/admin/launch-reset',adminAuth,requireStaffRole('administrator'),(req,res)=>{
+app.post('/api/admin/launch-reset',adminAuth,requirePlatformAdmin,(req,res)=>{
  const phrase=String(req.body.phrase||'');if(phrase!=='RESET FAIVOPAY FOR LIVE LAUNCH')return res.status(400).json({error:'Confirmation phrase does not match'});
  const includeDrivers=Boolean(req.body.includeDriverAccounts),stamp=new Date().toISOString().replace(/[:.]/g,'-'),backupPath=path.join(DATA_DIR,`fleetpay-prelaunch-${stamp}.sqlite`);
  try{

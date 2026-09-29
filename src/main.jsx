@@ -2548,7 +2548,22 @@ function AdminApp(){
  useEffect(()=>{if(token&&view==='transactions')loadTransactions()},[txType,txStatus,txCategory,txDateFrom,txDateTo]);
  const isAdmin=me?.role==='administrator',isPlatformAdmin=Boolean(me?.platformAdmin),canMoney=['administrator','finance'].includes(me?.role),canOffice=['administrator','finance','office'].includes(me?.role);
  const nav=[
-  ['dashboard',LayoutDashboard,'Dashboard'],['transactions',CreditCard,'Transactions'],['customerPayments',Send,'Customer Payments'],['monday',CalendarDays,'Monday Run'],['early',ArrowUpRight,'Early Payouts'],['outstanding',AlertTriangle,'Outstanding'],['paymentPlans',CalendarDays,'Payment Plans'],['fees',BadgePoundSterling,'Fees & Billing'],['demo',PlayCircle,'Demo Lab'],...(isAdmin?[['liveTest',Database,'Live Test Lab']]:[]),['drivers',Users,'Drivers'],['access',UserCheck,'Users & Access'],...(isPlatformAdmin?[['platform',KeyRound,'Platform Admin']]:[]),...(isAdmin?[['security',ShieldCheck,'Security'],['settings',Settings,'Settings']]:[])
+  ['dashboard',LayoutDashboard,'Dashboard'],
+  ['transactions',CreditCard,'Transactions'],
+  ['customerPayments',Send,'Customer Payments'],
+  ['monday',CalendarDays,'Monday Run'],
+  ['early',ArrowUpRight,'Early Payouts'],
+  ['outstanding',AlertTriangle,'Outstanding'],
+  ['paymentPlans',CalendarDays,'Payment Plans'],
+  ['fees',BadgePoundSterling,'Fees & Billing'],
+  ...(isPlatformAdmin?[
+   ['demo',PlayCircle,'Demo Lab'],
+   ['liveTest',Database,'Live Test Lab']
+  ]:[]),
+  ['drivers',Users,'Drivers'],
+  ['access',UserCheck,'Users & Access'],
+  ...(isPlatformAdmin?[['platform',KeyRound,'Super Admin']]:[]),
+  ...(isAdmin?[['security',ShieldCheck,'Security'],['settings',Settings,'Settings']]:[])
  ];
  const filtered=useMemo(()=>drivers.filter(d=>{const h=`${d.callsign} ${d.fullName} ${d.mobile} ${d.email} ${d.driverId} ${d.bankAccount?.accountHolder||''} ${d.bankAccount?.accountNumberMasked||''}`.toLowerCase();if(!h.includes(q.toLowerCase()))return false;if(filter==='negative')return(d.currentBalance??0)<0;if(filter==='positive')return(d.currentBalance??0)>0;if(filter==='unmatched')return d.currentBalance==null;if(filter==='bank_ready')return Boolean(d.bankAccount?.ready)&&!d.bankAccount?.changedRecently;if(filter==='bank_missing')return !d.bankAccount?.ready;if(filter==='bank_recent')return Boolean(d.bankAccount?.changedRecently);if(filter==='payout_excluded')return Boolean(d.payoutExcluded);return true}).sort((a,b)=>String(a.callsign??'').localeCompare(String(b.callsign??''),'en-GB',{numeric:true})),[drivers,q,filter]);
 
