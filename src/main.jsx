@@ -139,7 +139,16 @@ function DemoLab({demo,loadDemo,resetDemo,action,demoEmail,setDemoEmail,demoMobi
     :run.stage==='complete'?7
     :0;
 
-  return <section className="liveWorkflowCard wizardFlowCard demoRunV22">
+  // STEP110B_DEMO_OVERVIEW
+   const approvedItems=approved(run,early);
+   const pendingItems=pending(run,early);
+   const excludedItems=(run?.items||[]).filter(
+    x=>['excluded','declined'].includes(x.status)
+   );
+   const failedItems=failed(run,early);
+   const processingItems=processing(run,early);
+
+   return <section className="liveWorkflowCard wizardFlowCard demoRunV22">
    <div className="liveWorkflowHead">
     <div>
      <span>{early?'DEMO EARLY PAYOUT':'DEMO MONDAY RUN'}</span>
@@ -151,7 +160,47 @@ function DemoLab({demo,loadDemo,resetDemo,action,demoEmail,setDemoEmail,demoMobi
     </Pill>
    </div>
 
-   <WizardSteps steps={steps} currentIndex={idx}/>
+   <div className="operatorWarning blue">
+     <Info/>
+     <div>
+      <b>DEMO ONLY — simulated financial workflow</b>
+      <span>
+       Funding, bank payouts and Autocab adjustments
+       are simulated. No real driver payments are made.
+       Separate test email and SMS actions may send real
+       messages to the specified recipients.
+      </span>
+     </div>
+    </div>
+
+    <div className="officeStats four">
+     <Stat
+      icon={CheckCircle2}
+      label="Approved payouts"
+      value={approvedItems.length}
+      sub={money(paymentTotal(run,early))}
+     />
+     <Stat
+      icon={Clock3}
+      label="Awaiting decision"
+      value={pendingItems.length}
+      sub="Requires review"
+     />
+     <Stat
+      icon={AlertTriangle}
+      label={early?'Declined':'Excluded'}
+      value={excludedItems.length}
+      sub="Not included in payouts"
+     />
+     <Stat
+      icon={CreditCard}
+      label="Payment exceptions"
+      value={failedItems.length+processingItems.length}
+      sub={`${failedItems.length} failed · ${processingItems.length} processing`}
+     />
+    </div>
+
+    <WizardSteps steps={steps} currentIndex={idx}/>
 
    <div className="wizardStageBody">
     {!early&&run.stage==='rentsheets'&&<div className="demoActionStage">
