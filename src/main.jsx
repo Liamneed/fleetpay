@@ -3107,6 +3107,59 @@ function AdminApp(){
  }
  async function createMonday(){if(!confirm('Confirm Autocab Rent Sheets are complete. FaivoPay will sync Autocab and create a draft using each driver’s Previous Balance.'))return;try{const j=await api('/api/admin/monday-runs',{method:'POST'});await Promise.all([loadMonday(),loadSett(),loadOutstanding(),loadFees(),loadOverview()]);alert(`Draft created. ${j.items.filter(x=>x.action==='payout').length} positive balances require approval and ${j.items.filter(x=>x.action==='payment_request').length} driver(s) owe above the collection threshold.`)}catch(e){alert(e.message)}}
  async function weeklyDecision(item,status){let reason='';if(status==='excluded'){reason=prompt(`Reason for excluding callsign ${item.callsign}:`)||'';if(!reason.trim())return}try{await api(`/api/admin/monday-runs/${activeMonday.id}/payouts/${item.payoutId}`,{method:'PATCH',body:JSON.stringify({status,reason})});setSelectedWeeklyPayouts(x=>x.filter(id=>id!==item.payoutId));await Promise.all([loadMonday(),loadSett()])}catch(e){alert(e.message)}}
+
+ // STEP80_OVERRIDE_UI
+ async function overrideWeeklyExclusion(item){
+  if(!isAdmin||!activeMonday||activeMonday.payoutRunId)return;
+
+  const reason=prompt(
+   `Override the permanent payout exclusion for callsign ${item.callsign}
+for this Monday settlement only?
+
+The driver's permanent exclusion will remain enabled.
+
+Enter the business reason (at least 10 characters):`
+  );
+
+  if(!reason||reason.trim().length<10){
+   if(reason!==null)alert('A reason of at least 10 characters is required.');
+   return;
+  }
+
+  if(!confirm(
+   `FINAL CHECK
+
+Authorise ${money(item.amount)} for callsign ${item.callsign}
+in this Monday settlement only?
+
+This does not release funds or bypass bank verification.`
+  ))return;
+
+  try{
+   await api(
+    `/api/admin/monday-runs/${activeMonday.id}/payouts/${item.payoutId}/override-exclusion`,
+    {
+     method:'POST',
+     body:JSON.stringify({reason:reason.trim()})
+    }
+   );
+   await Promise.all([loadMonday(),loadSett()]);
+  }catch(e){
+   alert(e.message);
+  }
+ }
+
+ async function revokeWeeklyOverride(item){
+  if(!isAdmin||!item.oneRunExclusionOverride?.approved)return;
+
+  if(!confirm(
+   `Revoke the one-run override for callsign ${item.callsign}?
+
+The payout will return to Excluded.`
+  ))return;
+
+  await weeklyDecision(item,'excluded');
+ }
  function toggleWeeklyPayout(id){
   setSelectedWeeklyPayouts(x=>x.includes(id)?x.filter(v=>v!==id):[...x,id]);
  }
@@ -7005,7 +7058,28 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
           <span>View payout drivers ({weeklyItems.length})</span>
           <strong>{money(weeklyItems.reduce((a,x)=>a+Number(x.amount||0),0))}</strong>
          </summary>
-         <div className="tableWrap proTable"><table><thead><tr><th className="selectCol"><input type="checkbox" aria-label="Select all payouts" disabled={Boolean(activeMonday.payoutRunId)} checked={weeklyItems.length>0&&weeklyItems.every(x=>selectedWeeklyPayouts.includes(x.payoutId))} onChange={toggleAllWeeklyPayouts}/></th><th>Driver</th><th>Previous balance</th><th>Weekly fee</th><th>Payout</th><th>Payout account</th><th>Decision</th><th>Actions</th></tr></thead><tbody>{weeklyItems.map(x=><tr key={x.payoutId} className={selectedWeeklyPayouts.includes(x.payoutId)?'selectedPayoutRow':''}><td className="selectCol"><input type="checkbox" aria-label={`Select callsign ${x.callsign}`} disabled={Boolean(activeMonday.payoutRunId)} checked={selectedWeeklyPayouts.includes(x.payoutId)} onChange={()=>toggleWeeklyPayout(x.payoutId)}/></td><td><div className="driverCell"><span className="callsign">{x.callsign}</span><div><b>{x.driverName}</b><small>Driver {x.driverId}</small></div></div></td><td>{money(x.previousBalance)}</td><td>{x.weeklyFeeWaivedInactive?<div><b>{money(0)}</b><small className="reasonText">Fee waived · no work recorded</small></div>:money(x.weeklyFee)}</td><td><b>{money(x.amount)}</b></td><td><Pill tone={bankTone(bankFor(x.driverId))}>{bankFor(x.driverId).label}</Pill></td><td><Pill tone={x.approvalStatus==='approved'?'good':x.approvalStatus==='excluded'?'bad':'warn'}>{x.approvalStatus||'pending'}</Pill>{x.exclusionReason&&<small className="reasonText">{x.exclusionReason}</small>}</td><td><div className="compactActions">{canMoney&&!activeMonday.payoutRunId&&<><button className="mini success" onClick={()=>weeklyDecision(x,'approved')}>Approve</button><button className="mini danger" onClick={()=>weeklyDecision(x,'excluded')}>Exclude</button></>}</div></td></tr>)}</tbody></table></div></details>:<div className="emptyInline">No payouts are above the minimum payout threshold.</div>}
+         <div className="tableWrap proTable"><table><thead><tr><th className="selectCol"><input type="checkbox" aria-label="Select all payouts" disabled={Boolean(activeMonday.payoutRunId)} checked={weeklyItems.length>0&&weeklyItems.every(x=>selectedWeeklyPayouts.includes(x.payoutId))} onChange={toggleAllWeeklyPayouts}/></th><th>Driver</th><th>Previous balance</th><th>Weekly fee</th><th>Payout</th><th>Payout account</th><th>Decision</th><th>Actions</th></tr></thead><tbody>{weeklyItems.map(x=><tr key={x.payoutId} className={selectedWeeklyPayouts.includes(x.payoutId)?'selectedPayoutRow':''}><td className="selectCol"><input type="checkbox" aria-label={`Select callsign ${x.callsign}`} disabled={Boolean(activeMonday.payoutRunId)} checked={selectedWeeklyPayouts.includes(x.payoutId)} onChange={()=>toggleWeeklyPayout(x.payoutId)}/></td><td><div className="driverCell"><span className="callsign">{x.callsign}</span><div><b>{x.driverName}</b><small>Driver {x.driverId}</small></div></div></td><td>{money(x.previousBalance)}</td><td>{x.weeklyFeeWaivedInactive?<div><b>{money(0)}</b><small className="reasonText">Fee waived · no work recorded</small></div>:money(x.weeklyFee)}</td><td><b>{money(x.amount)}</b></td><td><Pill tone={bankTone(bankFor(x.driverId))}>{bankFor(x.driverId).label}</Pill></td><td><Pill tone={x.approvalStatus==='approved'?'good':x.approvalStatus==='excluded'?'bad':'warn'}>{x.approvalStatus||'pending'}</Pill>{x.exclusionReason&&<small className="reasonText">{x.exclusionReason}</small>}{x.oneRunExclusionOverride?.approved&&<small className="reasonText">One-run override by {x.oneRunExclusionOverride.approvedBy} · {x.oneRunExclusionOverride.reason}</small>}</td><td><div className="compactActions">{canMoney&&!activeMonday.payoutRunId&&<>{(
+   x.persistentPayoutExclusion ||
+   drivers.find(d=>String(d.driverId)===String(x.driverId))?.payoutExcluded
+  ) ? (
+   x.oneRunExclusionOverride?.approved ? (
+    isAdmin&&<button className="mini danger"
+     onClick={()=>revokeWeeklyOverride(x)}>
+     Revoke override
+    </button>
+   ) : (
+    isAdmin&&x.approvalStatus==='excluded'&&
+    <button className="mini success"
+     onClick={()=>overrideWeeklyExclusion(x)}>
+     Override for this run
+    </button>
+   )
+  ) : (
+   <button className="mini success"
+    onClick={()=>weeklyDecision(x,'approved')}>
+    Approve
+   </button>
+  )}<button className="mini danger" onClick={()=>weeklyDecision(x,'excluded')}>Exclude</button></>}</div></td></tr>)}</tbody></table></div></details>:<div className="emptyInline">No payouts are above the minimum payout threshold.</div>}
 
         {weeklyPayoutCarryForward.length>0&&<div className="carryNote"><Info/> {weeklyPayoutCarryForward.length} positive balance{weeklyPayoutCarryForward.length===1?' is':'s are'} below the minimum payout threshold and will remain on the driver account.</div>}
        </section>

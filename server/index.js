@@ -8683,8 +8683,48 @@ async function sendOutstandingCommunications(item,d){
  db.prepare('UPDATE payment_requests SET due_at=?,email_sent_at=COALESCE(?,email_sent_at),sms_sent_at=COALESCE(?,sms_sent_at),communication_error=?,updated_at=? WHERE id=?').run(due.dueAt,emailSentAt,smsSentAt,errors.join(' | ')||null,new Date().toISOString(),item.id);
  return {emailSentAt,smsSentAt,errors,dueAt:due.dueAt};
 }
+
+// STEP78_ONE_RUN_EXCLUSION_OVERRIDE
+function hasMondayPayoutOverride(runId,payoutId){
+ const row=db.prepare(
+  'SELECT items_json FROM settlement_runs WHERE id=?'
+ ).get(runId);
+
+ if(!row)return false;
+
+ let items;
+ try{
+  items=JSON.parse(row.items_json||'[]');
+ }catch{
+  return false;
+ }
+
+ const item=items.find(
+  x=>String(x.payoutId)===String(payoutId)
+ );
+
+ return Boolean(
+  item?.oneRunExclusionOverride?.approved===true &&
+  item.oneRunExclusionOverride.runId===runId &&
+  item.oneRunExclusionOverride.payoutId===payoutId &&
+  item.oneRunExclusionOverride.approvedBy &&
+  item.oneRunExclusionOverride.reason
+ );
+}
+
 function updateRunItem(runId,payoutId,approvalStatus,reason=''){
- const run=db.prepare('SELECT * FROM settlement_runs WHERE id=?').get(runId);if(!run)return null;let items=JSON.parse(run.items_json||'[]');const payout=db.prepare('SELECT * FROM payouts WHERE id=? AND run_id=?').get(payoutId,runId);if(!payout)return null;items=items.map(x=>x.payoutId===payoutId?{...x,approvalStatus,exclusionReason:reason||'',decisionAt:new Date().toISOString()}:x);db.prepare('UPDATE settlement_runs SET items_json=? WHERE id=?').run(JSON.stringify(items),runId);return items
+ const run=db.prepare('SELECT * FROM settlement_runs WHERE id=?').get(runId);if(!run)return null;let items=JSON.parse(run.items_json||'[]');const payout=db.prepare('SELECT * FROM payouts WHERE id=? AND run_id=?').get(payoutId,runId);if(!payout)return null;/* STEP80_OVERRIDE_REVOCATION */
+items=items.map(x=>
+ x.payoutId===payoutId
+  ?{
+    ...x,
+    oneRunExclusionOverride:undefined,
+    approvalStatus,
+    exclusionReason:reason||'',
+    decisionAt:new Date().toISOString()
+   }
+  :x
+);db.prepare('UPDATE settlement_runs SET items_json=? WHERE id=?').run(JSON.stringify(items),runId);return items
 }
 function officeSettingsPayload(){const s=getSettings();return {...s,smsAuthConfigured:Boolean(getSecureSetting('smsAuthValue')),smtpPasswordConfigured:Boolean(getSecureSetting('smtpPassword')),smsAuthValue:'',smtpPassword:''}}
 
@@ -12704,7 +12744,7 @@ app.post(
     });
    }
 
-   if(run.status==='batched' || run.payout_run_id){
+   if(run.status!=='draft' || run.payout_run_id){
     return res.status(409).json({
      error:'Payment-plan deductions cannot be changed after the Monday run has been batched.'
     });
@@ -12820,24 +12860,230 @@ app.post(
  }
 );
 
-app.patch('/api/admin/monday-runs/:runId/payouts/:payoutId',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const status=String(req.body.status||''),reason=String(req.body.reason||'').trim();if(!['approved','excluded','pending'].includes(status))return res.status(400).json({error:'Invalid approval status'});if(status==='excluded'&&!reason)return res.status(400).json({error:'Enter a reason for excluding this driver'});const settlement=db.prepare('SELECT status FROM settlement_runs WHERE id=?').get(req.params.runId);if(!settlement)return res.status(404).json({error:'Monday settlement not found'});if(!['draft','approved'].includes(settlement.status))return res.status(409).json({error:`Monday settlement is ${settlement.status} and cannot be edited`});const pmt=db.prepare('SELECT * FROM payouts WHERE id=? AND run_id=? AND type=\'weekly\'').get(req.params.payoutId,req.params.runId);if(!pmt)return res.status(404).json({error:'Weekly payout not found'});if(pmt.payout_run_id)return res.status(400).json({error:'This payout is already locked into a payment run'});const driver=cachedDriver(pmt.driver_id);if(status==='approved'&&driver?.payoutExcluded)return res.status(400).json({error:`Callsign ${pmt.callsign} is permanently excluded from payouts. Enable payouts on the Drivers page first.`});const dbStatus=status==='approved'?'approved':status==='excluded'?'declined':'pending_approval';db.prepare('UPDATE payouts SET status=?,decline_reason=?,decision_at=?,decision_by=?,updated_at=? WHERE id=?').run(dbStatus,status==='excluded'?reason:null,status==='pending'?null:new Date().toISOString(),status==='pending'?null:req.auth.email,new Date().toISOString(),pmt.id);const items=updateRunItem(req.params.runId,pmt.id,status,reason);audit(req,'staff',req.auth.email,'weekly_payout_approval_changed','payout',pmt.id,{runId:req.params.runId,callsign:pmt.callsign,status,reason});res.json({ok:true,items})});
-app.post('/api/admin/monday-runs/:runId/approve-all',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const settlement=db.prepare('SELECT status FROM settlement_runs WHERE id=?').get(req.params.runId);if(!settlement)return res.status(404).json({error:'Monday settlement not found'});if(!['draft','approved'].includes(settlement.status))return res.status(409).json({error:`Cannot approve Monday settlement in ${settlement.status} status`});const rows=db.prepare("SELECT * FROM payouts WHERE run_id=? AND type='weekly' AND status='pending_approval' AND payout_run_id IS NULL").all(req.params.runId),now=new Date().toISOString();
-// STEP74_PERMANENT_EXCLUSION_GUARD
-const blocked=rows.filter(
- x=>cachedDriver(x.driver_id)?.payoutExcluded
+app.patch('/api/admin/monday-runs/:runId/payouts/:payoutId',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const status=String(req.body.status||''),reason=String(req.body.reason||'').trim();if(!['approved','excluded','pending'].includes(status))return res.status(400).json({error:'Invalid approval status'});if(status==='excluded'&&!reason)return res.status(400).json({error:'Enter a reason for excluding this driver'});const settlement=db.prepare('SELECT status FROM settlement_runs WHERE id=?').get(req.params.runId);if(!settlement)return res.status(404).json({error:'Monday settlement not found'});if(settlement.status!=='draft')return res.status(409).json({error:`Monday settlement is ${settlement.status} and cannot be edited`});const pmt=db.prepare('SELECT * FROM payouts WHERE id=? AND run_id=? AND type=\'weekly\'').get(req.params.payoutId,req.params.runId);if(!pmt)return res.status(404).json({error:'Weekly payout not found'});if(pmt.payout_run_id)return res.status(400).json({error:'This payout is already locked into a payment run'});const driver=cachedDriver(pmt.driver_id);if(status==='approved'&&driver?.payoutExcluded&&!hasMondayPayoutOverride(req.params.runId,pmt.id))return res.status(400).json({error:`Callsign ${pmt.callsign} is permanently excluded from payouts. Enable payouts on the Drivers page first.`});const dbStatus=status==='approved'?'approved':status==='excluded'?'declined':'pending_approval';db.prepare('UPDATE payouts SET status=?,decline_reason=?,decision_at=?,decision_by=?,updated_at=? WHERE id=?').run(dbStatus,status==='excluded'?reason:null,status==='pending'?null:new Date().toISOString(),status==='pending'?null:req.auth.email,new Date().toISOString(),pmt.id);const items=updateRunItem(req.params.runId,pmt.id,status,reason);audit(req,'staff',req.auth.email,'weekly_payout_approval_changed','payout',pmt.id,{runId:req.params.runId,callsign:pmt.callsign,status,reason});res.json({ok:true,items})});
+
+app.post(
+ '/api/admin/monday-runs/:runId/payouts/:payoutId/override-exclusion',
+ adminAuth,
+ requireStaffRole('administrator'),
+ (req,res)=>{
+  const reason=String(req.body?.reason||'').trim();
+
+  if(reason.length<10){
+   return res.status(400).json({
+    error:'Enter a reason of at least 10 characters.'
+   });
+  }
+
+  let started=false;
+
+  try{
+   db.exec('BEGIN IMMEDIATE');
+   started=true;
+
+   const run=db.prepare(
+    'SELECT * FROM settlement_runs WHERE id=?'
+   ).get(req.params.runId);
+
+   if(!run||run.status!=='draft'||
+      run.payout_run_id){
+    throw new Error('This settlement cannot be overridden.');
+   }
+
+   const payout=db.prepare(
+    "SELECT * FROM payouts WHERE id=? AND run_id=? AND type='weekly'"
+   ).get(req.params.payoutId,run.id);
+
+   if(
+    !payout ||
+    payout.payout_run_id ||
+    payout.paid_at ||
+    payout.status!=='declined'
+   ){
+    throw new Error('Only an unbatched excluded payout can be overridden.');
+   }
+
+   const driver=cachedDriver(payout.driver_id);
+
+   if(!driver?.payoutExcluded){
+    throw new Error('Driver is not permanently excluded.');
+   }
+
+   const items=JSON.parse(run.items_json||'[]');
+   const index=items.findIndex(
+    x=>String(x.payoutId)===String(payout.id)
+   );
+
+   if(index<0){
+    throw new Error('Payout is missing from settlement snapshot.');
+   }
+
+   if(items[index].oneRunExclusionOverride?.approved){
+    throw new Error('An override already exists for this payout.');
+   }
+
+   const now=new Date().toISOString();
+
+   const override={
+    approved:true,
+    runId:run.id,
+    payoutId:payout.id,
+    driverId:payout.driver_id,
+    approvedBy:req.auth.email,
+    approvedAt:now,
+    reason,
+    originalExclusionReason:driver.payoutExclusionReason||''
+   };
+
+   items[index]={
+    ...items[index],
+    approvalStatus:'approved',
+    exclusionReason:'',
+    oneRunExclusionOverride:override,
+    decisionAt:now
+   };
+
+   db.prepare(
+    'UPDATE settlement_runs SET items_json=? WHERE id=?'
+   ).run(JSON.stringify(items),run.id);
+
+   db.prepare(
+    `UPDATE payouts
+     SET status='approved',
+         decline_reason=NULL,
+         decision_at=?,
+         decision_by=?,
+         updated_at=?
+     WHERE id=?`
+   ).run(now,req.auth.email,now,payout.id);
+
+   audit(
+    req,'staff',req.auth.email,
+    'monday_one_run_payout_exclusion_override',
+    'payout',payout.id,
+    override
+   );
+
+   db.exec('COMMIT');
+   started=false;
+
+   res.json({ok:true,override});
+
+  }catch(e){
+   if(started)try{db.exec('ROLLBACK')}catch{}
+   res.status(409).json({error:e.message});
+  }
+ }
 );
-if(blocked.length){
- return res.status(409).json({
-  error:
-   'Bulk approval stopped. Permanently excluded drivers '+
-   'must be reviewed separately: '+
-   blocked.map(x=>x.callsign).join(', ')
- });
-}
-const up=db.prepare("UPDATE payouts SET status='approved',decision_at=?,decision_by=?,updated_at=? WHERE id=?");for(const r of rows){up.run(now,req.auth.email,now,r.id);updateRunItem(req.params.runId,r.id,'approved','')}db.prepare("UPDATE settlement_runs SET status='approved',approved_at=? WHERE id=?").run(now,req.params.runId);audit(req,'staff',req.auth.email,'weekly_payouts_approved_all','settlement_run',req.params.runId,{count:rows.length});res.json({ok:true,count:rows.length})});
+
+// STEP82_ATOMIC_MONDAY_APPROVAL
+app.post(
+ '/api/admin/monday-runs/:runId/approve-all',
+ adminAuth,
+ requireStaffRole('administrator','finance'),
+ (req,res)=>{
+  let started=false;
+  try{
+   db.exec('BEGIN IMMEDIATE');
+   started=true;
+
+   const run=db.prepare(
+    'SELECT * FROM settlement_runs WHERE id=?'
+   ).get(req.params.runId);
+
+   if(!run||run.status!=='draft'||
+      run.payout_run_id){
+    throw new Error('Settlement cannot be approved in its current state.');
+   }
+
+   const pending=db.prepare(
+    `SELECT * FROM payouts
+     WHERE run_id=? AND type='weekly'
+       AND status='pending_approval'
+       AND payout_run_id IS NULL`
+   ).all(run.id);
+
+   const blocked=pending.filter(
+    x=>cachedDriver(x.driver_id)?.payoutExcluded &&
+       !hasMondayPayoutOverride(run.id,x.id)
+   );
+
+   if(blocked.length){
+    throw new Error(
+     'Payout exclusion requires review: '+
+     blocked.map(x=>x.callsign).join(', ')
+    );
+   }
+
+   const now=new Date().toISOString();
+
+   const update=db.prepare(
+    `UPDATE payouts
+     SET status='approved',
+         decision_at=?,
+         decision_by=?,
+         updated_at=?
+     WHERE id=? AND status='pending_approval'
+       AND payout_run_id IS NULL`
+   );
+
+   for(const payout of pending){
+    const result=update.run(
+     now,req.auth.email,now,payout.id
+    );
+    if(result.changes!==1){
+     throw new Error(
+      'Payout changed during approval: '+payout.id
+     );
+    }
+    updateRunItem(run.id,payout.id,'approved','');
+   }
+
+   const unresolved=db.prepare(
+    `SELECT COUNT(*) AS count FROM payouts
+     WHERE run_id=? AND type='weekly'
+       AND status='pending_approval'`
+   ).get(run.id).count;
+
+   if(unresolved){
+    throw new Error(
+     'There are unresolved payout decisions.'
+    );
+   }
+
+   db.prepare(
+    `UPDATE settlement_runs
+     SET status='approved',approved_at=?
+     WHERE id=?`
+   ).run(now,run.id);
+
+   audit(
+    req,'staff',req.auth.email,
+    'weekly_settlement_approved',
+    'settlement_run',run.id,
+    {approvedCount:pending.length}
+   );
+
+   db.exec('COMMIT');
+   started=false;
+
+   res.json({
+    ok:true,
+    approvedCount:pending.length
+   });
+
+  }catch(e){
+   if(started){
+    try{db.exec('ROLLBACK')}catch{}
+   }
+   res.status(409).json({error:e.message});
+  }
+ }
+);
+
 app.post('/api/admin/monday-runs/:runId/create-payout-run',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const settlement=db.prepare('SELECT * FROM settlement_runs WHERE id=?').get(req.params.runId);if(!settlement)return res.status(404).json({error:'Monday run not found'});if(settlement.status!=='approved')return res.status(409).json({error:`Monday settlement must be approved before batching; current status: ${settlement.status}`});if(settlement.payout_run_id)return res.status(409).json({error:'A payout batch has already been created for this Monday run',payoutRunId:settlement.payout_run_id});const unresolvedPlanAllocations=db.prepare("SELECT COUNT(*) count FROM payment_plan_settlement_allocations WHERE run_id=? AND status!='applied'").get(req.params.runId)?.count||0;if(unresolvedPlanAllocations>0)return res.status(409).json({error:`Apply the ${unresolvedPlanAllocations} pending payment-plan deduction${unresolvedPlanAllocations===1?'':'s'} before creating the payout batch.`,pendingPlanAllocations:unresolvedPlanAllocations});const eligible=db.prepare("SELECT * FROM payouts WHERE run_id=? AND type='weekly' AND status='approved' AND payout_run_id IS NULL ORDER BY CAST(callsign AS INTEGER),callsign").all(req.params.runId);
 const excludedApproved=eligible.filter(
- x=>cachedDriver(x.driver_id)?.payoutExcluded
+ x=>cachedDriver(x.driver_id)?.payoutExcluded && !hasMondayPayoutOverride(req.params.runId,x.id)
 );
 if(excludedApproved.length){
  return res.status(409).json({
@@ -22098,3 +22344,7 @@ app.listen(PORT, '0.0.0.0', () => {
    );
   }
 });
+
+// STEP83_LOCK_APPROVED_SETTLEMENT
+
+// STEP85_CORRECT_SETTLEMENT_LOCKS
