@@ -2363,6 +2363,10 @@ function AdminApp(){
  const loadCompanyFinance=()=>safeLoad(async()=>setCompanyFinance(await api('/api/admin/company-finance-settings')));
  const loadIntegrationStatus=()=>safeLoad(async()=>setIntegrationStatus(await api('/api/admin/integration-status')));
  const loadSett=()=>safeLoad(async()=>setSett(await api('/api/admin/settlements')));
+  // STEP117A_MONDAY_COMPARE_UI
+  const [mondayComparison,setMondayComparison]=useState(null);
+  const [mondayComparisonBusy,setMondayComparisonBusy]=useState(false);
+
  const loadMonday=()=>safeLoad(async()=>{
   const j=await api('/api/admin/monday-runs');
   const runs=j.runs||[];
@@ -3195,6 +3199,31 @@ function AdminApp(){
    if(refreshed)setSelected(refreshed);
   }catch(e){alert(e.message)}
  }
+  async function compareMondayBalances(){
+   if(!activeMonday?.id||mondayComparisonBusy)return;
+
+   const runId=activeMonday.id;
+   setMondayComparison(null);
+   setMondayComparisonBusy(true);
+
+   try{
+    const result=await api(
+     `/api/admin/monday-runs/${runId}/compare-balances`,
+     {method:'POST'}
+    );
+    setMondayComparison(result);
+    await loadDrivers();
+   }catch(e){
+    setMondayComparison({
+     runId,
+     error:e.message,
+     differences:[]
+    });
+   }finally{
+    setMondayComparisonBusy(false);
+   }
+  }
+
  async function createMonday(){if(!confirm('Confirm Autocab Rent Sheets are complete. FaivoPay will sync Autocab and create a draft using each driver’s Previous Balance.'))return;try{const j=await api('/api/admin/monday-runs',{method:'POST'});await Promise.all([loadMonday(),loadSett(),loadOutstanding(),loadFees(),loadOverview()]);alert(`Draft created. ${j.items.filter(x=>x.action==='payout').length} positive balances require approval and ${j.items.filter(x=>x.action==='payment_request').length} driver(s) owe above the collection threshold.`)}catch(e){alert(e.message)}}
  async function weeklyDecision(item,status){let reason='';if(status==='excluded'){reason=prompt(`Reason for excluding callsign ${item.callsign}:`)||'';if(!reason.trim())return}try{await api(`/api/admin/monday-runs/${activeMonday.id}/payouts/${item.payoutId}`,{method:'PATCH',body:JSON.stringify({status,reason})});setSelectedWeeklyPayouts(x=>x.filter(id=>id!==item.payoutId));await Promise.all([loadMonday(),loadSett()])}catch(e){alert(e.message)}}
 
@@ -7227,7 +7256,19 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
          <div className="rowActions">
           <button className="secondary" onClick={()=>downloadOfficeCsv('monday-drivers-to-pay',null,{runId:activeMonday.id})}><FileClock/>Export payouts</button>
           <button className="secondary" onClick={()=>downloadOfficeCsv('monday-carry-forward',null,{runId:activeMonday.id})}><FileClock/>Export carry forward</button>
-          {canMoney&&activeMonday.status==='draft'&&
+          {canMoney&&['draft','approved'].includes(activeMonday.status)&&
+            !activeMonday.payoutRunId&&
+            <button
+             className="secondary"
+             disabled={mondayComparisonBusy}
+             onClick={compareMondayBalances}
+            >
+             <RefreshCw/>
+             {mondayComparisonBusy
+              ?'Comparing Autocab…'
+              :'Compare Latest Autocab Balances'}
+            </button>}
+           {canMoney&&activeMonday.status==='draft'&&
            <button className="primary" onClick={approveAllWeekly}>
             <ShieldCheck/>Review & Approve Settlement
            </button>}
@@ -7238,7 +7279,97 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
 
         {mondayWizardIndex===4&&<div className="operatorWarning green"><CheckCircle2/><div><b>Ready to create payment run</b><span>{weeklyApproved.length} approved drivers totalling {money(weeklyApprovedTotal)}. Creating the run locks these payouts before funding.</span></div></div>}
 
-        {weeklyItems.length?<details className="mondayDriverDetailsV1">
+        {mondayComparison?.runId===activeMonday.id&&
+          <div className="panel">
+           <div className="panelHead">
+            <div>
+             <span className="sectionKicker">AUTOCAB COMPARISON</span>
+             <h3>Saved settlement versus latest balances</h3>
+             <p>
+              Comparison only. This does not recalculate
+              or authorise a settlement.
+             </p>
+            </div>
+            <Pill tone={
+             mondayComparison.error?'bad':
+             mondayComparison.differenceCount>0?'warn':'good'
+            }>
+             {mondayComparison.error
+              ?'Comparison failed'
+              :mondayComparison.differenceCount>0
+               ?`${mondayComparison.differenceCount} differences`
+               :'No differences detected'}
+            </Pill>
+           </div>
+
+           {mondayComparison.error?
+            <div className="operatorWarning">
+             <AlertTriangle/>
+             <div>
+              <b>Unable to verify Autocab balances</b>
+              <span>{mondayComparison.error}</span>
+             </div>
+            </div>
+           :<>
+            <div className="mondayFinanceOther">
+             <div>
+              <span>Saved drivers</span>
+              <b>{mondayComparison.snapshotDriverCount}</b>
+             </div>
+             <div>
+              <span>Latest drivers</span>
+              <b>{mondayComparison.refreshedDriverCount}</b>
+             </div>
+             <div>
+              <span>Differences</span>
+              <b>{mondayComparison.differenceCount}</b>
+             </div>
+            </div>
+
+            {mondayComparison.differences?.length>0?
+             <div className="tableWrap proTable">
+              <table>
+               <thead>
+                <tr>
+                 <th>Driver</th>
+                 <th>Difference</th>
+                 <th>Saved balance</th>
+                 <th>Latest balance</th>
+                 <th>Change</th>
+                </tr>
+               </thead>
+               <tbody>
+                {mondayComparison.differences.map((x,i)=>
+                 <tr key={`${x.driverId}-${x.type}-${i}`}>
+                  <td>
+                   <span className="callsign">
+                    {x.callsign||x.latestCallsign||'—'}
+                   </span>
+                  </td>
+                  <td>{String(x.type).replaceAll('_',' ')}</td>
+                  <td>{x.previousBalance==null?'—':money(x.previousBalance)}</td>
+                  <td>{x.latestBalance==null?'—':money(x.latestBalance)}</td>
+                  <td>{x.difference==null?'—':money(x.difference)}</td>
+                 </tr>
+                )}
+               </tbody>
+              </table>
+             </div>
+            :<div className="operatorWarning blue">
+              <CheckCircle2/>
+              <div>
+               <b>No differences in the fields compared</b>
+               <span>
+                This is not full financial verification.
+                Fees, thresholds and payment-plan calculations
+                must also be checked before payout authorisation.
+               </span>
+              </div>
+             </div>}
+           </>}
+          </div>}
+
+         {weeklyItems.length?<details className="mondayDriverDetailsV1">
          <summary>
           <span>View payout drivers ({weeklyItems.length})</span>
           <strong>{money(weeklyItems.reduce((a,x)=>a+Number(x.amount||0),0))}</strong>

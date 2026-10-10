@@ -621,6 +621,213 @@ try {
     }
   }
 
+
+  // STEP118B_BATCH_INTEGRITY_API_TESTS
+  // Genuine Express requests against isolated SQLite fixtures.
+  // No payment-provider or Autocab credentials are configured.
+  {
+    const testDb = new DatabaseSync(dbPath);
+    const now = new Date().toISOString();
+
+    async function createBatch(runId) {
+      const response = await fetch(
+        `${baseUrl}/api/admin/monday-runs/${runId}/create-payout-run`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${authenticated.token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({provider:'test-only'})
+        }
+      );
+      return {
+        status:response.status,
+        body:await response.json()
+      };
+    }
+
+    function fixture(name, options={}) {
+      const runId=`test-batch-integrity-${name}`;
+      const payoutId=`test-batch-payout-${name}`;
+      const driverId=91000+(
+        {valid:1,mismatch:2,missing:3,duplicate:4}[name]
+      );
+      const callsign=`B${driverId}`;
+
+      const item={
+        payoutId,
+        driverId,
+        callsign,
+        action:'payout',
+        amount:100,
+        approvalStatus:'approved'
+      };
+
+      const items=options.missing
+        ? []
+        :options.duplicate
+          ? [item,{...item}]
+          :[item];
+
+      testDb.prepare(
+        `INSERT INTO settlement_runs
+         (id,created_at,status,settings_json,items_json)
+         VALUES(?,?,?,?,?)`
+      ).run(
+        runId,now,'approved','{}',JSON.stringify(items)
+      );
+
+      testDb.prepare(
+        `INSERT INTO payouts
+         (id,run_id,driver_id,callsign,driver_name,
+          amount,type,status,created_at)
+         VALUES(?,?,?,?,?,?,?,?,?)`
+      ).run(
+        payoutId,runId,driverId,callsign,
+        'Integrity Test Driver',
+        options.mismatch?125:100,
+        'weekly','approved',now
+      );
+
+      return {runId,payoutId};
+    }
+
+    function state(runId,payoutId) {
+      const settlement=testDb.prepare(
+        `SELECT status,payout_run_id
+         FROM settlement_runs WHERE id=?`
+      ).get(runId);
+
+      const payout=testDb.prepare(
+        `SELECT status,payout_run_id,amount
+         FROM payouts WHERE id=?`
+      ).get(payoutId);
+
+      const batches=testDb.prepare(
+        `SELECT COUNT(*) AS count
+         FROM payout_runs
+         WHERE notes=?`
+      ).get(`Monday run ${runId}`).count;
+
+      return {settlement,payout,batches};
+    }
+
+    try {
+      // Control: an intact approved settlement may be batched.
+      const valid=fixture('valid');
+      const validResult=await createBatch(valid.runId);
+
+      assert.equal(
+        validResult.status,200,
+        JSON.stringify(validResult.body)
+      );
+
+      const validState=state(valid.runId,valid.payoutId);
+
+      assert.equal(validState.settlement.status,'batched');
+      assert.equal(validState.payout.status,'batched');
+      assert.ok(validState.settlement.payout_run_id);
+      assert.equal(validState.batches,1);
+
+      console.log(
+        'PASS — Matching approved snapshot creates one test batch.'
+      );
+
+      // Tampered payout: database value no longer matches
+      // the amount approved in the saved settlement.
+      const mismatch=fixture('mismatch',{mismatch:true});
+      const mismatchBefore=state(
+        mismatch.runId,mismatch.payoutId
+      );
+      const mismatchResult=await createBatch(mismatch.runId);
+
+      assert.equal(
+        mismatchResult.status,409,
+        JSON.stringify(mismatchResult.body)
+      );
+      assert.match(
+        mismatchResult.body.error,
+        /integrity|mismatch/i
+      );
+
+      assert.deepEqual(
+        state(mismatch.runId,mismatch.payoutId),
+        mismatchBefore
+      );
+
+      console.log(
+        'PASS — Tampered payout amount rejected without DB changes.'
+      );
+
+      // A database-approved payout is not present in the
+      // settlement snapshot.
+      const missing=fixture('missing',{missing:true});
+      const missingBefore=state(missing.runId,missing.payoutId);
+      const missingResult=await createBatch(missing.runId);
+
+      assert.equal(
+        missingResult.status,409,
+        JSON.stringify(missingResult.body)
+      );
+      assert.match(
+        missingResult.body.error,
+        /integrity|count|missing/i
+      );
+      assert.deepEqual(
+        state(missing.runId,missing.payoutId),
+        missingBefore
+      );
+
+      console.log(
+        'PASS — Missing approved snapshot item blocks batching.'
+      );
+
+      // A duplicate reference must not be accepted.
+      const duplicate=fixture(
+        'duplicate',{duplicate:true}
+      );
+      const duplicateBefore=state(
+        duplicate.runId,duplicate.payoutId
+      );
+      const duplicateResult=await createBatch(
+        duplicate.runId
+      );
+
+      assert.equal(
+        duplicateResult.status,409,
+        JSON.stringify(duplicateResult.body)
+      );
+      assert.match(
+        duplicateResult.body.error,
+        /duplicate|integrity/i
+      );
+      assert.deepEqual(
+        state(duplicate.runId,duplicate.payoutId),
+        duplicateBefore
+      );
+
+      console.log(
+        'PASS — Duplicate payout reference blocks batching.'
+      );
+
+      // None of the test cases should create ledger entries.
+      const ledger=testDb.prepare(
+        `SELECT COUNT(*) AS count FROM driver_ledger
+         WHERE driver_id BETWEEN 91001 AND 91004`
+      ).get().count;
+
+      assert.equal(ledger,0);
+
+      console.log(
+        'PASS — Batch integrity tests created no driver ledger entries.'
+      );
+
+    } finally {
+      testDb.close();
+    }
+  }
+
   console.log('PASS — Genuine test MFA completed.');
   console.log('PASS — Actual Express approval endpoint accepted a draft.');
   console.log('PASS — Approved settlement rejected repeat approval.');

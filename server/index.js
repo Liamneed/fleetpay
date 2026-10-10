@@ -7713,7 +7713,7 @@ if(requestedStatus==='paid')return res.status(409).json({
 
   if(
    !settlement ||
-   !['draft','approved'].includes(settlement.status) ||
+   settlement.status!=='draft' ||
    settlement.payout_run_id
   ){
    return res.status(409).json({
@@ -12976,6 +12976,183 @@ app.post(
  }
 );
 
+
+// STEP115_MONDAY_BALANCE_COMPARISON
+// Compare refreshed Autocab data with a saved settlement.
+// This endpoint does not change the saved settlement or payouts.
+app.post(
+ '/api/admin/monday-runs/:runId/compare-balances',
+ adminAuth,
+ requireStaffRole('administrator','finance'),
+ async(req,res)=>{
+  try{
+   const run=db.prepare(
+    'SELECT * FROM settlement_runs WHERE id=?'
+   ).get(req.params.runId);
+
+   if(!run){
+    return res.status(404).json({
+     error:'Monday settlement not found.'
+    });
+   }
+
+   if(!['draft','approved'].includes(run.status) ||
+      run.payout_run_id){
+    return res.status(409).json({
+     error:'This settlement can no longer be compared for approval.'
+    });
+   }
+
+   const original=JSON.parse(run.items_json||'[]');
+
+   if(!Array.isArray(original)){
+    throw new Error('Invalid settlement snapshot.');
+   }
+
+   // A successful Autocab refresh is required.
+   // Never treat a failed refresh as an unchanged balance.
+   const refreshed=await syncAutocab();
+   const drivers=refreshed?.drivers;
+
+   if(!Array.isArray(drivers) || !drivers.length){
+    throw new Error(
+     'Autocab returned no drivers. Balance comparison cannot be trusted.'
+    );
+   }
+
+   const byId=new Map(
+    drivers.map(d=>[String(d.driverId),d])
+   );
+
+   const originalIds=new Set(
+    original.map(x=>String(x.driverId))
+   );
+
+   const moneyCents=value=>{
+    if(value===null||value===undefined||value===''){
+     return null;
+    }
+    const n=Number(value);
+    return Number.isFinite(n)?Math.round(n*100):null;
+   };
+
+   const differences=[];
+
+   for(const item of original){
+    const driver=byId.get(String(item.driverId));
+
+    if(!driver){
+     differences.push({
+      type:'missing_driver',
+      driverId:item.driverId,
+      callsign:item.callsign,
+      previousBalance:item.previousBalance,
+      latestBalance:null
+     });
+     continue;
+    }
+
+    const before=moneyCents(item.previousBalance);
+    const after=moneyCents(driver.previousBalance);
+
+    if(before===null || after===null){
+     differences.push({
+      type:'invalid_balance',
+      driverId:item.driverId,
+      callsign:item.callsign,
+      previousBalance:item.previousBalance,
+      latestBalance:driver.previousBalance
+     });
+    }else if(before!==after){
+     differences.push({
+      type:'balance_changed',
+      driverId:item.driverId,
+      callsign:item.callsign,
+      previousBalance:before/100,
+      latestBalance:after/100,
+      difference:(after-before)/100
+     });
+    }
+
+    if(String(item.callsign||'')!==String(driver.callsign||'')){
+     differences.push({
+      type:'callsign_changed',
+      driverId:item.driverId,
+      callsign:item.callsign,
+      latestCallsign:driver.callsign
+     });
+    }
+
+    const current=cachedDriver(item.driverId);
+
+    if(
+     Boolean(item.persistentPayoutExclusion)!==
+     Boolean(current?.payoutExcluded)
+    ){
+     differences.push({
+      type:'payout_exclusion_changed',
+      driverId:item.driverId,
+      callsign:item.callsign,
+      previousExcluded:Boolean(item.persistentPayoutExclusion),
+      currentlyExcluded:Boolean(current?.payoutExcluded)
+     });
+    }
+   }
+
+   for(const driver of drivers){
+    if(
+     driver.previousBalance!==null &&
+     driver.previousBalance!==undefined &&
+     !originalIds.has(String(driver.driverId))
+    ){
+     differences.push({
+      type:'new_driver',
+      driverId:driver.driverId,
+      callsign:driver.callsign,
+      latestBalance:Number(driver.previousBalance)
+     });
+    }
+   }
+
+   const result={
+    runId:run.id,
+    runStatus:run.status,
+    comparedAt:new Date().toISOString(),
+    snapshotDriverCount:original.length,
+    refreshedDriverCount:drivers.length,
+    differenceCount:differences.length,
+    balancesUnchanged:differences.length===0,
+    fullFinancialRecalculationVerified:false,
+    readyForAutomaticApproval:false,
+    differences
+   };
+
+   audit(
+    req,
+    'staff',
+    req.auth.email,
+    'monday_balance_comparison',
+    'settlement_run',
+    run.id,
+    {
+     differenceCount:differences.length,
+     snapshotDriverCount:original.length,
+     refreshedDriverCount:drivers.length
+    }
+   );
+
+   res.json(result);
+
+  }catch(e){
+   res.status(409).json({
+    error:
+     'Autocab balance comparison failed: '+e.message,
+    balancesVerified:false
+   });
+  }
+ }
+);
+
 // STEP82_ATOMIC_MONDAY_APPROVAL
 app.post(
  '/api/admin/monday-runs/:runId/approve-all',
@@ -13082,6 +13259,101 @@ app.post(
 );
 
 app.post('/api/admin/monday-runs/:runId/create-payout-run',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const settlement=db.prepare('SELECT * FROM settlement_runs WHERE id=?').get(req.params.runId);if(!settlement)return res.status(404).json({error:'Monday run not found'});if(settlement.status!=='approved')return res.status(409).json({error:`Monday settlement must be approved before batching; current status: ${settlement.status}`});if(settlement.payout_run_id)return res.status(409).json({error:'A payout batch has already been created for this Monday run',payoutRunId:settlement.payout_run_id});const unresolvedPlanAllocations=db.prepare("SELECT COUNT(*) count FROM payment_plan_settlement_allocations WHERE run_id=? AND status!='applied'").get(req.params.runId)?.count||0;if(unresolvedPlanAllocations>0)return res.status(409).json({error:`Apply the ${unresolvedPlanAllocations} pending payment-plan deduction${unresolvedPlanAllocations===1?'':'s'} before creating the payout batch.`,pendingPlanAllocations:unresolvedPlanAllocations});const eligible=db.prepare("SELECT * FROM payouts WHERE run_id=? AND type='weekly' AND status='approved' AND payout_run_id IS NULL ORDER BY CAST(callsign AS INTEGER),callsign").all(req.params.runId);
+
+/* STEP118A_BATCH_SNAPSHOT_INTEGRITY
+   Reject payout batches if database payout rows no longer
+   match the approved Monday settlement snapshot.
+   This is NOT an Autocab freshness verification. */
+let approvedSnapshotItems;
+
+try{
+ const snapshot=JSON.parse(settlement.items_json||'[]');
+
+ if(!Array.isArray(snapshot)){
+  throw new Error('Invalid settlement snapshot');
+ }
+
+ const referenced=new Set();
+ const approved=new Map();
+
+ for(const item of snapshot){
+  if(!item.payoutId)continue;
+
+  const key=String(item.payoutId);
+
+  if(referenced.has(key)){
+   throw new Error('Duplicate payout in settlement snapshot');
+  }
+
+  referenced.add(key);
+
+  if(item.approvalStatus==='approved'){
+   approved.set(key,item);
+  }
+ }
+
+ if(approved.size!==eligible.length){
+  throw new Error(
+   'Approved payout count differs from settlement snapshot'
+  );
+ }
+
+ const cents=value=>{
+  if(value===null||value===undefined||value===''){
+   throw new Error('Missing payout amount');
+  }
+  const n=Number(value);
+  if(!Number.isFinite(n)||n<0){
+   throw new Error('Invalid payout amount');
+  }
+  return Math.round(n*100);
+ };
+
+ for(const payout of eligible){
+  const item=approved.get(String(payout.id));
+
+  if(!item){
+   throw new Error(
+    'Approved payout missing from settlement snapshot: '+
+    payout.id
+   );
+  }
+
+  if(String(item.driverId)!==String(payout.driver_id)){
+   throw new Error(
+    'Driver identity mismatch: '+payout.id
+   );
+  }
+
+  const actual=cents(
+   payout.net_amount??payout.amount
+  );
+
+  const expected=cents(item.amount);
+
+  if(actual!==expected){
+   throw new Error(
+    'Approved payout amount mismatch: '+payout.callsign
+   );
+  }
+
+  if(actual<=0){
+   throw new Error(
+    'Approved payout must be positive: '+payout.callsign
+   );
+  }
+ }
+
+ approvedSnapshotItems=approved.size;
+
+}catch(e){
+ return res.status(409).json({
+  error:
+   'Payment batch blocked: approved settlement integrity '+
+   'check failed. '+e.message
+ });
+}
+
 const excludedApproved=eligible.filter(
  x=>cachedDriver(x.driver_id)?.payoutExcluded && !hasMondayPayoutOverride(req.params.runId,x.id)
 );
@@ -22348,3 +22620,5 @@ app.listen(PORT, '0.0.0.0', () => {
 // STEP83_LOCK_APPROVED_SETTLEMENT
 
 // STEP85_CORRECT_SETTLEMENT_LOCKS
+
+// STEP113_LOCK_GENERIC_MONDAY_PAYOUTS
