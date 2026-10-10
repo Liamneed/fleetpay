@@ -2324,6 +2324,13 @@ function AdminApp(){
  const[liveTestWritePreview,setLiveTestWritePreview]=useState(null),[liveTestWritePreviewBusy,setLiveTestWritePreviewBusy]=useState(''),[liveTestWritePreviewBalance,setLiveTestWritePreviewBalance]=useState('');
  const[liveTestCreditPreview,setLiveTestCreditPreview]=useState(null),[liveTestCreditBusy,setLiveTestCreditBusy]=useState(''),[liveTestCreditResult,setLiveTestCreditResult]=useState(null);
  const[liveTestReversalPreview,setLiveTestReversalPreview]=useState(null),[liveTestReversalBusy,setLiveTestReversalBusy]=useState(''),[liveTestReversalResult,setLiveTestReversalResult]=useState(null);
+ // STEP144_ADJUSTMENT_REVIEW_UI
+ const[adjustmentReviews,setAdjustmentReviews]=useState([]);
+ const[selectedAdjustmentReviewId,setSelectedAdjustmentReviewId]=useState('');
+ const[adjustmentReviewStatus,setAdjustmentReviewStatus]=useState('investigating');
+ const[adjustmentReviewNote,setAdjustmentReviewNote]=useState('');
+ const[adjustmentReviewBusy,setAdjustmentReviewBusy]=useState(false);
+ const[adjustmentReviewLoading,setAdjustmentReviewLoading]=useState(false);
  const[resetPhrase,setResetPhrase]=useState(''),[resetDrivers,setResetDrivers]=useState(false);
  const api=(u,o={})=>call(u,o,token);
  function logout(){localStorage.removeItem('fleetpay_admin');setToken('');setMe(null)}
@@ -2409,6 +2416,48 @@ function AdminApp(){
  const loadDriverUsers=()=>safeLoad(async()=>setDriverUsers(await api('/api/admin/users')));
  const loadStaff=()=>safeLoad(async()=>setStaff((await api('/api/admin/staff')).staff||[]));
  const loadSecurity=()=>safeLoad(async()=>setSecurityLogs((await api('/api/admin/security')).logs||[]));
+
+ const loadAdjustmentReviews=()=>safeLoad(async()=>{
+  setAdjustmentReviewLoading(true);
+  try{
+   const result=await api('/api/admin/autocab/reconciliation');
+   setAdjustmentReviews(result.adjustments||[]);
+  }finally{
+   setAdjustmentReviewLoading(false);
+  }
+ });
+
+ async function submitAdjustmentReview(e){
+  e.preventDefault();
+  if(!selectedAdjustmentReviewId||adjustmentReviewBusy)return;
+
+  const note=adjustmentReviewNote.trim();
+
+  if(note.length<10||note.length>4000){
+   alert('Enter an investigation note of 10–4000 characters.');
+   return;
+  }
+
+  setAdjustmentReviewBusy(true);
+  try{
+   await api(
+    `/api/admin/autocab/reconciliation/${encodeURIComponent(selectedAdjustmentReviewId)}/reviews`,
+    {
+     method:'POST',
+     body:JSON.stringify({
+      investigationStatus:adjustmentReviewStatus,
+      note
+     })
+    }
+   );
+   setAdjustmentReviewNote('');
+   await loadAdjustmentReviews();
+  }catch(error){
+   alert(error.message);
+  }finally{
+   setAdjustmentReviewBusy(false);
+  }
+ }
  const loadPlatformCompanies=()=>safeLoad(async()=>{
   const j=await api('/api/admin/platform/companies');
   setPlatformCompanies(j.companies||[]);
@@ -2607,6 +2656,7 @@ function AdminApp(){
   ['monday',CalendarDays,'Monday Run'],
   ['early',ArrowUpRight,'Early Payouts'],
   ['outstanding',AlertTriangle,'Outstanding'],
+   ...(isAdmin?[['adjustmentReviews',ShieldCheck,'Adjustment Reviews']]:[]),
   ['paymentPlans',CalendarDays,'Payment Plans'],
   ['fees',BadgePoundSterling,'Fees & Billing'],
   ...(isPlatformAdmin?[
@@ -3004,7 +3054,7 @@ function AdminApp(){
 
  const dueEarly=earlySummary?.requests?.filter(x=>['requested','approved','batched'].includes(x.status))||[];
  const recentTx=transactions.slice(0,7);
- function go(k){setView(k);setMobileNav(false);setErr('');if(k==='customerPayments')loadCustomerAdmin();if(k==='monday'){loadMonday();loadSett()}if(k==='early'){loadEarlySummary();loadSett()}if(k==='outstanding'){loadOutstanding();loadPaymentPlans();}if(k==='paymentPlans')loadPaymentPlans();if(k==='fees')loadFees();if(k==='demo')loadDemo();if(k==='liveTest')loadLiveTest();if(k==='drivers')loadDrivers();if(k==='access'){loadStaff();loadDriverUsers()}if(k==='security')loadSecurity();if(k==='platform'){loadPlatformCompanies();setPlatformCompany(null)}if(k==='settings'){loadSettings();loadIntegrations()}}
+ function go(k){setView(k);setMobileNav(false);setErr('');if(k==='customerPayments')loadCustomerAdmin();if(k==='monday'){loadMonday();loadSett()}if(k==='early'){loadEarlySummary();loadSett()}if(k==='outstanding'){loadOutstanding();loadPaymentPlans();}if(k==='paymentPlans')loadPaymentPlans();if(k==='fees')loadFees();if(k==='demo')loadDemo();if(k==='liveTest')loadLiveTest();if(k==='drivers')loadDrivers();if(k==='access'){loadStaff();loadDriverUsers()}if(k==='adjustmentReviews')loadAdjustmentReviews();if(k==='security')loadSecurity();if(k==='platform'){loadPlatformCompanies();setPlatformCompany(null)}if(k==='settings'){loadSettings();loadIntegrations()}}
  async function createOfficeCustomerPayment(e){
   e?.preventDefault();setCustomerCreateBusy(true);
   try{
@@ -5472,6 +5522,173 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
 
      </section>
     </>}
+
+    {view==='adjustmentReviews'&&isAdmin&&
+     <div className="transactionsWorkspace">
+      <section className="officePageIntro">
+       <div>
+        <span>FINANCIAL SAFETY</span>
+        <h2>Autocab adjustment reviews</h2>
+        <p>Investigate unresolved adjustments. Recording an investigation does not verify the Autocab transaction.</p>
+       </div>
+       <button
+        className="mini"
+        disabled={adjustmentReviewLoading}
+        onClick={loadAdjustmentReviews}
+       >
+        <RefreshCw/>
+        {adjustmentReviewLoading?'Loading…':'Refresh'}
+       </button>
+      </section>
+
+      <section className="panel">
+       <div className="panelHead">
+        <div>
+         <h3>Adjustments requiring attention</h3>
+         <p>Financial statuses remain unchanged. Do not retry uncertain adjustments without independent evidence.</p>
+        </div>
+        <Pill tone={adjustmentReviews.length?'warn':'good'}>
+         {adjustmentReviews.length} records
+        </Pill>
+       </div>
+
+       <div className="tableWrap proTable">
+        <table>
+         <thead>
+          <tr>
+           <th>Driver</th>
+           <th>Amount</th>
+           <th>Financial status</th>
+           <th>Investigation</th>
+           <th>Created</th>
+           <th>Action</th>
+          </tr>
+         </thead>
+         <tbody>
+          {adjustmentReviews.map(a=>
+           <tr key={a.id}>
+            <td>
+             <b>{a.callsign||a.driverId}</b>
+             <small>Driver {a.driverId}</small>
+            </td>
+            <td>
+             <b>{a.isCredit?'Credit':'Debit'} {money(a.amount)}</b>
+            </td>
+            <td><Pill tone="warn">{a.financialStatus}</Pill></td>
+            <td>
+             <Pill tone="warn">
+              {String(a.investigationStatus||'open').replaceAll('_',' ')}
+             </Pill>
+            </td>
+            <td>{dt(a.createdAt)}</td>
+            <td>
+             <button
+              className="mini"
+              onClick={()=>{
+               setSelectedAdjustmentReviewId(a.id);
+               setAdjustmentReviewStatus('investigating');
+               setAdjustmentReviewNote('');
+              }}
+             >
+              Investigate
+             </button>
+            </td>
+           </tr>
+          )}
+          {!adjustmentReviews.length&&
+           <tr>
+            <td colSpan="6">
+             {adjustmentReviewLoading
+              ?'Loading adjustment records…'
+              :'No unresolved adjustments found.'}
+            </td>
+           </tr>
+          }
+         </tbody>
+        </table>
+       </div>
+      </section>
+
+      {adjustmentReviews.filter(a=>a.id===selectedAdjustmentReviewId).map(a=>
+       <section className="panel" key={a.id}>
+        <div className="panelHead">
+         <div>
+          <h3>Investigation — {a.callsign||a.driverId}</h3>
+          <p>Financial status: {a.financialStatus}. Transaction independently verified: No.</p>
+         </div>
+         <button
+          className="mini"
+          onClick={()=>setSelectedAdjustmentReviewId('')}
+         >
+          Close
+         </button>
+        </div>
+
+        <p><b>Event key:</b> {a.eventKey}</p>
+        <p><b>Adjustment:</b> {a.isCredit?'Credit':'Debit'} {money(a.amount)}</p>
+        <p><b>Description:</b> {a.description}</p>
+        {a.error&&<p><b>Recorded error:</b> {a.error}</p>}
+        <p><b>Investigation:</b> {String(a.investigationStatus||'open').replaceAll('_',' ')}</p>
+
+        {/* STEP145_RECONCILIATION_HISTORY_UI */}
+        <div className="panel">
+         <h3>Investigation history</h3>
+         {(a.reviewHistory||[]).length===0
+          ?<p>No previous investigation notes.</p>
+          :(a.reviewHistory||[]).map(review=>
+           <div key={review.id} className="securityLog">
+            <div>
+             <b>{String(review.investigationStatus).replaceAll('_',' ')}</b>
+             <span>{review.reviewedBy} · {dt(review.reviewedAt)}</span>
+             <p>{review.note}</p>
+            </div>
+           </div>
+          )
+         }
+        </div>
+
+        <form className="staffForm" onSubmit={submitAdjustmentReview}>
+         <label>
+          Investigation status
+          <select
+           value={adjustmentReviewStatus}
+           onChange={e=>setAdjustmentReviewStatus(e.target.value)}
+          >
+           <option value="investigating">Investigating</option>
+           <option value="needs_evidence">Needs evidence</option>
+           <option value="reviewed">Reviewed — financially unverified</option>
+          </select>
+         </label>
+
+         <label>
+          Investigation note
+          <textarea
+           required
+           minLength={10}
+           maxLength={4000}
+           rows={5}
+           value={adjustmentReviewNote}
+           onChange={e=>setAdjustmentReviewNote(e.target.value)}
+           placeholder="Record what was checked and what evidence is still needed."
+          />
+         </label>
+
+         <p className="tinyNote">
+          Saving an investigation does not contact Autocab, verify a transaction, change its financial status or permit a retry.
+         </p>
+
+         <button
+          type="submit"
+          className="primary"
+          disabled={adjustmentReviewBusy}
+         >
+          {adjustmentReviewBusy?'Saving…':'Save investigation note'}
+         </button>
+        </form>
+       </section>
+      )}
+     </div>
+    }
 
     {view==='transactions'&&<div className="transactionsWorkspace">
  <section className="officePageIntro transactionPageIntro">

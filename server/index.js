@@ -490,6 +490,27 @@ CREATE TABLE IF NOT EXISTS autocab_adjustments (
  is_credit INTEGER NOT NULL, description TEXT NOT NULL, adjustment_reason TEXT, status TEXT NOT NULL, response_json TEXT,
  created_at TEXT NOT NULL, completed_at TEXT, error TEXT
 );
+-- STEP137_AUTOCAB_RECONCILIATION_REVIEWS
+-- Append-only investigation history; financial status is never modified.
+CREATE TABLE IF NOT EXISTS autocab_adjustment_reviews (
+ id TEXT PRIMARY KEY,
+ adjustment_id TEXT NOT NULL,
+ investigation_status TEXT NOT NULL
+  CHECK(investigation_status IN (
+   'investigating',
+   'needs_evidence',
+   'reviewed'
+  )),
+ note TEXT NOT NULL,
+ reviewed_by TEXT NOT NULL,
+ reviewed_at TEXT NOT NULL,
+ FOREIGN KEY(adjustment_id)
+  REFERENCES autocab_adjustments(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_autocab_adjustment_reviews_adjustment
+ON autocab_adjustment_reviews(adjustment_id,reviewed_at DESC);
+
 CREATE TABLE IF NOT EXISTS push_subscriptions (
  id TEXT PRIMARY KEY, driver_id INTEGER NOT NULL, endpoint TEXT UNIQUE NOT NULL, subscription_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
@@ -7620,6 +7641,169 @@ app.get('/api/admin/integrations',adminAuth,(req,res)=>{
 });
 app.post('/api/admin/integrations/wise/test',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{const out=await testWiseConnection();audit(req,'admin',req.auth.email,'wise_connection_test','integration','wise',{environment:WISE_ENV});res.json(out)}catch(e){res.status(500).json({error:e.message})}});
 app.post('/api/admin/autocab/test-adjustment',adminAuth,requireStaffRole('administrator'),async(req,res)=>{try{const callsign=String(req.body.callsign||'').trim();const d=cacheRows().find(x=>String(x.callsign)===callsign);if(!d)return res.status(404).json({error:'Callsign not found in FaivoPay cache'});const amount=Number(req.body.amount||0);if(!(amount>0))return res.status(400).json({error:'Amount must be greater than zero'});const result=await postAutocabAdjustment({driverId:d.driverId,callsign:d.callsign,amount,isCredit:Boolean(req.body.isCredit),description:String(req.body.description||'FaivoPay test adjustment'),adjustmentReason:String(req.body.adjustmentReason||'FaivoPay Test'),eventKey:`test:${Date.now()}:${d.driverId}`});audit(req,'admin',req.auth.email,'autocab_test_adjustment','driver',d.callsign,{callsign:d.callsign,amount,isCredit:Boolean(req.body.isCredit)});setTimeout(()=>syncAutocab().catch(()=>{}),500);res.json({ok:true,driver:{driverId:d.driverId,callsign:d.callsign,fullName:d.fullName},result})}catch(e){res.status(500).json({error:e.message})}});
+// STEP138_AUTOCAB_RECONCILIATION_API
+// Administrator-only investigation. No financial mutation or Autocab calls.
+app.get(
+ '/api/admin/autocab/reconciliation',
+ adminAuth,
+ requireStaffRole('administrator'),
+ (req,res)=>{
+  const rows=db.prepare(`
+   SELECT
+    a.id,
+    a.event_key AS eventKey,
+    a.driver_id AS driverId,
+    a.callsign,
+    a.amount,
+    a.is_credit AS isCredit,
+    a.description,
+    a.adjustment_reason AS adjustmentReason,
+    a.status AS financialStatus,
+    a.error,
+    a.created_at AS createdAt,
+    a.completed_at AS completedAt,
+    (
+     SELECT r.investigation_status
+     FROM autocab_adjustment_reviews r
+     WHERE r.adjustment_id=a.id
+     ORDER BY r.reviewed_at DESC,r.rowid DESC
+     LIMIT 1
+    ) AS investigationStatus
+   FROM autocab_adjustments a
+   WHERE a.status IN ('pending','uncertain','failed')
+   ORDER BY a.created_at DESC
+   LIMIT 250
+  `).all();
+
+  // STEP145_RECONCILIATION_HISTORY
+  const historyStmt=db.prepare(`
+   SELECT
+    id,
+    investigation_status AS investigationStatus,
+    note,
+    reviewed_by AS reviewedBy,
+    reviewed_at AS reviewedAt
+   FROM autocab_adjustment_reviews
+   WHERE adjustment_id=?
+   ORDER BY reviewed_at DESC,rowid DESC
+   LIMIT 100
+  `);
+
+  res.json({
+   adjustments:rows.map(row=>({
+    ...row,
+    isCredit:Boolean(row.isCredit),
+    investigationStatus:row.investigationStatus||'open',
+    reviewHistory:historyStmt.all(row.id),
+    transactionVerified:false,
+    safeToRetry:false
+   }))
+  });
+ }
+);
+
+app.post(
+ '/api/admin/autocab/reconciliation/:adjustmentId/reviews',
+ adminAuth,
+ requireStaffRole('administrator'),
+ (req,res)=>{
+  const adjustmentId=String(req.params.adjustmentId||'').trim();
+  const status=String(req.body?.investigationStatus||'').trim();
+  const note=String(req.body?.note||'').trim();
+
+  if(!['investigating','needs_evidence','reviewed'].includes(status)){
+   return res.status(400).json({
+    error:'Invalid investigation status.'
+   });
+  }
+
+  if(note.length<10 || note.length>4000){
+   return res.status(400).json({
+    error:'Investigation note must contain 10–4000 characters.'
+   });
+  }
+
+  // STEP139_ATOMIC_RECONCILIATION_REVIEW
+  const reviewId=id('adjreview');
+  const reviewedAt=new Date().toISOString();
+  const reviewedBy=String(req.auth.email||req.auth.staffId||'');
+  let financialStatus=null;
+
+  try{
+   db.exec('BEGIN IMMEDIATE');
+
+   const adjustment=db.prepare(`
+    SELECT id,status,event_key
+    FROM autocab_adjustments
+    WHERE id=?
+   `).get(adjustmentId);
+
+   if(!adjustment){
+    db.exec('ROLLBACK');
+    return res.status(404).json({
+     error:'Autocab adjustment not found.'
+    });
+   }
+
+   if(!['pending','uncertain','failed'].includes(adjustment.status)){
+    db.exec('ROLLBACK');
+    return res.status(409).json({
+     error:'Only unresolved adjustments can be investigated.'
+    });
+   }
+
+   financialStatus=adjustment.status;
+
+   db.prepare(`
+    INSERT INTO autocab_adjustment_reviews(
+     id,adjustment_id,investigation_status,
+     note,reviewed_by,reviewed_at
+    ) VALUES(?,?,?,?,?,?)
+   `).run(
+    reviewId,adjustmentId,status,note,reviewedBy,reviewedAt
+   );
+
+   audit(
+    req,
+    'staff',
+    reviewedBy,
+    'autocab_adjustment_investigation_recorded',
+    'autocab_adjustment',
+    adjustmentId,
+    {
+     reviewId,
+     eventKey:adjustment.event_key,
+     investigationStatus:status,
+     financialStatusUnchanged:adjustment.status,
+     note
+    }
+   );
+
+   db.exec('COMMIT');
+  }catch(error){
+   try{db.exec('ROLLBACK')}catch{}
+   return res.status(500).json({
+    error:'Unable to record investigation.'
+   });
+  }
+
+  res.status(201).json({
+   ok:true,
+   review:{
+    id:reviewId,
+    adjustmentId,
+    investigationStatus:status,
+    note,
+    reviewedBy,
+    reviewedAt
+   },
+   financialStatus,
+   transactionVerified:false,
+   safeToRetry:false
+  });
+ }
+);
+
 app.get('/api/admin/autocab/adjustments',adminAuth,(req,res)=>{const rows=db.prepare('SELECT id,event_key eventKey,driver_id driverId,callsign,amount,is_credit isCredit,description,adjustment_reason adjustmentReason,status,created_at createdAt,completed_at completedAt,error FROM autocab_adjustments ORDER BY created_at DESC LIMIT 250').all().map(x=>({...x,isCredit:Boolean(x.isCredit)}));res.json({adjustments:rows})});
 app.get('/api/admin/dashboard',adminAuth,(req,res)=>{const drivers=cacheRows();const matched=drivers.filter(d=>d.currentBalance!==null).length;const owedOut=drivers.reduce((s,d)=>s+Math.max(0,Number(d.currentBalance||0)),0),owedIn=drivers.reduce((s,d)=>s+Math.max(0,-Number(d.currentBalance||0)),0);const stats={count:drivers.length,matched,unmatched:drivers.length-matched,owedOut,owedIn,openPaymentRequests:Number(db.prepare("SELECT COUNT(*) c FROM payment_requests WHERE status='open'").get().c),queuedPayouts:Number(db.prepare("SELECT COUNT(*) c FROM payouts WHERE status IN ('queued','requested','approved','batched')").get().c),pendingUsers:Number(db.prepare('SELECT COUNT(*) c FROM driver_users WHERE approved=0').get().c)};const lastSync=db.prepare('SELECT MAX(synced_at) lastSync FROM driver_cache').get()?.lastSync||null;res.json({fetchedAt:new Date().toISOString(),lastSync,stats,drivers})});
 app.get('/api/drivers',adminAuth,(req,res)=>{const drivers=cacheRows().map(d=>({...d,bankAccount:adminBankAccountInfo(d.driverId)}));const matched=drivers.filter(d=>d.currentBalance!==null).length;const lastSync=db.prepare('SELECT MAX(synced_at) lastSync FROM driver_cache').get()?.lastSync||null;const bankReady=drivers.filter(d=>d.bankAccount?.ready).length,bankMissing=drivers.length-bankReady,bankRecentlyChanged=drivers.filter(d=>d.bankAccount?.changedRecently).length;res.json({fetchedAt:new Date().toISOString(),lastSync,count:drivers.length,matched,unmatched:drivers.length-matched,bankReady,bankMissing,bankRecentlyChanged,drivers})});
