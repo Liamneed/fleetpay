@@ -2830,11 +2830,20 @@ function AdminApp(){
 
  const weeklyItems=activeMonday?.items?.filter(x=>x.action==='payout')||[];
  const weeklyCollections=activeMonday?.items?.filter(x=>x.action==='payment_request')||[];
- const weeklyCarryForward=activeMonday?.items?.filter(x=>x.action==='carry_forward')||[];
- const weeklyPayoutCarryForward=activeMonday?.items?.filter(x=>x.action==='payout_carry_forward')||[];
+ // No-action drivers are visibility/audit records only; Autocab owns their balances.
+ const mondayNoAction=activeMonday?.items?.filter(x=>x.action==='no_action'||['carry_forward','payout_carry_forward'].includes(x.action))||[];
+ const weeklyBelowCollection=mondayNoAction.filter(x=>Number(x.previousBalance||0)<0);
+ const weeklyBelowPayout=mondayNoAction.filter(x=>Number(x.previousBalance||0)>0);
+
  const weeklyPending=weeklyItems.filter(x=>!x.approvalStatus||x.approvalStatus==='pending');
  const weeklyApproved=weeklyItems.filter(x=>x.approvalStatus==='approved');
  const weeklyExcluded=weeklyItems.filter(x=>x.approvalStatus==='excluded');
+ const mondayExceptions=[
+  ...weeklyBelowCollection.map(x=>({...x,exceptionReason:'Below collection threshold',exceptionAmount:Math.abs(Number(x.previousBalance||0))})),
+  ...weeklyBelowPayout.map(x=>({...x,exceptionReason:'Below payout threshold',exceptionAmount:Number(x.previousBalance||0)})),
+  ...weeklyExcluded.map(x=>({...x,exceptionReason:x.exclusionReason||'Excluded from payouts',exceptionAmount:Number(x.amount||0)})),
+  ...weeklyItems.filter(x=>x.approvalStatus!=='excluded'&&bankFor(x.driverId).ready!==true).map(x=>({...x,exceptionReason:'Bank details not ready — payout blocked',exceptionAmount:Number(x.amount||0)}))
+ ];
 
   // Read-only settlement overview; no financial side effects.
   const mondayClarityOverview=(()=>{
@@ -2848,12 +2857,12 @@ function AdminApp(){
    const negative=items.filter(x=>Number(x.previousBalance||0)<0);
 
    const belowIncoming=items.filter(
-    x=>x.action==='carry_forward' &&
+    x=>['no_action','carry_forward'].includes(x.action) &&
     Number(x.previousBalance||0)<0
    );
 
    const belowOutgoing=items.filter(
-    x=>x.action==='payout_carry_forward'
+    x=>['no_action','payout_carry_forward'].includes(x.action) && Number(x.previousBalance||0)>0
    );
 
    const payable=weeklyItems.filter(
@@ -7667,8 +7676,8 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
          </div>
 
          <div className="mondayClarityHeading">
-          <h4>Exceptions and retained balances</h4>
-          <small>Driver count and financial value</small>
+          <h4>Drivers requiring no action or review</h4>
+          <small>No unprocessed balance is transferred to FaivoPay; Autocab retains it.</small>
          </div>
 
          <div className="mondayClarityTableWrap">
@@ -7697,6 +7706,15 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
            </tbody>
           </table>
          </div>
+
+         <details className="mondayClarityDetails">
+          <summary>View affected drivers ({mondayExceptions.length} exception entries)</summary>
+          <p className="mondayClarityNote">A driver may appear in more than one review category. Below-threshold and excluded balances are untouched in Autocab. Missing bank details block payout processing until resolved.</p>
+          <div className="tableWrap proTable"><table><thead><tr><th>Callsign</th><th>Driver</th><th>Previous balance</th><th>Amount</th><th>Reason</th></tr></thead><tbody>
+           {mondayExceptions.map((x,i)=><tr key={`${x.driverId}-${x.exceptionReason}-${i}`}><td><b>{x.callsign}</b></td><td>{x.driverName}</td><td>{money(x.previousBalance)}</td><td>{money(x.exceptionAmount)}</td><td>{x.exceptionReason}</td></tr>)}
+           {!mondayExceptions.length&&<tr><td colSpan={5}>No threshold or payout exceptions.</td></tr>}
+          </tbody></table></div>
+         </details>
 
          <p className="mondayClarityNote">
           Based on the saved Autocab Previous Balance snapshot.
@@ -7800,7 +7818,7 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
          <div><span className="sectionKicker">{mondayWizardIndex===3?'STEP 4':'STEP 5'}</span><h3>{mondayWizardIndex===3?'Review driver payouts':'Create payment run'}</h3><p>{mondayWizardIndex===3?'Approve or exclude the drivers to be paid.':'Review the final approved list and create the locked payment run.'}</p></div>
          <div className="rowActions">
           <button className="secondary" onClick={()=>downloadOfficeCsv('monday-drivers-to-pay',null,{runId:activeMonday.id})}><FileClock/>Export payouts</button>
-          <button className="secondary" onClick={()=>downloadOfficeCsv('monday-carry-forward',null,{runId:activeMonday.id})}><FileClock/>Export carry forward</button>
+          <button className="secondary" onClick={()=>downloadOfficeCsv('monday-no-action',null,{runId:activeMonday.id})}><FileClock/>Export no-action drivers</button>
           {canMoney&&['draft','approved'].includes(activeMonday.status)&&
             !activeMonday.payoutRunId&&
             <button
@@ -7947,7 +7965,7 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
    </button>
   )}<button className="mini danger" onClick={()=>weeklyDecision(x,'excluded')}>Exclude</button></>}</div></td></tr>)}</tbody></table></div></details>:<div className="emptyInline">No payouts are above the minimum payout threshold.</div>}
 
-        {weeklyPayoutCarryForward.length>0&&<div className="carryNote"><Info/> {weeklyPayoutCarryForward.length} positive balance{weeklyPayoutCarryForward.length===1?' is':'s are'} below the minimum payout threshold and will remain on the driver account.</div>}
+        {weeklyBelowPayout.length>0&&<div className="carryNote"><Info/> {weeklyBelowPayout.length} drivers below payout threshold — no payment or Autocab adjustment.</div>}
        </section>
 
        <section className="panel wizardSecondaryPanel">
@@ -7958,7 +7976,7 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
           <strong>{money(weeklyCollections.reduce((a,x)=>a+Number(x.amount||0),0))}</strong>
          </summary>
          <div className="tableWrap proTable"><table><thead><tr><th>Driver</th><th>Previous balance</th><th>Weekly fee</th><th>Amount due</th><th>Due</th><th>Communication</th><th>Status</th></tr></thead><tbody>{weeklyCollections.map(x=>{const req=outstanding.find(o=>o.id===x.requestId);return <tr key={x.requestId||x.driverId}><td><div className="driverCell"><span className="callsign">{x.callsign}</span><b>{x.driverName}</b></div></td><td className="negative">{money(x.previousBalance)}</td><td>{x.weeklyFeeWaivedInactive?<div><b>{money(0)}</b><small className="reasonText">Fee waived · no work recorded</small></div>:money(x.weeklyFee)}</td><td><b className="negative">{money(x.amount)}</b></td><td>{req?.dueAt?dt(req.dueAt):'—'}</td><td><div className="compactStatus"><Pill tone={req?.emailSentAt?'good':'warn'}>Email {req?.emailSentAt?'sent':'pending'}</Pill><Pill tone={req?.smsSentAt?'good':'warn'}>SMS {req?.smsSentAt?'sent':'pending'}</Pill></div></td><td><Pill tone={req?.overdue?'bad':statusTone(req?.status||'open')}>{req?.overdue?'overdue':req?.status||'open'}</Pill></td></tr>})}</tbody></table></div></details>:<div className="emptyInline good"><CheckCircle2/>No drivers are above the outstanding-payment threshold.</div>}
-        {weeklyCarryForward.length>0&&<div className="carryNote"><Info/> {weeklyCarryForward.length} small negative balance{weeklyCarryForward.length===1?' is':'s are'} below the threshold and will be carried forward.</div>}
+        {weeklyBelowCollection.length>0&&<div className="carryNote"><Info/> {weeklyBelowCollection.length} drivers below collection threshold — no collection or Autocab adjustment.</div>}
        </section>
       </>}
 

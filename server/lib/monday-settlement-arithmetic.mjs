@@ -83,13 +83,13 @@ export function calculateMondayDriverSettlement({
   Math.max(0,adjustedBalance-allocation)
  );
 
- let action='carry_forward';
+ let action='no_action';
  let amount=0;
 
  if(base>0.00001){
   if(!positiveEligible){
-   action='payout_carry_forward';
-   amount=base;
+   action='no_action';
+   amount=0;
   }else if(payoutAvailable<=0.00001){
    action='plan_allocation';
   }else{
@@ -101,7 +101,8 @@ export function calculateMondayDriverSettlement({
    action='payment_request';
    amount=round(Math.abs(base)+weeklyFee);
   }else{
-   amount=Math.abs(base);
+   action='no_action';
+   amount=0;
   }
  }
 

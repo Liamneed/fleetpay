@@ -23,10 +23,10 @@ test('positive balance above threshold pays less weekly fee',()=>{
  assert.equal(result.weeklyFee,5);
 });
 
-test('positive balance below threshold carries forward',()=>{
+test('positive balance below threshold requires no action',()=>{
  const result=run(19.99);
- assert.equal(result.action,'payout_carry_forward');
- assert.equal(result.amount,19.99);
+ assert.equal(result.action,'no_action');
+ assert.equal(result.amount,0);
  assert.equal(result.weeklyFee,0);
 });
 
@@ -57,14 +57,14 @@ test('negative balance above collection threshold',()=>{
 
 test('negative balance below collection threshold',()=>{
  const result=run(-29.99);
- assert.equal(result.action,'carry_forward');
- assert.equal(result.amount,29.99);
+ assert.equal(result.action,'no_action');
+ assert.equal(result.amount,0);
  assert.equal(result.weeklyFee,0);
 });
 
 test('zero balance creates no payment',()=>{
  const result=run(0);
- assert.equal(result.action,'carry_forward');
+ assert.equal(result.action,'no_action');
  assert.equal(result.amount,0);
 });
 
@@ -127,7 +127,7 @@ test('weekly fee exceeds eligible positive balance',()=>{
 test('positive balance immediately below threshold',()=>{
  const result=run(19.99);
 
- assert.equal(result.action,'payout_carry_forward');
+ assert.equal(result.action,'no_action');
  assert.equal(result.weeklyFee,0);
 });
 
@@ -141,8 +141,8 @@ test('negative balance exactly at threshold',()=>{
 test('negative balance immediately below threshold',()=>{
  const result=run(-29.99);
 
- assert.equal(result.action,'carry_forward');
- assert.equal(result.amount,29.99);
+ assert.equal(result.action,'no_action');
+ assert.equal(result.amount,0);
 });
 
 test('zero weekly fee leaves payout unchanged',()=>{
