@@ -9,6 +9,7 @@ import { DatabaseSync } from 'node:sqlite';
 import Stripe from 'stripe';
 import webpush from 'web-push';
 import PDFDocument from 'pdfkit';
+import { createAutocabAdjustmentService } from './lib/autocab-adjustments.mjs';
 
 dotenv.config();
 const app = express();
@@ -3758,93 +3759,20 @@ async function syncAutocab(){
 }
 function notify(driverId,title,message,type='info',referenceId=null){db.prepare('INSERT INTO driver_notifications(id,driver_id,title,message,type,reference_id,created_at) VALUES(?,?,?,?,?,?,?)').run(id('note'),driverId,title,message,type,referenceId,new Date().toISOString());sendPush(driverId,title,message).catch(()=>{})}
 
-async function postAutocabAdjustment({driverId,callsign,amount,isCredit,description,adjustmentReason,eventKey,force=false,liveTestWrite=false}){
- const liveTestIdentityApproved=
-  Boolean(liveTestWrite) &&
-  LIVE_TEST_AUTOCAB_WRITES_ENABLED &&
-  Number(driverId)===1112 &&
-  String(callsign)==='9997' &&
-  Number(amount)===1;
-
- const approvedLiveTestCredit=
-  liveTestIdentityApproved &&
-  Boolean(isCredit)===true &&
-  String(description)==='FaivoPay Live Test Credit' &&
-  String(adjustmentReason)==='FaivoPay Live Test' &&
-  String(eventKey)==='live-test:1112:first-credit-1gbp';
-
- const approvedLiveTestReversal=
-  liveTestIdentityApproved &&
-  Boolean(isCredit)===false &&
-  String(description)==='FaivoPay Live Test Reversal' &&
-  String(adjustmentReason)==='FaivoPay Live Test' &&
-  String(eventKey)==='live-test:1112:first-credit-reversal-1gbp';
-
- const approvedLiveTestWrite=
-  approvedLiveTestCredit||
-  approvedLiveTestReversal;
-
- if(liveTestWrite && !approvedLiveTestWrite){
-  throw new Error(
-   'Controlled Live Test Autocab write gate rejected this adjustment.'
-  );
- }
-
- if(
-  !AUTOCAB_ADJUSTMENTS_ENABLED &&
-  !approvedLiveTestWrite &&
-  !force
- ){
-  throw new Error(
-   'Autocab adjustments are disabled. '+
-   'Set AUTOCAB_ADJUSTMENTS_ENABLED=true to enable production writes.'
-  );
- }
-
- const existing=db.prepare('SELECT * FROM autocab_adjustments WHERE event_key=?').get(eventKey);
- if(existing?.status==='completed') return {duplicate:true,existing};
- const adjustmentId=existing?.id||id('adj'),now=new Date().toISOString();
- if(!existing) db.prepare('INSERT INTO autocab_adjustments(id,event_key,driver_id,callsign,amount,is_credit,description,adjustment_reason,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(adjustmentId,eventKey,driverId,callsign,Number(amount),isCredit?1:0,description,adjustmentReason||'', 'pending', now);
- try{
-  const response=await putJson(`${BASE_URL}/driver/v1/accounts/driveraccounts/${driverId}/adjustment`,{amount:Number(amount),description,isCredit:Boolean(isCredit),adjustmentReason:adjustmentReason||'FaivoPay'});
-  const completedAt=new Date().toISOString();
-  db.prepare('UPDATE autocab_adjustments SET status=?,response_json=?,completed_at=?,error=NULL WHERE id=?').run('completed',JSON.stringify(response||{}),completedAt,adjustmentId);
-  db.prepare('UPDATE driver_cache SET current_balance=COALESCE(current_balance,0)+?,synced_at=? WHERE driver_id=?').run(isCredit?Number(amount):-Number(amount),completedAt,driverId);
-  return {ok:true,id:adjustmentId,response,completedAt};
- }catch(e){db.prepare('UPDATE autocab_adjustments SET status=?,error=? WHERE id=?').run('failed',e.message,adjustmentId);throw e}
-}
-
-async function postAutocabAdjustmentSafelyOnce(args){
- const eventKey=String(args?.eventKey||'').trim();
-
- if(!eventKey){
-  throw new Error(
-   'A unique Autocab event key is required for a safe one-time adjustment'
-  );
- }
-
- const existing=db.prepare(`
-  SELECT *
-  FROM autocab_adjustments
-  WHERE event_key=?
- `).get(eventKey);
-
- if(existing?.status==='completed'){
-  return {
-   duplicate:true,
-   existing
-  };
- }
-
- if(existing){
-  throw new Error(
-   `Autocab adjustment ${eventKey} is ${existing.status}. `+
-   'FaivoPay will not resend it automatically because the previous Autocab outcome may be uncertain. Review the adjustment before retrying.'
-  );
- }
-
- return postAutocabAdjustment(args);
-}
+// STEP123Y_TESTED_ADJUSTMENT_SERVICE
+// Production and automated tests use the same adjustment implementation.
+const {
+ postAutocabAdjustment,
+ postAutocabAdjustmentSafelyOnce
+}=createAutocabAdjustmentService({
+ db,
+ transport:putJson,
+ makeId:id,
+ baseUrl:BASE_URL,
+ adjustmentsEnabled:AUTOCAB_ADJUSTMENTS_ENABLED,
+ liveTestWritesEnabled:LIVE_TEST_AUTOCAB_WRITES_ENABLED,
+ logger:console
+});
 
 async function settlePaymentPlanActivationInAutocab(plan,source){
  const d=cachedDriver(plan.driver_id);
@@ -7691,7 +7619,7 @@ app.get('/api/admin/integrations',adminAuth,(req,res)=>{
  });
 });
 app.post('/api/admin/integrations/wise/test',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{const out=await testWiseConnection();audit(req,'admin',req.auth.email,'wise_connection_test','integration','wise',{environment:WISE_ENV});res.json(out)}catch(e){res.status(500).json({error:e.message})}});
-app.post('/api/admin/autocab/test-adjustment',adminAuth,requireStaffRole('administrator'),async(req,res)=>{try{const callsign=String(req.body.callsign||'').trim();const d=cacheRows().find(x=>String(x.callsign)===callsign);if(!d)return res.status(404).json({error:'Callsign not found in FaivoPay cache'});const amount=Number(req.body.amount||0);if(!(amount>0))return res.status(400).json({error:'Amount must be greater than zero'});const result=await postAutocabAdjustment({driverId:d.driverId,callsign:d.callsign,amount,isCredit:Boolean(req.body.isCredit),description:String(req.body.description||'FaivoPay test adjustment'),adjustmentReason:String(req.body.adjustmentReason||'FaivoPay Test'),eventKey:`test:${Date.now()}:${d.driverId}`,force:true});audit(req,'admin',req.auth.email,'autocab_test_adjustment','driver',d.callsign,{callsign:d.callsign,amount,isCredit:Boolean(req.body.isCredit)});setTimeout(()=>syncAutocab().catch(()=>{}),500);res.json({ok:true,driver:{driverId:d.driverId,callsign:d.callsign,fullName:d.fullName},result})}catch(e){res.status(500).json({error:e.message})}});
+app.post('/api/admin/autocab/test-adjustment',adminAuth,requireStaffRole('administrator'),async(req,res)=>{try{const callsign=String(req.body.callsign||'').trim();const d=cacheRows().find(x=>String(x.callsign)===callsign);if(!d)return res.status(404).json({error:'Callsign not found in FaivoPay cache'});const amount=Number(req.body.amount||0);if(!(amount>0))return res.status(400).json({error:'Amount must be greater than zero'});const result=await postAutocabAdjustment({driverId:d.driverId,callsign:d.callsign,amount,isCredit:Boolean(req.body.isCredit),description:String(req.body.description||'FaivoPay test adjustment'),adjustmentReason:String(req.body.adjustmentReason||'FaivoPay Test'),eventKey:`test:${Date.now()}:${d.driverId}`});audit(req,'admin',req.auth.email,'autocab_test_adjustment','driver',d.callsign,{callsign:d.callsign,amount,isCredit:Boolean(req.body.isCredit)});setTimeout(()=>syncAutocab().catch(()=>{}),500);res.json({ok:true,driver:{driverId:d.driverId,callsign:d.callsign,fullName:d.fullName},result})}catch(e){res.status(500).json({error:e.message})}});
 app.get('/api/admin/autocab/adjustments',adminAuth,(req,res)=>{const rows=db.prepare('SELECT id,event_key eventKey,driver_id driverId,callsign,amount,is_credit isCredit,description,adjustment_reason adjustmentReason,status,created_at createdAt,completed_at completedAt,error FROM autocab_adjustments ORDER BY created_at DESC LIMIT 250').all().map(x=>({...x,isCredit:Boolean(x.isCredit)}));res.json({adjustments:rows})});
 app.get('/api/admin/dashboard',adminAuth,(req,res)=>{const drivers=cacheRows();const matched=drivers.filter(d=>d.currentBalance!==null).length;const owedOut=drivers.reduce((s,d)=>s+Math.max(0,Number(d.currentBalance||0)),0),owedIn=drivers.reduce((s,d)=>s+Math.max(0,-Number(d.currentBalance||0)),0);const stats={count:drivers.length,matched,unmatched:drivers.length-matched,owedOut,owedIn,openPaymentRequests:Number(db.prepare("SELECT COUNT(*) c FROM payment_requests WHERE status='open'").get().c),queuedPayouts:Number(db.prepare("SELECT COUNT(*) c FROM payouts WHERE status IN ('queued','requested','approved','batched')").get().c),pendingUsers:Number(db.prepare('SELECT COUNT(*) c FROM driver_users WHERE approved=0').get().c)};const lastSync=db.prepare('SELECT MAX(synced_at) lastSync FROM driver_cache').get()?.lastSync||null;res.json({fetchedAt:new Date().toISOString(),lastSync,stats,drivers})});
 app.get('/api/drivers',adminAuth,(req,res)=>{const drivers=cacheRows().map(d=>({...d,bankAccount:adminBankAccountInfo(d.driverId)}));const matched=drivers.filter(d=>d.currentBalance!==null).length;const lastSync=db.prepare('SELECT MAX(synced_at) lastSync FROM driver_cache').get()?.lastSync||null;const bankReady=drivers.filter(d=>d.bankAccount?.ready).length,bankMissing=drivers.length-bankReady,bankRecentlyChanged=drivers.filter(d=>d.bankAccount?.changedRecently).length;res.json({fetchedAt:new Date().toISOString(),lastSync,count:drivers.length,matched,unmatched:drivers.length-matched,bankReady,bankMissing,bankRecentlyChanged,drivers})});

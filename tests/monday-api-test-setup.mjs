@@ -150,7 +150,8 @@ try {
   const authenticated = await mfaResponse.json();
   assert.ok(authenticated.token);
 
-  const db = new DatabaseSync(dbPath);
+
+    const db = new DatabaseSync(dbPath);
 
   // Fixture uses the actual settlement_runs table.
   const id = 'test-monday-empty';
