@@ -2887,6 +2887,7 @@ function AdminApp(){
   if(r.status==='funded')return 4;
   if(['submitted_sandbox','submitted'].includes(r.status))return 5;
   if(r.status==='processing')return 6;
+  if(r.status==='paid')return 7;
 
   return 0;
  })();
@@ -2908,6 +2909,46 @@ function AdminApp(){
   (a,x)=>a+Number(x.amount||0),
   0
  );
+ // STEP106B_EARLY_OVERVIEW
+ const earlyTodayLondon=new Intl.DateTimeFormat('sv-SE',{
+  timeZone:'Europe/London',
+  year:'numeric',
+  month:'2-digit',
+  day:'2-digit'
+ }).format(new Date());
+
+ const earlyRequests=sett.earlyPayoutRequests||[];
+
+ const earlyPendingReview=earlyRequests.filter(
+  x=>x.status==='requested'
+ );
+
+ const earlyEligibleApproved=earlyRequests.filter(
+  x=>x.status==='approved'&&
+  (!x.eligibleRunDate||x.eligibleRunDate<=earlyTodayLondon)
+ );
+
+ const earlyFutureApproved=earlyRequests.filter(
+  x=>x.status==='approved'&&
+  x.eligibleRunDate&&x.eligibleRunDate>earlyTodayLondon
+ );
+
+ const earlyDeclinedRequests=earlyRequests.filter(
+  x=>x.status==='declined'
+ );
+
+ const earlyBankHolds=earlyEligibleApproved.filter(
+  x=>bankFor(x.driverId).ready!==true
+ );
+
+ const earlyPayoutAmount=x=>Number(
+  x.netAmount??x.amount??0
+ );
+
+ const earlySum=items=>items.reduce(
+  (sum,x)=>sum+earlyPayoutAmount(x),0
+ );
+
  const dueEarly=earlySummary?.requests?.filter(x=>['requested','approved','batched'].includes(x.status))||[];
  const recentTx=transactions.slice(0,7);
  function go(k){setView(k);setMobileNav(false);setErr('');if(k==='customerPayments')loadCustomerAdmin();if(k==='monday'){loadMonday();loadSett()}if(k==='early'){loadEarlySummary();loadSett()}if(k==='outstanding'){loadOutstanding();loadPaymentPlans();}if(k==='paymentPlans')loadPaymentPlans();if(k==='fees')loadFees();if(k==='demo')loadDemo();if(k==='liveTest')loadLiveTest();if(k==='drivers')loadDrivers();if(k==='access'){loadStaff();loadDriverUsers()}if(k==='security')loadSecurity();if(k==='platform'){loadPlatformCompanies();setPlatformCompany(null)}if(k==='settings'){loadSettings();loadIntegrations()}}
@@ -3295,7 +3336,49 @@ The payout will return to Excluded.`
  async function markRunPaid(r){if(!confirm(`Confirm payout run ${r.id} is paid? This will mark all ${r.itemCount} items paid and post the configured payout adjustments to Autocab.`))return;try{await api(`/api/admin/payout-runs/${r.id}`,{method:'PATCH',body:JSON.stringify({status:'paid'})});await refreshCore()}catch(e){alert(e.message)}}
  async function cancelPayoutRun(r){const label=r.runType==='weekly'?'weekly':'early payout';const reason=prompt(`Cancel this ${label} payment run?\n\nNo money must have been released to Wise or another provider.\n\nEnter a reason for cancelling:`);if(!reason?.trim())return;if(!confirm(`FINAL CHECK\n\nCancel ${r.id} for ${money(r.totalAmount)}?\n\nThe included drivers will be returned to Approved so a corrected payment run can be created.`))return;try{await api(`/api/admin/payout-runs/${r.id}/cancel`,{method:'POST',body:JSON.stringify({reason:reason.trim()})});await Promise.all([loadMonday(),loadSett(),loadEarlySummary(),loadOverview()]);alert('Payment run cancelled. No provider payment or Autocab adjustment was made. The payouts have been returned to Approved.')}catch(e){alert(e.message)}}
  async function reviewEarly(x,status){let reason='';if(status==='declined'){reason=prompt(`Reason for declining callsign ${x.callsign}:`)||'';if(!reason.trim())return}try{await api(`/api/admin/payouts/${x.id}`,{method:'PATCH',body:JSON.stringify({status,reason})});await Promise.all([loadSett(),loadEarlySummary(),loadOverview()])}catch(e){alert(e.message)}}
- async function createEarlyBatch(){if(!confirm('Create a payment run containing all approved early payouts due today?'))return;try{const j=await api('/api/admin/payout-runs',{method:'POST',body:JSON.stringify({runType:'early',provider:'wise'})});await loadSett();alert(`Early payout batch created: ${j.run.itemCount} drivers · ${money(j.run.totalAmount)}.`)}catch(e){alert(e.message)}}
+ // STEP104_EARLY_WIZARD_REFINEMENT
+ async function createEarlyBatch(){
+  const approved=earlyEligibleApproved;
+  const amount=earlySum(approved);
+
+  if(!approved.length){
+   alert('There are no approved early payout requests to batch.');
+   return;
+  }
+
+  if(!confirm([
+   'REVIEW EARLY PAYOUT RUN',
+   '',
+   `Approved requests: ${approved.length}`,
+   `Proposed payout total: ${money(amount)}`,
+   '',
+   'Creating the run locks the selected payment amounts.',
+   'It does NOT transfer money to drivers.',
+   '',
+   'Funding clearance and payment release remain separate.',
+   '',
+   'Create payment run?'
+  ].join('\n')))return;
+
+  try{
+   const j=await api('/api/admin/payout-runs',{
+    method:'POST',
+    body:JSON.stringify({
+     runType:'early',
+     provider:'wise'
+    })
+   });
+
+   await Promise.all([loadSett(),loadEarlySummary()]);
+
+   alert(
+    `Early payout batch created: ${j.run.itemCount} drivers · `+
+    `${money(j.run.totalAmount)}.`
+   );
+  }catch(e){
+   alert(e.message);
+  }
+ }
  async function sendEarlySummary(){try{const j=await api('/api/admin/early-summary/send',{method:'POST'});alert(`Office summary sent: ${j.count} request(s), ${money(j.total)}.`);await loadEarlySummary()}catch(e){alert(e.message)}}
  async function postManual(e){e.preventDefault();if(!confirm(`${manual.type==='pay_in'?'Pay in':'Payout'} ${money(Number(manual.amount))} for callsign ${manual.callsign}? This posts directly to Autocab.`))return;setManualBusy(true);try{const j=await api('/api/admin/manual-payment',{method:'POST',body:JSON.stringify({...manual,amount:Number(manual.amount)})});alert(`${j.type==='pay_in'?'Pay in':'Payout'} posted for ${j.driver.fullName}.`);setManual({callsign:'',type:'pay_in',amount:'',reason:''});await refreshCore()}catch(e){alert(e.message)}finally{setManualBusy(false)}}
  async function saveSettings(){try{const j=await api('/api/admin/operations-settings',{method:'PUT',body:JSON.stringify(settings)});setSettings(j);alert('FaivoPay settings saved.')}catch(e){alert(e.message)}}
@@ -7172,7 +7255,55 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
       ?<>
        <section className="summaryBanner"><div><Clock3/><div><b>Today's cutoff: {earlySummary?.cutoff||settings?.earlyPayoutCutoffTime||'11:00'}</b><span>{earlySummary?.summary?.status==='sent'?`Office email sent ${dt(earlySummary.summary.sent_at)}`:'Automatic office summary will send after cutoff.'}</span></div></div><div className="summaryNumbers"><span>{dueEarly.length} requests</span><b>{money(dueEarly.reduce((a,x)=>a+Number(x.netAmount||x.amount||0),0))}</b></div></section>
 
-       <section className="panel wizardStageCard">
+       <section className="officeStats four">
+         <Stat
+          icon={Clock3}
+          label="Awaiting review"
+          value={earlyPendingReview.length}
+          sub={money(earlySum(earlyPendingReview))}
+         />
+         <Stat
+          icon={CheckCircle2}
+          label="Eligible today"
+          value={earlyEligibleApproved.length}
+          sub={money(earlySum(earlyEligibleApproved))}
+         />
+         <Stat
+          icon={AlertTriangle}
+          label="Declined"
+          value={earlyDeclinedRequests.length}
+          sub={money(earlySum(earlyDeclinedRequests))}
+         />
+         <Stat
+          icon={CreditCard}
+          label="Bank not ready"
+          value={earlyBankHolds.length}
+          sub={money(earlySum(earlyBankHolds))}
+         />
+        </section>
+
+        {earlyFutureApproved.length>0&&
+         <div className="carryNote">
+          <Info/>
+          {earlyFutureApproved.length} approved future-dated payout(s)
+          totalling {money(earlySum(earlyFutureApproved))}
+          are excluded from today's proposed payment run.
+         </div>}
+
+        {earlyBankHolds.length>0&&
+         <div className="operatorWarning">
+          <AlertTriangle/>
+          <div>
+           <b>Bank verification required</b>
+           <span>
+            {earlyBankHolds.length} eligible payout(s) have
+            bank accounts not marked payment-ready.
+            Payment release must remain blocked until verification.
+           </span>
+          </div>
+         </div>}
+
+        <section className="panel wizardStageCard">
         <div className="panelHead">
          <div><span className="sectionKicker">{earlyWizardIndex===1?'STEP 2':'STEP 1'}</span><h3>{earlyWizardIndex===1?'Create approved payment run':'Review early payout requests'}</h3><p>{earlyWizardIndex===1?'Approved requests are ready to be locked into a payment run.':'Approve or decline each request before batching.'}</p></div>
          <div className="rowActions">
@@ -7183,7 +7314,13 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
 
         {earlyWizardIndex===1&&<div className="operatorWarning green"><CheckCircle2/><div><b>Approved requests ready</b><span>Creating the payment run locks the approved values before funding.</span></div></div>}
 
-        <div className="tableWrap proTable"><table><thead><tr><th>Driver</th><th>Requested</th><th>Fee</th><th>Driver receives</th><th>Payout account</th><th>Due</th><th>Status</th><th>Actions</th></tr></thead><tbody>{sett.earlyPayoutRequests.map(x=><tr key={x.id}><td><div className="driverCell"><span className="callsign">{x.callsign}</span><b>{x.driverName}</b></div></td><td>{money(x.grossAmount)}</td><td>{money(x.fee)}</td><td><b>{money(x.netAmount??x.amount)}</b></td><td><Pill tone={bankTone(bankFor(x.driverId))}>{bankFor(x.driverId).label}</Pill></td><td>{x.eligibleRunDate||'—'}</td><td><Pill tone={statusTone(x.status)}>{x.status}</Pill></td><td><div className="compactActions">{x.status==='requested'&&canMoney&&<><button className="mini success" onClick={()=>reviewEarly(x,'approved')}>Approve</button><button className="mini danger" onClick={()=>reviewEarly(x,'declined')}>Decline</button></>}{x.status==='approved'&&<span className="tinyNote">Ready to batch</span>}</div></td></tr>)}</tbody></table></div>
+        <details className="mondayDriverDetailsV1">
+          <summary>
+           <span>View driver requests ({earlyRequests.length})</span>
+           <strong>{money(earlySum(earlyEligibleApproved))} eligible today</strong>
+          </summary>
+         <div className="tableWrap proTable"><table><thead><tr><th>Driver</th><th>Requested</th><th>Fee</th><th>Driver receives</th><th>Payout account</th><th>Due</th><th>Status</th><th>Actions</th></tr></thead><tbody>{sett.earlyPayoutRequests.map(x=><tr key={x.id}><td><div className="driverCell"><span className="callsign">{x.callsign}</span><b>{x.driverName}</b></div></td><td>{money(x.grossAmount)}</td><td>{money(x.fee)}</td><td><b>{money(x.netAmount??x.amount)}</b></td><td><Pill tone={bankTone(bankFor(x.driverId))}>{bankFor(x.driverId).label}</Pill></td><td>{x.eligibleRunDate||'—'}</td><td><Pill tone={statusTone(x.status)}>{x.status}</Pill></td><td><div className="compactActions">{x.status==='requested'&&canMoney&&<><button className="mini success" onClick={()=>reviewEarly(x,'approved')}>Approve</button><button className="mini danger" onClick={()=>reviewEarly(x,'declined')}>Decline</button></>}{x.status==='approved'&&<span className="tinyNote">Ready to batch</span>}</div></td></tr>)}</tbody></table></div>
+         </details>
        </section>
       </>
       :<section className="wizardActiveRun"><LiveRunCard r={activeEarlyPayoutRun} showSteps={false}/></section>}
@@ -12304,3 +12441,5 @@ const isDriver = isNativeApp || window.location.pathname.startsWith('/driver');
 createRoot(document.getElementById('root')).render(
   isPayPage ? <CustomerPayPage /> : isDriver ? <DriverApp /> : <AdminApp />
 );
+
+// STEP107_EARLY_EXPANDABLE_DRIVERS
