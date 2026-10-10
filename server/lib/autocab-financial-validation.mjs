@@ -1,3 +1,7 @@
+import {
+  isVerifiedAutocabAccountCollection
+} from './autocab-account-pagination.mjs';
+
 // STEP122B_AUTOCAB_FINANCIAL_VALIDATION
 // Pure financial-source validation.
 // No database access, network requests or external side effects.
@@ -7,7 +11,8 @@ export function validateAutocabFinancialSource({
   accountsResponse,
   requiredDriverIds=[],
   pageSize=1000,
-  completenessEvidence=null
+  completenessEvidence=null,
+  verifiedCollection=null
 }={}){
 
   const errors=[];
@@ -95,20 +100,23 @@ export function validateAutocabFinancialSource({
     }
   }
 
-  // A full first page cannot independently prove completeness.
-  const paginationUnconfirmed=accounts.length>=pageSize;
+  // STEP165_TRUSTED_PAGINATION_EVIDENCE
+  // A caller-provided assertion cannot certify an account collection.
+  const completenessConfirmed=Boolean(
+    isVerifiedAutocabAccountCollection(verifiedCollection) &&
+    accountsResponse?.summaries===verifiedCollection.summaries &&
+    accounts.length===verifiedCollection.totalSummariesCount
+  );
+
+  // Without verified collection provenance, a full page is ambiguous.
+  const paginationUnconfirmed=
+    !completenessConfirmed && accounts.length>=pageSize;
 
   if(paginationUnconfirmed){
     errors.push(
       'Driver-account pagination is unconfirmed: first page is full.'
     );
   }
-
-  // STEP122D_EXPLICIT_COMPLETENESS
-  // Caller assertion alone is not sufficient evidence.
-  // Until Autocab's pagination contract is verified,
-  // completeness remains unconfirmed.
-  const completenessConfirmed=false;
 
   return {
     valid:errors.length===0,

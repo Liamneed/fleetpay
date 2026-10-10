@@ -2,6 +2,24 @@
 // Read-only pagination collector with strict count verification.
 // No financial writes, database access or direct network access.
 
+// STEP165_TRUSTED_PAGINATION_EVIDENCE
+// Provenance is internal to this module, not caller-supplied metadata.
+const verifiedCollections=new WeakSet();
+
+export function isVerifiedAutocabAccountCollection(value){
+ return Boolean(
+  value &&
+  typeof value==='object' &&
+  verifiedCollections.has(value) &&
+  value.complete===true &&
+  value.paginationContractConfirmed===true &&
+  Number.isSafeInteger(value.totalSummariesCount) &&
+  value.totalSummariesCount>0 &&
+  Array.isArray(value.summaries) &&
+  value.summaries.length===value.totalSummariesCount
+ );
+}
+
 export async function collectAutocabAccountPages({
  fetchPage,
  pageSize=1000,
@@ -86,16 +104,29 @@ export async function collectAutocabAccountPages({
   pages.push({page,count:summaries.length});
 
   if(accounts.length===expectedTotal){
-   return {
-    summaries:accounts,
-    pages,
+   // STEP167_IMMUTABLE_FINANCIAL_SOURCE
+   // Detach the verified result from mutable transport responses.
+   const frozenAccounts=accounts.map(account=>
+    Object.freeze(structuredClone(account))
+   );
+
+   const frozenPages=pages.map(item=>
+    Object.freeze({...item})
+   );
+
+   const collection=Object.freeze({
+    summaries:Object.freeze(frozenAccounts),
+    pages:Object.freeze(frozenPages),
     pageCount:pages.length,
     accountCount:accounts.length,
     totalSummariesCount:expectedTotal,
     complete:true,
     paginationContractConfirmed:true,
     financialVerificationReady:false
-   };
+   });
+
+   verifiedCollections.add(collection);
+   return collection;
   }
  }
 

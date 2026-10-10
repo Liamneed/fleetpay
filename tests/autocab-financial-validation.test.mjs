@@ -129,3 +129,93 @@ test('short first page does not prove completeness',()=>{
   assert.equal(result.valid,true);
   assert.equal(result.complete,false);
 });
+
+
+// STEP165_TRUSTED_PAGINATION_EVIDENCE
+test('trusted collection permits financial verification',async()=>{
+ const {collectAutocabAccountPages}=await import(
+  '../server/lib/autocab-account-pagination.mjs'
+ );
+
+ const collection=await collectAutocabAccountPages({
+  pageSize:2,
+  fetchPage:async()=>({
+   totalSummariesCount:2,
+   summaries:accountsResponse.summaries
+  })
+ });
+
+ const result=check({
+  accountsResponse:collection,
+  verifiedCollection:collection,
+  pageSize:2
+ });
+
+ assert.equal(result.valid,true);
+ assert.equal(result.complete,true);
+ assert.equal(result.financialVerificationReady,true);
+ assert.equal(result.paginationUnconfirmed,false);
+});
+
+test('forged pagination evidence cannot certify completeness',()=>{
+ const forged={
+  ...accountsResponse,
+  totalSummariesCount:2,
+  complete:true,
+  paginationContractConfirmed:true
+ };
+
+ const result=check({
+  accountsResponse:forged,
+  verifiedCollection:forged
+ });
+
+ assert.equal(result.complete,false);
+ assert.equal(result.financialVerificationReady,false);
+});
+
+test('trusted evidence cannot certify unrelated account data',async()=>{
+ const {collectAutocabAccountPages}=await import(
+  '../server/lib/autocab-account-pagination.mjs'
+ );
+
+ const collection=await collectAutocabAccountPages({
+  fetchPage:async()=>({
+   totalSummariesCount:2,
+   summaries:accountsResponse.summaries
+  })
+ });
+
+ const result=check({
+  verifiedCollection:collection,
+  accountsResponse
+ });
+
+ assert.equal(result.complete,false);
+ assert.equal(result.financialVerificationReady,false);
+});
+
+test('trusted pagination does not excuse a missing balance',async()=>{
+ const {collectAutocabAccountPages}=await import(
+  '../server/lib/autocab-account-pagination.mjs'
+ );
+
+ const collection=await collectAutocabAccountPages({
+  fetchPage:async()=>({
+   totalSummariesCount:2,
+   summaries:[
+    {driverId:101},
+    {driverId:102,previousBalance:25.50}
+   ]
+  })
+ });
+
+ const result=check({
+  verifiedCollection:collection,
+  accountsResponse:collection
+ });
+
+ assert.equal(result.complete,true);
+ assert.equal(result.valid,false);
+ assert.equal(result.financialVerificationReady,false);
+});

@@ -116,3 +116,47 @@ test('invalid pagination configuration fails',async()=>{
   /Invalid pagination configuration/
  );
 });
+
+
+// STEP167_IMMUTABLE_FINANCIAL_SOURCE
+test('verified account collection is immutable',async()=>{
+ const source={
+  driverId:101,
+  previousBalance:25.50
+ };
+
+ const result=await collectAutocabAccountPages({
+  fetchPage:async()=>({
+   totalSummariesCount:1,
+   summaries:[source]
+  })
+ });
+
+ assert.equal(Object.isFrozen(result),true);
+ assert.equal(Object.isFrozen(result.summaries),true);
+ assert.equal(Object.isFrozen(result.summaries[0]),true);
+
+ assert.throws(()=>{
+  result.summaries[0].previousBalance=999;
+ },TypeError);
+
+ assert.equal(result.summaries[0].previousBalance,25.50);
+});
+
+test('verified accounts are detached from transport objects',async()=>{
+ const source={
+  driverId:101,
+  previousBalance:25.50
+ };
+
+ const result=await collectAutocabAccountPages({
+  fetchPage:async()=>({
+   totalSummariesCount:1,
+   summaries:[source]
+  })
+ });
+
+ source.previousBalance=999;
+
+ assert.equal(result.summaries[0].previousBalance,25.50);
+});

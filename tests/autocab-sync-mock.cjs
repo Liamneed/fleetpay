@@ -20,7 +20,7 @@ const mode=String(
  process.env.FAIVOPAY_AUTOCAB_MOCK_MODE||'valid'
 );
 
-if(!['valid','duplicate','missing'].includes(mode)){
+if(!['valid','duplicate','missing','missing_balance'].includes(mode)){
  throw new Error('Invalid Autocab mock test mode.');
 }
 
@@ -41,9 +41,18 @@ globalThis.fetch=async function(input,options={}){
   const page=Number(parsed.searchParams.get('pageno'));
   const size=Number(parsed.searchParams.get('pagesize'));
 
+  // STEP171_MISSING_FINANCIAL_BALANCE
   const accounts=Array.from(
    {length:1001},
-   (_,i)=>makeAccount(10001+i)
+   (_,i)=>{
+    const account=makeAccount(10001+i);
+
+    if(mode==='missing_balance' && i===0){
+     delete account.previousBalance;
+    }
+
+    return account;
+   }
   );
 
   if(mode==='duplicate' && page===2){
