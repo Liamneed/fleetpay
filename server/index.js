@@ -12,6 +12,12 @@ import PDFDocument from 'pdfkit';
 import { collectAutocabAccountPages } from './lib/autocab-account-pagination.mjs';
 import { validateAutocabFinancialSource } from './lib/autocab-financial-validation.mjs';
 import { prepareMondaySourceEvidence } from './lib/monday-source-evidence.mjs';
+import { checkMondayVerificationGate }
+ from './lib/monday-verification-gate.mjs';
+import { verifyMondaySourceBinding } from './lib/monday-source-binding.mjs';
+import { reconcileMondaySettlement } from './lib/monday-settlement-reconciliation.mjs';
+import { verifyMondayPlansFromDatabase } from './lib/monday-plan-verification.mjs';
+import { decideMondayVerification } from './lib/monday-verification-decision.mjs';
 import { createAutocabAdjustmentService } from './lib/autocab-adjustments.mjs';
 
 dotenv.config();
@@ -7889,7 +7895,7 @@ app.patch('/api/admin/users/:id',adminAuth,requireStaffRole('administrator','off
 
 app.get('/api/admin/settlements',adminAuth,(req,res)=>{const runs=db.prepare('SELECT * FROM settlement_runs ORDER BY created_at DESC').all().map(r=>({id:r.id,createdAt:r.created_at,status:r.status,settings:JSON.parse(r.settings_json),items:JSON.parse(r.items_json)}));const payouts=db.prepare('SELECT *, driver_id driverId, driver_name driverName, gross_balance grossBalance, weekly_fee weeklyFee, carried_charges carriedCharges, gross_amount grossAmount, net_amount netAmount, payout_run_id payoutRunId, created_at createdAt, updated_at updatedAt, paid_at paidAt, decline_reason declineReason, eligible_run_date eligibleRunDate, submitted_after_cutoff submittedAfterCutoff FROM payouts ORDER BY created_at DESC').all();const paymentRequests=db.prepare('SELECT *, driver_id driverId, driver_name driverName, weekly_fee weeklyFee, carried_charges carriedCharges, payment_url paymentUrl, provider_session_id providerSessionId, created_at createdAt, updated_at updatedAt, paid_at paidAt FROM payment_requests ORDER BY created_at DESC').all();const payoutRuns=db.prepare('SELECT * FROM payout_runs ORDER BY created_at DESC').all().map(serializePayoutRun);res.json({runs,payoutRuns,payouts,paymentRequests,earlyPayoutRequests:payouts.filter(x=>x.type==='early')})});
 
-app.patch('/api/admin/payouts/:id',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{const item=db.prepare('SELECT * FROM payouts WHERE id=?').get(req.params.id);if(!item)return res.status(404).json({error:'Payout not found'});if(item.payout_run_id)return res.status(409).json({
+app.patch('/api/admin/payouts/:id',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{const item=db.prepare('SELECT * FROM payouts WHERE id=?').get(req.params.id);if(!item)return res.status(404).json({error:'Payout not found'});/* STEP232_CLOSE_WEEKLY_PAYOUT_BYPASSES */if(item.type==='weekly'||item.run_id)return res.status(409).json({error:'Weekly payouts must be managed through the verified Monday settlement workflow.'});if(item.payout_run_id)return res.status(409).json({
  error:'This payout belongs to a payment run and cannot be changed individually.'
 });
 const requestedStatus=String(req.body.status||item.status);
@@ -7943,7 +7949,7 @@ if(requestedStatus==='paid')return res.status(409).json({
 const status=requestedStatus,reason=String(req.body.reason||'').trim(),now=new Date().toISOString();if(status==='declined'&&!reason)return res.status(400).json({error:'A decline reason is required'});db.prepare('UPDATE payouts SET status=?,decline_reason=?,decision_at=?,decision_by=?,updated_at=? WHERE id=?').run(status,status==='declined'?reason:null,['approved','declined'].includes(status)?now:item.decision_at,['approved','declined'].includes(status)?req.auth.email:item.decision_by,now,item.id);if(item.type==='early'&&status==='approved'&&item.status!=='approved'){const runDate=item.eligible_run_date||londonWindow().date;const today=londonWindow().date;const timing=runDate===today?'Payment will be made to your assigned bank account by midday today.':`It has been approved for the ${formatRunDate(runDate)} payment run.`;notify(item.driver_id,'Early payout approved',`Your early payout of £${Number(item.net_amount||item.amount||0).toFixed(2)} has been approved. ${timing}`,'success',item.id)}if(item.type==='early'&&status==='declined'&&item.status!=='declined'){notify(item.driver_id,'Early payout declined',`Your early payout request was declined. Reason: ${reason}`,'warning',item.id)}if(status==='paid'&&item.status!=='paid'){await markPayoutPaid(item,req)}audit(req,'admin',req.auth.email,'payout_status_changed','payout',item.id,{from:item.status,to:status,reason});res.json({ok:true,status,reason})});
 
 app.post('/api/admin/payout-runs',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{
- const runType=String(req.body.runType||'early');if(!['early','weekly'].includes(runType))return res.status(400).json({error:'runType must be early or weekly'});
+ const runType=String(req.body.runType||'early');if(!['early','weekly'].includes(runType))return res.status(400).json({error:'runType must be early or weekly'});if(runType==='weekly')return res.status(409).json({error:'Weekly payout batches must be created through the verified Monday settlement workflow.'});
  const today=londonWindow().date;const eligible=runType==='early'?db.prepare("SELECT * FROM payouts WHERE type='early' AND status='approved' AND payout_run_id IS NULL AND (eligible_run_date IS NULL OR eligible_run_date<=?) ORDER BY COALESCE(eligible_run_date,substr(created_at,1,10)),created_at").all(today):db.prepare("SELECT * FROM payouts WHERE type='weekly' AND status='queued' AND payout_run_id IS NULL ORDER BY created_at").all();
  if(!eligible.length)return res.status(400).json({error:`No ${runType} payouts are ready to batch`});
  const runId=id('payrun'),now=new Date().toISOString(),total=eligible.reduce((s,x)=>s+Number(x.net_amount||x.amount||0),0);
@@ -13142,7 +13148,7 @@ app.post(
  }
 );
 
-app.patch('/api/admin/monday-runs/:runId/payouts/:payoutId',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const status=String(req.body.status||''),reason=String(req.body.reason||'').trim();if(!['approved','excluded','pending'].includes(status))return res.status(400).json({error:'Invalid approval status'});if(status==='excluded'&&!reason)return res.status(400).json({error:'Enter a reason for excluding this driver'});const settlement=db.prepare('SELECT status FROM settlement_runs WHERE id=?').get(req.params.runId);if(!settlement)return res.status(404).json({error:'Monday settlement not found'});if(settlement.status!=='draft')return res.status(409).json({error:`Monday settlement is ${settlement.status} and cannot be edited`});const pmt=db.prepare('SELECT * FROM payouts WHERE id=? AND run_id=? AND type=\'weekly\'').get(req.params.payoutId,req.params.runId);if(!pmt)return res.status(404).json({error:'Weekly payout not found'});if(pmt.payout_run_id)return res.status(400).json({error:'This payout is already locked into a payment run'});const driver=cachedDriver(pmt.driver_id);if(status==='approved'&&driver?.payoutExcluded&&!hasMondayPayoutOverride(req.params.runId,pmt.id))return res.status(400).json({error:`Callsign ${pmt.callsign} is permanently excluded from payouts. Enable payouts on the Drivers page first.`});const dbStatus=status==='approved'?'approved':status==='excluded'?'declined':'pending_approval';db.prepare('UPDATE payouts SET status=?,decline_reason=?,decision_at=?,decision_by=?,updated_at=? WHERE id=?').run(dbStatus,status==='excluded'?reason:null,status==='pending'?null:new Date().toISOString(),status==='pending'?null:req.auth.email,new Date().toISOString(),pmt.id);const items=updateRunItem(req.params.runId,pmt.id,status,reason);audit(req,'staff',req.auth.email,'weekly_payout_approval_changed','payout',pmt.id,{runId:req.params.runId,callsign:pmt.callsign,status,reason});res.json({ok:true,items})});
+app.patch('/api/admin/monday-runs/:runId/payouts/:payoutId',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const status=String(req.body.status||''),reason=String(req.body.reason||'').trim();if(!['approved','excluded','pending'].includes(status))return res.status(400).json({error:'Invalid approval status'});if(status==='excluded'&&!reason)return res.status(400).json({error:'Enter a reason for excluding this driver'});const settlement=db.prepare('SELECT status FROM settlement_runs WHERE id=?').get(req.params.runId);if(!settlement)return res.status(404).json({error:'Monday settlement not found'});if(settlement.status!=='draft')return res.status(409).json({error:`Monday settlement is ${settlement.status} and cannot be edited`});if(status==='approved'){const gate=mondayFinancialProgressionGate(req.params.runId);if(!gate.allowed)return res.status(409).json({error:'Monday financial verification required before approval.',issues:gate.issues});}const pmt=db.prepare('SELECT * FROM payouts WHERE id=? AND run_id=? AND type=\'weekly\'').get(req.params.payoutId,req.params.runId);if(!pmt)return res.status(404).json({error:'Weekly payout not found'});if(pmt.payout_run_id)return res.status(400).json({error:'This payout is already locked into a payment run'});const driver=cachedDriver(pmt.driver_id);if(status==='approved'&&driver?.payoutExcluded&&!hasMondayPayoutOverride(req.params.runId,pmt.id))return res.status(400).json({error:`Callsign ${pmt.callsign} is permanently excluded from payouts. Enable payouts on the Drivers page first.`});const dbStatus=status==='approved'?'approved':status==='excluded'?'declined':'pending_approval';db.prepare('UPDATE payouts SET status=?,decline_reason=?,decision_at=?,decision_by=?,updated_at=? WHERE id=?').run(dbStatus,status==='excluded'?reason:null,status==='pending'?null:new Date().toISOString(),status==='pending'?null:req.auth.email,new Date().toISOString(),pmt.id);const items=updateRunItem(req.params.runId,pmt.id,status,reason);audit(req,'staff',req.auth.email,'weekly_payout_approval_changed','payout',pmt.id,{runId:req.params.runId,callsign:pmt.callsign,status,reason});res.json({ok:true,items})});
 
 app.post(
  '/api/admin/monday-runs/:runId/payouts/:payoutId/override-exclusion',
@@ -13661,6 +13667,402 @@ app.post(
  }
 );
 
+
+// STEP224_MANDATORY_MONDAY_VERIFICATION
+function mondayFinancialProgressionGate(runId){
+ try{
+  const verification=db.prepare(`
+   SELECT *
+   FROM monday_settlement_verifications
+   WHERE run_id=?
+   ORDER BY rowid DESC
+   LIMIT 1
+  `).get(runId);
+
+  const fingerprints=mondayFinancialFingerprints(runId);
+
+  return checkMondayVerificationGate({
+   runId,
+   verification,
+   fingerprints
+  });
+ }catch(e){
+  return {
+   allowed:false,
+   issues:[
+    'Financial verification cannot be established: '+e.message
+   ]
+  };
+ }
+}
+
+
+// STEP226_SERVER_SIDE_MONDAY_VERIFICATION
+// All financial evidence is retrieved and checked server-side.
+// Request-body evidence is deliberately ignored.
+app.post(
+ '/api/admin/monday-runs/:runId/verify-financials',
+ adminAuth,
+ requireStaffRole('administrator','finance'),
+ async(req,res)=>{
+  const runId=req.params.runId;
+
+  const run=db.prepare(
+   'SELECT * FROM settlement_runs WHERE id=?'
+  ).get(runId);
+
+  if(!run){
+   return res.status(404).json({
+    error:'Monday settlement not found.'
+   });
+  }
+
+  if(run.status!=='draft' || run.payout_run_id){
+   return res.status(409).json({
+    error:'Only an unbatched draft can be financially verified.'
+   });
+  }
+
+  // A new attempt immediately invalidates previous authorisation.
+  // This remains committed even if the fresh Autocab call fails.
+  db.prepare(`
+   UPDATE monday_settlement_verifications
+   SET status='invalidated',
+       failure_reason='Superseded by new verification attempt'
+   WHERE run_id=? AND status='passed'
+  `).run(runId);
+
+  try{
+   const sourceRow=db.prepare(`
+    SELECT *
+    FROM monday_settlement_verifications
+    WHERE run_id=? AND status='pending'
+    ORDER BY rowid ASC
+    LIMIT 1
+   `).get(runId);
+
+   if(!sourceRow){
+    throw new Error('Original pending source evidence is missing.');
+   }
+
+   const source=JSON.parse(sourceRow.evidence_json);
+   const items=JSON.parse(run.items_json);
+   const settings=JSON.parse(run.settings_json);
+
+   if(!Array.isArray(items) || !items.length){
+    throw new Error('Invalid saved settlement items.');
+   }
+
+   const sourceCheck=verifyMondaySourceBinding({
+    runId,source,items
+   });
+
+   if(!sourceCheck.valid){
+    throw new Error(
+     'Original source binding failed: '+
+     sourceCheck.issues.join('; ')
+    );
+   }
+
+   const payouts=db.prepare(`
+    SELECT *
+    FROM payouts
+    WHERE run_id=? AND type='weekly'
+   `).all(runId);
+
+   const paymentRequests=db.prepare(`
+    SELECT *
+    FROM payment_requests
+    WHERE run_id=?
+   `).all(runId);
+
+   const settlementCheck=reconcileMondaySettlement({
+    runId,
+    settings,
+    items,
+    payouts,
+    paymentRequests
+   });
+
+   if(!settlementCheck.valid){
+    throw new Error(
+     'Settlement reconciliation failed: '+
+     settlementCheck.issues.slice(0,8).join('; ')
+    );
+   }
+
+   const planCheck=verifyMondayPlansFromDatabase({
+    db,runId,items
+   });
+
+   if(!planCheck.valid){
+    throw new Error(
+     'Payment-plan reconciliation failed: '+
+     planCheck.issues.slice(0,8).join('; ')
+    );
+   }
+
+   // A fresh, fully verified Autocab retrieval is mandatory.
+   const refreshed=await syncAutocab();
+
+   if(
+    refreshed?.financialVerification?.valid!==true ||
+    refreshed?.financialVerification?.complete!==true ||
+    refreshed?.financialVerification?.financialVerificationReady!==true ||
+    !Array.isArray(refreshed?.drivers)
+   ){
+    throw new Error(
+     'Fresh Autocab financial source is not fully verified.'
+    );
+   }
+
+   const drivers=refreshed.drivers;
+   const byId=new Map(
+    drivers.map(driver=>[Number(driver.driverId),driver])
+   );
+
+   const differences=[];
+   const originalIds=new Set();
+
+   const cents=value=>{
+    if(
+     value===null ||
+     value===undefined ||
+     value==='' ||
+     !Number.isFinite(Number(value))
+    ){
+     return null;
+    }
+
+    return Math.round(Number(value)*100);
+   };
+
+   for(const item of items){
+    const driverId=Number(item.driverId);
+    const fresh=byId.get(driverId);
+
+    originalIds.add(driverId);
+
+    if(!fresh){
+     differences.push({
+      driverId,
+      type:'missing_driver'
+     });
+     continue;
+    }
+
+    if(
+     cents(item.previousBalance)===null ||
+     cents(fresh.previousBalance)===null ||
+     cents(item.previousBalance)!==
+      cents(fresh.previousBalance)
+    ){
+     differences.push({
+      driverId,
+      type:'balance_changed'
+     });
+    }
+
+    if(String(item.callsign||'')!==
+       String(fresh.callsign||'')){
+     differences.push({
+      driverId,
+      type:'callsign_changed'
+     });
+    }
+
+    if(
+     Boolean(item.persistentPayoutExclusion)!==
+     Boolean(cachedDriver(driverId)?.payoutExcluded)
+    ){
+     differences.push({
+      driverId,
+      type:'payout_exclusion_changed'
+     });
+    }
+   }
+
+   for(const driver of drivers){
+    if(!originalIds.has(Number(driver.driverId))){
+     differences.push({
+      driverId:Number(driver.driverId),
+      type:'new_driver'
+     });
+    }
+   }
+
+   const comparedAt=new Date().toISOString();
+
+   const comparison={
+    runId,
+    comparedAt,
+    snapshotDriverCount:items.length,
+    refreshedDriverCount:drivers.length,
+    differenceCount:differences.length,
+    balancesUnchanged:differences.length===0,
+    differences
+   };
+
+   // Re-read authoritative financial records after the refresh.
+   // The fingerprints bind the verification to current SQLite state.
+   const fingerprints=mondayFinancialFingerprints(runId);
+
+   const decision=decideMondayVerification({
+    runId,
+    source,
+    comparison,
+    fingerprints,
+    now:comparedAt,
+    maxAgeMinutes:15
+   });
+
+   if(!decision.eligible){
+    throw new Error(
+     'Verification decision failed: '+
+     decision.issues.join('; ')
+    );
+   }
+
+   // Reconcile once more immediately before recording the pass.
+   // Protect against changes during the asynchronous Autocab call.
+   const finalRun=db.prepare(
+    'SELECT * FROM settlement_runs WHERE id=?'
+   ).get(runId);
+
+   if(
+    finalRun?.status!=='draft' ||
+    finalRun.items_json!==run.items_json ||
+    finalRun.settings_json!==run.settings_json
+   ){
+    throw new Error(
+     'Settlement changed during financial verification.'
+    );
+   }
+
+   const finalSettlement=reconcileMondaySettlement({
+    runId,
+    settings,
+    items,
+    payouts:db.prepare(`
+     SELECT * FROM payouts
+     WHERE run_id=? AND type='weekly'
+    `).all(runId),
+    paymentRequests:db.prepare(`
+     SELECT * FROM payment_requests
+     WHERE run_id=?
+    `).all(runId)
+   });
+
+   const finalPlans=verifyMondayPlansFromDatabase({
+    db,runId,items
+   });
+
+   const finalFingerprints=mondayFinancialFingerprints(runId);
+
+   if(
+    !finalSettlement.valid ||
+    !finalPlans.valid ||
+    finalFingerprints.financialHash!==
+     fingerprints.financialHash ||
+    finalFingerprints.rulesHash!==
+     fingerprints.rulesHash ||
+    finalFingerprints.paymentPlansHash!==
+     fingerprints.paymentPlansHash ||
+    finalFingerprints.financialRulesChanged
+   ){
+    throw new Error(
+     'Financial evidence changed during final reconciliation.'
+    );
+   }
+
+   const evidence={
+    runId,
+    settlementVerified:true,
+    financialVerificationReady:true,
+    sourceHash:source.sourceHash,
+    snapshotHash:fingerprints.snapshotHash,
+    financialHash:fingerprints.financialHash,
+    comparedAt,
+    sourceRetrievedAt:source.retrievedAt,
+    driverCount:items.length,
+    payoutCount:finalSettlement.payoutCount,
+    paymentRequestCount:finalSettlement.paymentRequestCount,
+    allocationCount:finalPlans.allocationCount
+   };
+
+   db.prepare(`
+    INSERT INTO monday_settlement_verifications(
+     id,run_id,status,snapshot_hash,
+     autocab_source_hash,rules_hash,payment_plans_hash,
+     evidence_json,difference_count,verified_by,
+     compared_at,expires_at,created_at
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+   `).run(
+    id('mverify'),
+    runId,
+    'passed',
+    fingerprints.snapshotHash,
+    source.sourceHash,
+    fingerprints.rulesHash,
+    fingerprints.paymentPlansHash,
+    JSON.stringify(evidence),
+    0,
+    req.auth.email,
+    comparedAt,
+    decision.expiresAt,
+    comparedAt
+   );
+
+   audit(
+    req,'staff',req.auth.email,
+    'monday_financial_verification_passed',
+    'settlement_run',runId,
+    {
+     expiresAt:decision.expiresAt,
+     driverCount:items.length
+    }
+   );
+
+   res.json({
+    ok:true,
+    status:'passed',
+    runId,
+    comparedAt,
+    expiresAt:decision.expiresAt,
+    driverCount:items.length
+   });
+
+  }catch(error){
+   // Never reuse a previous pass after an unsuccessful attempt.
+   // Record a failed attempt for review.
+   try{
+    db.prepare(`
+     INSERT INTO monday_settlement_verifications(
+      id,run_id,status,evidence_json,
+      failure_reason,created_at
+     ) VALUES(?,?,?,?,?,?)
+    `).run(
+     id('mverify'),
+     runId,
+     'failed',
+     JSON.stringify({
+      runId,
+      settlementVerified:false
+     }),
+     String(error.message).slice(0,2000),
+     new Date().toISOString()
+    );
+   }catch{}
+
+   res.status(409).json({
+    error:'Monday financial verification failed.',
+    details:error.message,
+    status:'failed'
+   });
+  }
+ }
+);
+
 // STEP82_ATOMIC_MONDAY_APPROVAL
 app.post(
  '/api/admin/monday-runs/:runId/approve-all',
@@ -13681,7 +14083,17 @@ app.post(
     throw new Error('Settlement cannot be approved in its current state.');
    }
 
-   const pending=db.prepare(
+   const verificationGate=
+     mondayFinancialProgressionGate(run.id);
+
+    if(!verificationGate.allowed){
+     throw new Error(
+      'Monday financial verification required: '+
+      verificationGate.issues.join('; ')
+     );
+    }
+
+    const pending=db.prepare(
     `SELECT * FROM payouts
      WHERE run_id=? AND type='weekly'
        AND status='pending_approval'
@@ -13766,7 +14178,7 @@ app.post(
  }
 );
 
-app.post('/api/admin/monday-runs/:runId/create-payout-run',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const settlement=db.prepare('SELECT * FROM settlement_runs WHERE id=?').get(req.params.runId);if(!settlement)return res.status(404).json({error:'Monday run not found'});if(settlement.status!=='approved')return res.status(409).json({error:`Monday settlement must be approved before batching; current status: ${settlement.status}`});if(settlement.payout_run_id)return res.status(409).json({error:'A payout batch has already been created for this Monday run',payoutRunId:settlement.payout_run_id});const unresolvedPlanAllocations=db.prepare("SELECT COUNT(*) count FROM payment_plan_settlement_allocations WHERE run_id=? AND status!='applied'").get(req.params.runId)?.count||0;if(unresolvedPlanAllocations>0)return res.status(409).json({error:`Apply the ${unresolvedPlanAllocations} pending payment-plan deduction${unresolvedPlanAllocations===1?'':'s'} before creating the payout batch.`,pendingPlanAllocations:unresolvedPlanAllocations});const eligible=db.prepare("SELECT * FROM payouts WHERE run_id=? AND type='weekly' AND status='approved' AND payout_run_id IS NULL ORDER BY CAST(callsign AS INTEGER),callsign").all(req.params.runId);
+app.post('/api/admin/monday-runs/:runId/create-payout-run',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const settlement=db.prepare('SELECT * FROM settlement_runs WHERE id=?').get(req.params.runId);if(!settlement)return res.status(404).json({error:'Monday run not found'});if(settlement.status!=='approved')return res.status(409).json({error:`Monday settlement must be approved before batching; current status: ${settlement.status}`});if(settlement.payout_run_id)return res.status(409).json({error:'A payout batch has already been created for this Monday run',payoutRunId:settlement.payout_run_id});const gate=mondayFinancialProgressionGate(req.params.runId);if(!gate.allowed)return res.status(409).json({error:'Monday financial verification required before payout batching.',issues:gate.issues});const unresolvedPlanAllocations=db.prepare("SELECT COUNT(*) count FROM payment_plan_settlement_allocations WHERE run_id=? AND status!='applied'").get(req.params.runId)?.count||0;if(unresolvedPlanAllocations>0)return res.status(409).json({error:`Apply the ${unresolvedPlanAllocations} pending payment-plan deduction${unresolvedPlanAllocations===1?'':'s'} before creating the payout batch.`,pendingPlanAllocations:unresolvedPlanAllocations});const eligible=db.prepare("SELECT * FROM payouts WHERE run_id=? AND type='weekly' AND status='approved' AND payout_run_id IS NULL ORDER BY CAST(callsign AS INTEGER),callsign").all(req.params.runId);
 
 /* STEP118A_BATCH_SNAPSHOT_INTEGRITY
    Reject payout batches if database payout rows no longer

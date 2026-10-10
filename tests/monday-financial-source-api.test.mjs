@@ -470,6 +470,462 @@ async function scenario(mode){
      'PASS — STEP204: Real SQLite reconciliation and four corruption checks.'
     );
 
+    // STEP233_GENERAL_ROUTE_BYPASS_TESTS
+    // General administrative routes must not bypass Monday verification.
+    const bypassHeaders={
+     Authorization:`Bearer ${token(secret)}`,
+     'Content-Type':'application/json'
+    };
+
+    const bypassPayout=db.prepare(`
+     SELECT id,status
+     FROM payouts
+     WHERE run_id=? AND type='weekly'
+     ORDER BY driver_id LIMIT 1
+    `).get(result.id);
+
+    assert.ok(bypassPayout);
+    assert.equal(bypassPayout.status,'pending_approval');
+
+    const generalApproval=await fetch(
+     base+'/api/admin/payouts/'+
+     encodeURIComponent(bypassPayout.id),
+     {
+      method:'PATCH',
+      headers:bypassHeaders,
+      body:JSON.stringify({status:'approved'})
+     }
+    );
+
+    assert.equal(
+     generalApproval.status,
+     409,
+     JSON.stringify(await generalApproval.json())
+    );
+
+    assert.equal(
+     db.prepare('SELECT status FROM payouts WHERE id=?')
+      .get(bypassPayout.id).status,
+     'pending_approval'
+    );
+
+    const generalBatch=await fetch(
+     base+'/api/admin/payout-runs',
+     {
+      method:'POST',
+      headers:bypassHeaders,
+      body:JSON.stringify({runType:'weekly'})
+     }
+    );
+
+    assert.equal(
+     generalBatch.status,
+     409,
+     JSON.stringify(await generalBatch.json())
+    );
+
+    assert.equal(
+     db.prepare(`
+      SELECT COUNT(*) AS n
+      FROM payout_runs
+      WHERE run_type='weekly'
+     `).get().n,
+     0
+    );
+
+    console.log(
+     'PASS — STEP233: General weekly approval and batching bypasses blocked.'
+    );
+
+    // STEP228_APPROVAL_GATE_INTEGRATION
+    // Exercise approval before verification, using the real API.
+    const testPayout=db.prepare(`
+     SELECT id FROM payouts
+     WHERE run_id=? AND type='weekly'
+     ORDER BY driver_id
+     LIMIT 1
+    `).get(result.id);
+
+    assert.ok(testPayout);
+
+    const approvalUrl=
+     base+'/api/admin/monday-runs/'+
+     encodeURIComponent(result.id)+
+     '/payouts/'+encodeURIComponent(testPayout.id);
+
+    const authHeaders={
+     Authorization:`Bearer ${token(secret)}`,
+     'Content-Type':'application/json'
+    };
+
+    const approve=async()=>{
+     const r=await fetch(approvalUrl,{
+      method:'PATCH',
+      headers:authHeaders,
+      body:JSON.stringify({status:'approved'})
+     });
+     return {status:r.status,body:await r.json()};
+    };
+
+    const unverified=await approve();
+
+    assert.equal(unverified.status,409);
+    assert.equal(
+     db.prepare('SELECT status FROM payouts WHERE id=?')
+      .get(testPayout.id).status,
+     'pending_approval'
+    );
+
+    console.log(
+     'PASS — STEP228: Unverified individual payout approval blocked.'
+    );
+
+    // STEP227_REAL_VERIFICATION_ENDPOINT
+    // This executes only against the isolated local test server.
+    const verifyResponse=await fetch(
+     base+'/api/admin/monday-runs/'+
+     encodeURIComponent(result.id)+'/verify-financials',
+     {
+      method:'POST',
+      headers:{
+       Authorization:`Bearer ${token(secret)}`,
+       'Content-Type':'application/json'
+      },
+      body:'{}'
+     }
+    );
+
+    const verifyResult=await verifyResponse.json();
+
+    assert.equal(
+     verifyResponse.status,
+     200,
+     JSON.stringify(verifyResult).slice(0,1800)
+    );
+
+    assert.equal(verifyResult.status,'passed');
+    assert.equal(verifyResult.runId,result.id);
+    assert.equal(verifyResult.driverCount,1001);
+
+    const latestVerification=db.prepare(`
+     SELECT *
+     FROM monday_settlement_verifications
+     WHERE run_id=?
+     ORDER BY rowid DESC
+     LIMIT 1
+    `).get(result.id);
+
+    assert.equal(latestVerification.status,'passed');
+    assert.equal(latestVerification.difference_count,0);
+    assert.ok(latestVerification.expires_at);
+
+    console.log(
+     'PASS — STEP227: Authenticated real Monday financial verification.'
+    );
+
+    // The same approval must now pass with verified financials.
+    const approved=await approve();
+
+    assert.equal(
+     approved.status,
+     200,
+     JSON.stringify(approved.body).slice(0,1200)
+    );
+
+    assert.equal(
+     db.prepare('SELECT status FROM payouts WHERE id=?')
+      .get(testPayout.id).status,
+     'approved'
+    );
+
+    // Tampering with a different payout must block further approval.
+    const secondPayout=db.prepare(`
+     SELECT id FROM payouts
+     WHERE run_id=? AND id!=?
+       AND status='pending_approval'
+     ORDER BY driver_id LIMIT 1
+    `).get(result.id,testPayout.id);
+
+    assert.ok(secondPayout);
+
+    const originalAmount=db.prepare(
+     'SELECT amount FROM payouts WHERE id=?'
+    ).get(secondPayout.id).amount;
+
+    db.prepare(
+     'UPDATE payouts SET amount=? WHERE id=?'
+    ).run(originalAmount+1,secondPayout.id);
+
+    const changed=await fetch(
+     base+'/api/admin/monday-runs/'+
+     encodeURIComponent(result.id)+
+     '/payouts/'+encodeURIComponent(secondPayout.id),
+     {
+      method:'PATCH',
+      headers:authHeaders,
+      body:JSON.stringify({status:'approved'})
+     }
+    );
+
+    assert.equal(changed.status,409);
+
+    db.prepare(
+     'UPDATE payouts SET amount=? WHERE id=?'
+    ).run(originalAmount,secondPayout.id);
+
+    console.log(
+     'PASS — STEP228: Verified approval succeeds; '+
+     'financial tampering blocks further approval.'
+    );
+
+    // STEP229_FINAL_FINANCIAL_GATES
+    const mondayBase=
+     base+'/api/admin/monday-runs/'+
+     encodeURIComponent(result.id);
+
+    const post=async(path)=>{
+     const response=await fetch(mondayBase+path,{
+      method:'POST',
+      headers:authHeaders,
+      body:'{}'
+     });
+     return {
+      status:response.status,
+      body:await response.json()
+     };
+    };
+
+    const verificationRows=()=>db.prepare(`
+     SELECT rowid,* FROM monday_settlement_verifications
+     WHERE run_id=? ORDER BY rowid DESC
+    `).all(result.id);
+
+    // A bulk approval must not bypass an expired verification.
+    const currentPass=verificationRows()[0];
+
+    assert.equal(currentPass.status,'passed');
+
+    db.prepare(`
+     UPDATE monday_settlement_verifications
+     SET expires_at='2000-01-01T00:00:00Z'
+     WHERE id=?
+    `).run(currentPass.id);
+
+    const expiredApproval=await fetch(
+     base+'/api/admin/monday-runs/'+
+     encodeURIComponent(result.id)+'/payouts/'+
+     encodeURIComponent(secondPayout.id),
+     {
+      method:'PATCH',
+      headers:authHeaders,
+      body:JSON.stringify({status:'approved'})
+     }
+    );
+
+    assert.equal(expiredApproval.status,409);
+
+    const expiredBulk=await post('/approve-all');
+
+    assert.equal(expiredBulk.status,409);
+
+    // Restore expiry so the next test isolates financial fingerprints.
+    db.prepare(`
+     UPDATE monday_settlement_verifications
+     SET expires_at=?
+     WHERE id=?
+    `).run(currentPass.expires_at,currentPass.id);
+
+    // Changing financial settings must prevent approval.
+    const setting=db.prepare(`
+     SELECT value FROM settings WHERE key='config'
+    `).get();
+
+    // The fingerprint function compares saved rules to current settings.
+    // Test a plan mutation instead; this does not assume settings format.
+    const originalPlanRemaining=db.prepare(`
+     SELECT remaining_amount FROM driver_payment_plans
+     WHERE id='step217-plan'
+    `).get().remaining_amount;
+
+    db.prepare(`
+     UPDATE driver_payment_plans
+     SET remaining_amount=?
+     WHERE id='step217-plan'
+    `).run(originalPlanRemaining+1);
+
+    const changedPlanBulk=await post('/approve-all');
+    assert.equal(changedPlanBulk.status,409);
+
+    db.prepare(`
+     UPDATE driver_payment_plans
+     SET remaining_amount=?
+     WHERE id='step217-plan'
+    `).run(originalPlanRemaining);
+
+    // A fresh failed verification must supersede the old pass.
+    db.prepare(`
+     UPDATE payouts SET amount=amount+1
+     WHERE id=?
+    `).run(secondPayout.id);
+
+    const failedVerification=await post('/verify-financials');
+
+    assert.equal(failedVerification.status,409);
+
+    const latest=verificationRows()[0];
+    assert.equal(latest.status,'failed');
+
+    const earlier=verificationRows().find(
+     x=>x.id===currentPass.id
+    );
+
+    assert.equal(earlier.status,'invalidated');
+
+    // Even after restoring the corrupted payout, a newer failed
+    // attempt must not allow reuse of the old verification.
+    db.prepare(`
+     UPDATE payouts SET amount=?
+     WHERE id=?
+    `).run(originalAmount,secondPayout.id);
+
+    const staleApproval=await fetch(
+     base+'/api/admin/monday-runs/'+
+     encodeURIComponent(result.id)+'/payouts/'+
+     encodeURIComponent(secondPayout.id),
+     {
+      method:'PATCH',
+      headers:authHeaders,
+      body:JSON.stringify({status:'approved'})
+     }
+    );
+
+    assert.equal(staleApproval.status,409);
+
+    const staleBulk=await post('/approve-all');
+    assert.equal(staleBulk.status,409);
+
+    // Batching must reject any settlement not approved.
+    const prematureBatch=await post('/create-payout-run');
+    assert.equal(prematureBatch.status,409);
+
+    // Simulate approved run status solely inside this isolated
+    // temporary database to exercise the batching verification gate.
+    db.prepare(`
+     UPDATE settlement_runs SET status='approved'
+     WHERE id=?
+    `).run(result.id);
+
+    const unverifiedBatch=await post('/create-payout-run');
+    assert.equal(unverifiedBatch.status,409);
+
+    // Restore the draft. No payout batch is created.
+    db.prepare(`
+     UPDATE settlement_runs SET status='draft'
+     WHERE id=?
+    `).run(result.id);
+
+    // STEP229A_BATCH_MEMBERSHIP_ASSERTION
+    // Verify no payout from this Monday run joined a batch.
+    assert.equal(
+     db.prepare(`
+      SELECT COUNT(*) AS n
+      FROM payouts
+      WHERE run_id=?
+        AND payout_run_id IS NOT NULL
+     `).get(result.id).n,
+     0
+    );
+
+    console.log(
+     'PASS — STEP229: Expiry, bulk approval, plan tampering, '+
+     'failed re-verification and payout-batch blocking.'
+    );
+
+    // STEP234_VERIFIED_BULK_APPROVAL
+    // Reverify after the deliberately failed verification attempt.
+    const freshVerification=await post('/verify-financials');
+
+    assert.equal(
+     freshVerification.status,
+     200,
+     JSON.stringify(freshVerification.body).slice(0,1500)
+    );
+
+    assert.equal(freshVerification.body.status,'passed');
+
+    const bulkApproval=await post('/approve-all');
+
+    assert.equal(
+     bulkApproval.status,
+     200,
+     JSON.stringify(bulkApproval.body).slice(0,1500)
+    );
+
+    assert.equal(bulkApproval.body.ok,true);
+
+    const approvedRun=db.prepare(`
+     SELECT status,items_json
+     FROM settlement_runs WHERE id=?
+    `).get(result.id);
+
+    assert.equal(approvedRun.status,'approved');
+
+    const savedItems=JSON.parse(approvedRun.items_json);
+    const approvedPayouts=db.prepare(`
+     SELECT *
+     FROM payouts
+     WHERE run_id=? AND type='weekly'
+       AND status='approved'
+    `).all(result.id);
+
+    const pendingCount=db.prepare(`
+     SELECT COUNT(*) AS n
+     FROM payouts
+     WHERE run_id=? AND type='weekly'
+       AND status='pending_approval'
+    `).get(result.id).n;
+
+    assert.equal(pendingCount,0);
+    assert.equal(approvedPayouts.length,1001);
+    assert.equal(
+     savedItems.filter(x=>x.approvalStatus==='approved').length,
+     1001
+    );
+
+    // The payment-plan deduction must remain pending.
+    const allocationAfterApproval=db.prepare(`
+     SELECT status FROM payment_plan_settlement_allocations
+     WHERE run_id=? AND driver_id=10001
+    `).get(result.id);
+
+    assert.equal(allocationAfterApproval.status,'pending');
+
+    // Verification alone must never bypass the deduction lock.
+    const blockedBatch=await post('/create-payout-run');
+
+    assert.equal(blockedBatch.status,409);
+    assert.match(
+     JSON.stringify(blockedBatch.body),
+     /payment.plan deduction|pending payment.plan/i
+    );
+
+    assert.equal(
+     db.prepare(`
+      SELECT COUNT(*) AS n
+      FROM payouts
+      WHERE run_id=? AND payout_run_id IS NOT NULL
+     `).get(result.id).n,
+     0
+    );
+
+    console.log(
+     'PASS — STEP234: Fresh verification permits atomic bulk approval; '+
+     'pending payment-plan deduction still prevents payout batching.'
+    );
+
+
+
+
   }else{
    assert.notEqual(
     response.status,200,
