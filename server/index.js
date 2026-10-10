@@ -9,6 +9,16 @@ import { DatabaseSync } from 'node:sqlite';
 import Stripe from 'stripe';
 import webpush from 'web-push';
 import PDFDocument from 'pdfkit';
+import { collectAutocabAccountPages } from './lib/autocab-account-pagination.mjs';
+import { validateAutocabFinancialSource } from './lib/autocab-financial-validation.mjs';
+import { prepareMondaySourceEvidence } from './lib/monday-source-evidence.mjs';
+import { checkMondayVerificationGate }
+ from './lib/monday-verification-gate.mjs';
+import { verifyMondaySourceBinding } from './lib/monday-source-binding.mjs';
+import { reconcileMondaySettlement } from './lib/monday-settlement-reconciliation.mjs';
+import { verifyMondayPlansFromDatabase } from './lib/monday-plan-verification.mjs';
+import { decideMondayVerification } from './lib/monday-verification-decision.mjs';
+import { createAutocabAdjustmentService } from './lib/autocab-adjustments.mjs';
 
 dotenv.config();
 const app = express();
@@ -374,17 +384,142 @@ CREATE TABLE IF NOT EXISTS driver_ledger (
 CREATE INDEX IF NOT EXISTS idx_cache_callsign ON driver_cache(callsign);
 CREATE INDEX IF NOT EXISTS idx_notifications_driver ON driver_notifications(driver_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ledger_driver ON driver_ledger(driver_id, created_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_driver_ledger_unique_payout_event
+ON driver_ledger(reference_id, entry_type)
+WHERE reference_id IS NOT NULL
+  AND entry_type IN (
+   'weekly_payout',
+   'early_payout',
+   'early_payout_fee'
+  );
+
 CREATE TABLE IF NOT EXISTS payout_runs (
  id TEXT PRIMARY KEY, run_type TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, created_by TEXT,
  scheduled_for TEXT, total_amount REAL NOT NULL DEFAULT 0, item_count INTEGER NOT NULL DEFAULT 0,
  provider TEXT, provider_ref TEXT, notes TEXT, paid_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_payout_runs_created ON payout_runs(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS payout_confirmations (
+ id TEXT PRIMARY KEY,
+ payout_id TEXT NOT NULL,
+ payout_run_id TEXT NOT NULL,
+ provider TEXT NOT NULL,
+ provider_transaction_id TEXT,
+ outcome TEXT NOT NULL
+   CHECK(outcome IN ('pending','paid','failed','uncertain')),
+ amount REAL NOT NULL CHECK(amount >= 0),
+ currency TEXT NOT NULL DEFAULT 'GBP',
+ evidence_source TEXT NOT NULL,
+ evidence_reference TEXT,
+ evidence_json TEXT,
+ verification_status TEXT NOT NULL DEFAULT 'unverified'
+   CHECK(verification_status IN ('unverified','verified','rejected')),
+ verified_by TEXT,
+ verified_at TEXT,
+ created_by TEXT NOT NULL,
+ created_at TEXT NOT NULL,
+ updated_at TEXT,
+ FOREIGN KEY(payout_id) REFERENCES payouts(id),
+ FOREIGN KEY(payout_run_id) REFERENCES payout_runs(id)
+);
+CREATE INDEX IF NOT EXISTS idx_payout_confirmations_run
+ON payout_confirmations(payout_run_id, payout_id);
+CREATE INDEX IF NOT EXISTS idx_payout_confirmations_payout
+ON payout_confirmations(payout_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_payout_confirmations_provider_reference
+ON payout_confirmations(provider, provider_transaction_id)
+WHERE provider_transaction_id IS NOT NULL
+  AND provider_transaction_id != '';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_payout_confirmations_verified_paid
+ON payout_confirmations(payout_id)
+WHERE outcome='paid' AND verification_status='verified';
+
+
+-- Permanent payout-to-provider transfer tracking.
+-- This table stores instructions and evidence, not authority to pay.
+CREATE TABLE IF NOT EXISTS payout_transfer_intents (
+ id TEXT PRIMARY KEY,
+ payout_id TEXT NOT NULL UNIQUE,
+ payout_run_id TEXT NOT NULL,
+
+ provider TEXT NOT NULL DEFAULT 'wise',
+ environment TEXT NOT NULL
+   CHECK(environment IN ('sandbox','production')),
+
+ idempotency_key TEXT NOT NULL UNIQUE,
+
+ recipient_id TEXT NOT NULL,
+ recipient_account_last4 TEXT,
+ recipient_sort_code_last2 TEXT,
+ recipient_verified_at TEXT,
+ recipient_snapshot_at TEXT NOT NULL,
+
+ amount_minor INTEGER NOT NULL CHECK(amount_minor>0),
+ currency TEXT NOT NULL DEFAULT 'GBP'
+   CHECK(currency='GBP'),
+
+ status TEXT NOT NULL DEFAULT 'prepared'
+   CHECK(status IN (
+    'prepared',
+    'submitting',
+    'submitted',
+    'unknown',
+    'confirmed',
+    'failed',
+    'cancelled'
+   )),
+
+ provider_transfer_id TEXT,
+ provider_status TEXT,
+ provider_response_json TEXT,
+
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL,
+ submitted_at TEXT,
+ confirmed_at TEXT,
+
+ FOREIGN KEY(payout_id) REFERENCES payouts(id),
+ FOREIGN KEY(payout_run_id) REFERENCES payout_runs(id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS
+ idx_payout_transfer_intents_provider_transfer
+ON payout_transfer_intents(provider,environment,provider_transfer_id)
+WHERE provider_transfer_id IS NOT NULL
+ AND provider_transfer_id!='';
+
+CREATE INDEX IF NOT EXISTS
+ idx_payout_transfer_intents_run
+ON payout_transfer_intents(payout_run_id,status);
+
 CREATE TABLE IF NOT EXISTS autocab_adjustments (
  id TEXT PRIMARY KEY, event_key TEXT UNIQUE NOT NULL, driver_id INTEGER NOT NULL, callsign TEXT, amount REAL NOT NULL,
  is_credit INTEGER NOT NULL, description TEXT NOT NULL, adjustment_reason TEXT, status TEXT NOT NULL, response_json TEXT,
  created_at TEXT NOT NULL, completed_at TEXT, error TEXT
 );
+-- STEP137_AUTOCAB_RECONCILIATION_REVIEWS
+-- Append-only investigation history; financial status is never modified.
+CREATE TABLE IF NOT EXISTS autocab_adjustment_reviews (
+ id TEXT PRIMARY KEY,
+ adjustment_id TEXT NOT NULL,
+ investigation_status TEXT NOT NULL
+  CHECK(investigation_status IN (
+   'investigating',
+   'needs_evidence',
+   'reviewed'
+  )),
+ note TEXT NOT NULL,
+ reviewed_by TEXT NOT NULL,
+ reviewed_at TEXT NOT NULL,
+ FOREIGN KEY(adjustment_id)
+  REFERENCES autocab_adjustments(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_autocab_adjustment_reviews_adjustment
+ON autocab_adjustment_reviews(adjustment_id,reviewed_at DESC);
+
 CREATE TABLE IF NOT EXISTS push_subscriptions (
  id TEXT PRIMARY KEY, driver_id INTEGER NOT NULL, endpoint TEXT UNIQUE NOT NULL, subscription_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
@@ -595,6 +730,49 @@ for (const sql of [
   'ALTER TABLE payout_runs ADD COLUMN reconciled_at TEXT',
   'ALTER TABLE posted_driver_dockets ADD COLUMN source TEXT'
 ]) { try { db.exec(sql); } catch {} }
+
+
+// STEP120B_SETTLEMENT_VERIFICATION_STORAGE
+// Append-only verification history by application convention.
+// A record marked 'passed' is NOT payout authorisation.
+// Financial verification and approval gates are not active yet.
+db.exec(`
+ CREATE TABLE IF NOT EXISTS monday_settlement_verifications (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL
+    REFERENCES settlement_runs(id) ON DELETE RESTRICT,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK(status IN ('pending','passed','failed','invalidated')),
+  snapshot_hash TEXT,
+  autocab_source_hash TEXT,
+  rules_hash TEXT,
+  payment_plans_hash TEXT,
+  evidence_json TEXT NOT NULL DEFAULT '{}',
+  difference_count INTEGER NOT NULL DEFAULT 0
+    CHECK(difference_count >= 0),
+  verified_by TEXT,
+  compared_at TEXT,
+  expires_at TEXT,
+  failure_reason TEXT,
+  created_at TEXT NOT NULL,
+  CHECK(
+   status != 'passed' OR (
+    snapshot_hash IS NOT NULL AND
+    autocab_source_hash IS NOT NULL AND
+    rules_hash IS NOT NULL AND
+    payment_plans_hash IS NOT NULL AND
+    verified_by IS NOT NULL AND
+    compared_at IS NOT NULL AND
+    expires_at IS NOT NULL AND
+    difference_count = 0
+   )
+  )
+ );
+
+ CREATE INDEX IF NOT EXISTS
+  idx_monday_verifications_run_created
+ ON monday_settlement_verifications(run_id,created_at DESC);
+`);
 
 // Existing databases created before automated Autocab customer payments
 // required driver_id and callsign. Make those columns nullable once.
@@ -2740,6 +2918,14 @@ function resolveFeeCompanyId(companyId=null){
  return companies.length===1?companies[0].id:null;
 }
 
+
+// Exactly-once protection for payout-related fee records.
+db.exec(`
+CREATE UNIQUE INDEX IF NOT EXISTS idx_fee_ledger_unique_payout_fee
+ON fee_ledger(fee_type, source_type, source_id)
+WHERE source_type='payout';
+`);
+
 function recordFee({
  feeType,
  sourceType,
@@ -3507,9 +3693,51 @@ async function syncPostedDriverDockets(){
  };
 }
 
-async function getDriverAccounts(){return postJson(`${BASE_URL}/accounts/v1/DriversAccounts?pageno=1&pagesize=1000`,{companyId:null,driverId:null})}
+// STEP156_VERIFIED_AUTOCAB_ACCOUNT_PAGINATION
+async function getDriverAccounts(){
+ const result=await collectAutocabAccountPages({
+  pageSize:1000,
+  maxPages:10,
+  fetchPage:({page,pageSize})=>
+   postJson(
+    `${BASE_URL}/accounts/v1/DriversAccounts?pageno=${page}&pagesize=${pageSize}`,
+    {companyId:null,driverId:null}
+   )
+ });
+
+ if(
+  !result.complete ||
+  !result.paginationContractConfirmed ||
+  result.accountCount!==result.totalSummariesCount
+ ){
+  throw new Error(
+   'Autocab driver-account source completeness could not be verified.'
+  );
+ }
+
+ // Preserve the original trusted, immutable collection.
+ // Reconstructing this object loses verification provenance.
+ return result;
+}
 function mergeDrivers(drivers,accountsResponse){const accounts=accountsResponse?.summaries||[];const byId=new Map(accounts.map(a=>[Number(a.driverId),a]));return (drivers||[]).map(d=>{const a=byId.get(Number(d.id));return {driverId:d.id,callsign:d.callsign,forename:d.forename,surname:d.surname,fullName:d.fullName||`${d.forename||''} ${d.surname||''}`.trim(),mobile:d.mobile||d.telephone||'',email:d.email||'',active:Boolean(d.active),suspended:Boolean(d.suspended),previousBalance:a?.previousBalance??null,currentBalance:a?.currentBalance??null,lastProcessed:a?.lastProcessed??null,lastProcessedBy:a?.lastProcessedBy??null,notes:a?.notes??'',totals:a?{allJobsTotal:a.allJobsTotal??0,cashJobsTotal:a.cashJobsTotal??0,accountJobsTotal:a.accountJobsTotal??0,cardJobsTotal:a.cardJobsTotal??0,driverTransactionsTotal:a.driverTransactionsTotal??0,groupTransactionsTotal:a.groupTransactionsTotal??0,pendingTransactionsTotal:a.pendingTransactionsTotal??0,paidInTotal:a.paidInTotal??0,paidOutTotal:a.paidOutTotal??0,vatAmount:a.vatAmount??0,allJobsCommission:a.allJobsCommission??0}:null}})}
-async function getMergedDrivers(){const [d,a]=await Promise.all([getActiveDrivers(),getDriverAccounts()]);return mergeDrivers(d,a)}
+// STEP167_IMMUTABLE_FINANCIAL_SOURCE
+async function getMergedDriverFinancialSource(){
+ const [activeDrivers,accountsResponse]=await Promise.all([
+  getActiveDrivers(),
+  getDriverAccounts()
+ ]);
+
+ return {
+  drivers:mergeDrivers(activeDrivers,accountsResponse),
+  activeDrivers,
+  accountsResponse
+ };
+}
+
+async function getMergedDrivers(){
+ const source=await getMergedDriverFinancialSource();
+ return source.drivers;
+}
 function cacheRows(){return db.prepare('SELECT * FROM driver_cache ORDER BY CAST(callsign AS INTEGER), callsign').all().map(r=>({driverId:r.driver_id,callsign:r.callsign,forename:r.forename,surname:r.surname,fullName:r.full_name,mobile:r.mobile,email:r.email,active:Boolean(r.active),suspended:Boolean(r.suspended),previousBalance:r.previous_balance,currentBalance:r.current_balance,lastProcessed:r.last_processed,lastProcessedBy:r.last_processed_by,notes:r.notes,totals:r.totals_json?JSON.parse(r.totals_json):null,syncedAt:r.synced_at,payoutExcluded:Boolean(r.payout_excluded),payoutExclusionReason:r.payout_exclusion_reason||''}))}
 function cachedDriver(driverId){const r=db.prepare('SELECT * FROM driver_cache WHERE driver_id=?').get(driverId);if(!r)return null;return {driverId:r.driver_id,callsign:r.callsign,forename:r.forename,surname:r.surname,fullName:r.full_name,mobile:r.mobile,email:r.email,active:Boolean(r.active),suspended:Boolean(r.suspended),previousBalance:r.previous_balance,currentBalance:r.current_balance,lastProcessed:r.last_processed,lastProcessedBy:r.last_processed_by,notes:r.notes,totals:r.totals_json?JSON.parse(r.totals_json):null,syncedAt:r.synced_at,payoutExcluded:Boolean(r.payout_excluded),payoutExclusionReason:r.payout_exclusion_reason||''}}
 let syncInFlight=null;
@@ -3517,7 +3745,17 @@ async function syncAutocab(){
  if(syncInFlight)return syncInFlight;
 
  syncInFlight=(async()=>{
-  const drivers=await getMergedDrivers();
+  // STEP168_SYNC_FINANCIAL_VERIFICATION
+  const source=await getMergedDriverFinancialSource();
+  const drivers=source.drivers;
+
+  const financialVerification=validateAutocabFinancialSource({
+   drivers:source.activeDrivers,
+   accountsResponse:source.accountsResponse,
+   verifiedCollection:source.accountsResponse,
+   requiredDriverIds:drivers.map(d=>d.driverId)
+  });
+
   const now=new Date().toISOString();
   const weekStart=mondayWeekStart();
 
@@ -3591,7 +3829,15 @@ async function syncAutocab(){
   return {
    drivers,
    postedDockets,
-   syncedAt:now
+   syncedAt:now,
+   financialVerification:{
+    ...financialVerification,
+    verifiedAt:now,
+    source:'autocab_driver_accounts',
+    totalSummariesCount:
+     source.accountsResponse.totalSummariesCount,
+    pageCount:source.accountsResponse.pageCount
+   }
   };
  })();
 
@@ -3603,93 +3849,20 @@ async function syncAutocab(){
 }
 function notify(driverId,title,message,type='info',referenceId=null){db.prepare('INSERT INTO driver_notifications(id,driver_id,title,message,type,reference_id,created_at) VALUES(?,?,?,?,?,?,?)').run(id('note'),driverId,title,message,type,referenceId,new Date().toISOString());sendPush(driverId,title,message).catch(()=>{})}
 
-async function postAutocabAdjustment({driverId,callsign,amount,isCredit,description,adjustmentReason,eventKey,force=false,liveTestWrite=false}){
- const liveTestIdentityApproved=
-  Boolean(liveTestWrite) &&
-  LIVE_TEST_AUTOCAB_WRITES_ENABLED &&
-  Number(driverId)===1112 &&
-  String(callsign)==='9997' &&
-  Number(amount)===1;
-
- const approvedLiveTestCredit=
-  liveTestIdentityApproved &&
-  Boolean(isCredit)===true &&
-  String(description)==='FaivoPay Live Test Credit' &&
-  String(adjustmentReason)==='FaivoPay Live Test' &&
-  String(eventKey)==='live-test:1112:first-credit-1gbp';
-
- const approvedLiveTestReversal=
-  liveTestIdentityApproved &&
-  Boolean(isCredit)===false &&
-  String(description)==='FaivoPay Live Test Reversal' &&
-  String(adjustmentReason)==='FaivoPay Live Test' &&
-  String(eventKey)==='live-test:1112:first-credit-reversal-1gbp';
-
- const approvedLiveTestWrite=
-  approvedLiveTestCredit||
-  approvedLiveTestReversal;
-
- if(liveTestWrite && !approvedLiveTestWrite){
-  throw new Error(
-   'Controlled Live Test Autocab write gate rejected this adjustment.'
-  );
- }
-
- if(
-  !AUTOCAB_ADJUSTMENTS_ENABLED &&
-  !approvedLiveTestWrite &&
-  !force
- ){
-  throw new Error(
-   'Autocab adjustments are disabled. '+
-   'Set AUTOCAB_ADJUSTMENTS_ENABLED=true to enable production writes.'
-  );
- }
-
- const existing=db.prepare('SELECT * FROM autocab_adjustments WHERE event_key=?').get(eventKey);
- if(existing?.status==='completed') return {duplicate:true,existing};
- const adjustmentId=existing?.id||id('adj'),now=new Date().toISOString();
- if(!existing) db.prepare('INSERT INTO autocab_adjustments(id,event_key,driver_id,callsign,amount,is_credit,description,adjustment_reason,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(adjustmentId,eventKey,driverId,callsign,Number(amount),isCredit?1:0,description,adjustmentReason||'', 'pending', now);
- try{
-  const response=await putJson(`${BASE_URL}/driver/v1/accounts/driveraccounts/${driverId}/adjustment`,{amount:Number(amount),description,isCredit:Boolean(isCredit),adjustmentReason:adjustmentReason||'FaivoPay'});
-  const completedAt=new Date().toISOString();
-  db.prepare('UPDATE autocab_adjustments SET status=?,response_json=?,completed_at=?,error=NULL WHERE id=?').run('completed',JSON.stringify(response||{}),completedAt,adjustmentId);
-  db.prepare('UPDATE driver_cache SET current_balance=COALESCE(current_balance,0)+?,synced_at=? WHERE driver_id=?').run(isCredit?Number(amount):-Number(amount),completedAt,driverId);
-  return {ok:true,id:adjustmentId,response,completedAt};
- }catch(e){db.prepare('UPDATE autocab_adjustments SET status=?,error=? WHERE id=?').run('failed',e.message,adjustmentId);throw e}
-}
-
-async function postAutocabAdjustmentSafelyOnce(args){
- const eventKey=String(args?.eventKey||'').trim();
-
- if(!eventKey){
-  throw new Error(
-   'A unique Autocab event key is required for a safe one-time adjustment'
-  );
- }
-
- const existing=db.prepare(`
-  SELECT *
-  FROM autocab_adjustments
-  WHERE event_key=?
- `).get(eventKey);
-
- if(existing?.status==='completed'){
-  return {
-   duplicate:true,
-   existing
-  };
- }
-
- if(existing){
-  throw new Error(
-   `Autocab adjustment ${eventKey} is ${existing.status}. `+
-   'FaivoPay will not resend it automatically because the previous Autocab outcome may be uncertain. Review the adjustment before retrying.'
-  );
- }
-
- return postAutocabAdjustment(args);
-}
+// STEP123Y_TESTED_ADJUSTMENT_SERVICE
+// Production and automated tests use the same adjustment implementation.
+const {
+ postAutocabAdjustment,
+ postAutocabAdjustmentSafelyOnce
+}=createAutocabAdjustmentService({
+ db,
+ transport:putJson,
+ makeId:id,
+ baseUrl:BASE_URL,
+ adjustmentsEnabled:AUTOCAB_ADJUSTMENTS_ENABLED,
+ liveTestWritesEnabled:LIVE_TEST_AUTOCAB_WRITES_ENABLED,
+ logger:console
+});
 
 async function settlePaymentPlanActivationInAutocab(plan,source){
  const d=cachedDriver(plan.driver_id);
@@ -3749,17 +3922,17 @@ async function settlePayoutInAutocab(item){
  const d=cachedDriver(item.driver_id); const callsign=item.callsign||d?.callsign||String(item.driver_id),settings=getSettings();
  const adjustments=[];
  const fee=Number(item.type==='early'?item.fee:item.weekly_fee||0); const carried=Number(item.type==='weekly'?item.carried_charges||0:0); const paid=Number(item.net_amount||item.amount||0);
- if(fee>0) adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:fee,isCredit:false,description:item.type==='early'?'FaivoPay early payout fee':'FaivoPay weekly app fee',adjustmentReason:'FaivoPay Fee',eventKey:`payout:${item.id}:fee`}));
- if(carried>0) adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:carried,isCredit:false,description:'FaivoPay carried charge',adjustmentReason:'FaivoPay Carried Charge',eventKey:`payout:${item.id}:carried`}));
- if(paid>0){const vars=dateTimeVars({callsign,amount:paid.toFixed(2)}),description=templateText(item.type==='early'?settings.earlyPayoutReasonTemplate:settings.weeklyPayoutReasonTemplate,vars)||`${item.type==='early'?'FaivoPay Early Payout':'FaivoPay Weekly Payout'} ${vars.date} ${vars.time}`;adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:paid,isCredit:false,description,adjustmentReason:item.type==='early'?'FaivoPay Early Payout':'FaivoPay Weekly Payout',eventKey:`payout:${item.id}:payment`}))}
+ if(fee>0) adjustments.push(await postAutocabAdjustmentSafelyOnce({driverId:item.driver_id,callsign,amount:fee,isCredit:false,description:item.type==='early'?'FaivoPay early payout fee':'FaivoPay weekly app fee',adjustmentReason:'FaivoPay Fee',eventKey:`payout:${item.id}:fee`}));
+ if(carried>0) adjustments.push(await postAutocabAdjustmentSafelyOnce({driverId:item.driver_id,callsign,amount:carried,isCredit:false,description:'FaivoPay carried charge',adjustmentReason:'FaivoPay Carried Charge',eventKey:`payout:${item.id}:carried`}));
+ if(paid>0){const vars=dateTimeVars({callsign,amount:paid.toFixed(2)}),description=templateText(item.type==='early'?settings.earlyPayoutReasonTemplate:settings.weeklyPayoutReasonTemplate,vars)||`${item.type==='early'?'FaivoPay Early Payout':'FaivoPay Weekly Payout'} ${vars.date} ${vars.time}`;adjustments.push(await postAutocabAdjustmentSafelyOnce({driverId:item.driver_id,callsign,amount:paid,isCredit:false,description,adjustmentReason:item.type==='early'?'FaivoPay Early Payout':'FaivoPay Weekly Payout',eventKey:`payout:${item.id}:payment`}))}
  return adjustments;
 }
 async function settlePaymentRequestInAutocab(item){
  const d=cachedDriver(item.driver_id); const callsign=item.callsign||d?.callsign||String(item.driver_id); const adjustments=[];
  const fee=Number(item.weekly_fee||0),carried=Number(item.carried_charges||0),received=Number(item.amount||0);
- if(fee>0) adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:fee,isCredit:false,description:'FaivoPay weekly app fee',adjustmentReason:'FaivoPay Fee',eventKey:`request:${item.id}:fee`}));
- if(carried>0) adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:carried,isCredit:false,description:'FaivoPay carried charge',adjustmentReason:'FaivoPay Carried Charge',eventKey:`request:${item.id}:carried`}));
- if(received>0) adjustments.push(await postAutocabAdjustment({driverId:item.driver_id,callsign,amount:received,isCredit:true,description:'FaivoPay payment received',adjustmentReason:'FaivoPay Payment',eventKey:`request:${item.id}:payment`}));
+ if(fee>0) adjustments.push(await postAutocabAdjustmentSafelyOnce({driverId:item.driver_id,callsign,amount:fee,isCredit:false,description:'FaivoPay weekly app fee',adjustmentReason:'FaivoPay Fee',eventKey:`request:${item.id}:fee`}));
+ if(carried>0) adjustments.push(await postAutocabAdjustmentSafelyOnce({driverId:item.driver_id,callsign,amount:carried,isCredit:false,description:'FaivoPay carried charge',adjustmentReason:'FaivoPay Carried Charge',eventKey:`request:${item.id}:carried`}));
+ if(received>0) adjustments.push(await postAutocabAdjustmentSafelyOnce({driverId:item.driver_id,callsign,amount:received,isCredit:true,description:'FaivoPay payment received',adjustmentReason:'FaivoPay Payment',eventKey:`request:${item.id}:payment`}));
  return adjustments;
 }
 async function sendPush(driverId,title,message,url='/driver'){
@@ -3794,6 +3967,11 @@ function ledger(driverId,entryType,direction,amount,feeAmount,description,refere
 }
 
 async function createStripePaymentRequest(item){
+ if(item.status!=='open'){
+  throw new Error(
+   'Only released, open payment requests can create Stripe links.'
+  );
+ }
  if(!getStripeClient()) return null;
 
  if(item.payment_url && item.provider_session_id){
@@ -3991,15 +4169,177 @@ async function createStripeCustomerPayment(item){
  return session;
 }
 function serializePayoutRun(r){return {id:r.id,runType:r.run_type,status:r.status,createdAt:r.created_at,createdBy:r.created_by,scheduledFor:r.scheduled_for,totalAmount:r.total_amount,itemCount:r.item_count,provider:r.provider,providerRef:r.provider_ref,notes:r.notes,paidAt:r.paid_at,fundingStatus:r.funding_status||'not_started',fundingRequired:Number(r.funding_required??r.total_amount??0),fundingSentAt:r.funding_sent_at,fundsClearedAt:r.funds_cleared_at,releasedAt:r.released_at,reconciledAt:r.reconciled_at}}
+
+// Internal accounting foundation only.
+// No API route calls this function. Provider verification is not yet
+// implemented, so the execution gate deliberately remains closed.
+function finaliseVerifiedPayoutAccounting(payoutId, confirmationId, req){
+ if(process.env.PAYOUT_ACCOUNTING_FINALISATION_ENABLED!=='true'){
+  throw new Error(
+   'Payout accounting finalisation remains disabled until '+
+   'independent provider verification has been implemented and tested.'
+  );
+ }
+
+ db.exec('BEGIN IMMEDIATE');
+
+ try{
+  const payout=db.prepare(
+   'SELECT * FROM payouts WHERE id=?'
+  ).get(payoutId);
+
+  const evidence=db.prepare(`
+   SELECT *
+   FROM payout_confirmations
+   WHERE id=?
+     AND payout_id=?
+  `).get(confirmationId,payoutId);
+
+  if(!payout || !evidence){
+   throw new Error('Payout or provider confirmation not found.');
+  }
+
+  if(!payout.payout_run_id ||
+     payout.payout_run_id!==evidence.payout_run_id){
+   throw new Error('Provider confirmation does not match payout batch.');
+  }
+
+  const batch=db.prepare(
+   'SELECT * FROM payout_runs WHERE id=?'
+  ).get(payout.payout_run_id);
+
+  if(!batch ||
+     batch.status==='cancelled' ||
+     !batch.released_at ||
+     !batch.provider_ref){
+   throw new Error(
+    'Provider batch has not been released for reconciliation.'
+   );
+  }
+
+  if(evidence.outcome!=='paid' ||
+     evidence.verification_status!=='verified' ||
+     !evidence.verified_at ||
+     !evidence.provider_transaction_id ||
+     evidence.currency!=='GBP'){
+   throw new Error('Independent paid confirmation is required.');
+  }
+
+  // An administrator-imported record is never sufficient.
+  // This is an additional check, not a replacement for a trusted
+  // provider integration.
+  if(evidence.evidence_source!=='wise_api' ||
+     evidence.verified_by!=='system:wise'){
+   throw new Error('Trusted provider verification is missing.');
+  }
+
+  const expected=Math.round(
+   Number(payout.net_amount??payout.amount??0)*100
+  );
+
+  if(!Number.isSafeInteger(expected) ||
+     expected<=0 ||
+     Math.round(Number(evidence.amount)*100)!==expected){
+   throw new Error('Confirmed provider amount does not match.');
+  }
+
+  if(payout.status==='paid'){
+   throw new Error(
+    'Payout is already marked paid. Review existing accounting.'
+   );
+  }
+
+  if(payout.status!=='batched' || payout.paid_at){
+   throw new Error('Payout is not eligible for finalisation.');
+  }
+
+  const now=new Date().toISOString();
+
+  const changed=db.prepare(`
+   UPDATE payouts
+   SET status='paid',paid_at=?,updated_at=?
+   WHERE id=?
+     AND status='batched'
+     AND paid_at IS NULL
+  `).run(now,now,payout.id);
+
+  if(changed.changes!==1){
+   throw new Error('Payout status changed during finalisation.');
+  }
+
+  ledger(
+   payout.driver_id,
+   payout.type==='early'?'early_payout':'weekly_payout',
+   'credit',
+   expected/100,
+   Number(payout.fee||0),
+   payout.type==='early'?'Early payout paid':'Weekly payout paid',
+   payout.id,
+   'paid'
+  );
+
+  if(payout.type==='early' && Number(payout.fee||0)>0){
+   ledger(
+    payout.driver_id,
+    'early_payout_fee',
+    'debit',
+    Number(payout.fee),
+    Number(payout.fee),
+    'Early payout fee',
+    payout.id,
+    'charged'
+   );
+
+   recordFee({
+    feeType:'early_payout',
+    sourceType:'payout',
+    sourceId:payout.id,
+    driverId:payout.driver_id,
+    callsign:payout.callsign,
+    description:'Early payout fee',
+    amount:Number(payout.fee),
+    createdAt:now
+   });
+  }
+
+  audit(
+   req,'staff',req?.auth?.email||'system',
+   'verified_payout_accounting_finalised',
+   'payout',payout.id,
+   {
+    confirmationId:evidence.id,
+    payoutRunId:batch.id,
+    provider:evidence.provider,
+    providerTransactionId:evidence.provider_transaction_id,
+    amount:expected/100,
+    currency:'GBP'
+   }
+  );
+
+  db.exec('COMMIT');
+
+  return {
+   ok:true,
+   payoutId:payout.id,
+   confirmationId:evidence.id,
+   paidAt:now,
+   autocabReconciled:false
+  };
+ }catch(error){
+  try{db.exec('ROLLBACK')}catch{}
+  throw error;
+ }
+}
+
 async function markPayoutPaid(item, req, source='manual'){
- if(item.status==='paid') return;
- const now=new Date().toISOString();
- db.prepare('UPDATE payouts SET status=?,paid_at=?,updated_at=? WHERE id=?').run('paid',now,now,item.id);
- ledger(item.driver_id,item.type==='early'?'early_payout':'weekly_payout','credit',Number(item.net_amount||item.amount||0),Number(item.fee||0),item.type==='early'?'Early payout paid':'Weekly payout paid',item.id,'paid');
- if(Number(item.fee||0)>0){ledger(item.driver_id,'early_payout_fee','debit',Number(item.fee||0),Number(item.fee||0),'Early payout fee',item.id,'charged');recordFee({feeType:'early_payout',sourceType:'payout',sourceId:item.id,driverId:item.driver_id,callsign:item.callsign,description:'Early payout fee',amount:Number(item.fee||0),createdAt:now})}
- notify(item.driver_id,'Payment sent',`£${Number(item.net_amount||item.amount||0).toFixed(2)} has been paid to your assigned bank account.`,'success',item.id);
- try{await settlePayoutInAutocab(item);audit(req,'system','autocab','autocab_payout_adjusted','payout',item.id,{callsign:item.callsign});}catch(e){audit(req,'system','autocab','autocab_adjustment_failed','payout',item.id,{callsign:item.callsign,error:e.message});}
- audit(req,'admin',req?.auth?.email||source,'payout_paid','payout',item.id,{callsign:item.callsign,amount:Number(item.net_amount||item.amount||0),source});
+ // Disabled: the legacy function combined unverified paid status,
+ // financial accounting, notifications and external Autocab writes.
+ // A verified-provider, transactional finalisation workflow must
+ // replace it. Never restore the old implementation.
+ throw new Error(
+  'Legacy payout finalisation is disabled. '+
+  'Use verified provider reconciliation before financial finalisation.'
+ );
 }
 async function sendEmail(
  to,
@@ -7369,7 +7709,170 @@ app.get('/api/admin/integrations',adminAuth,(req,res)=>{
  });
 });
 app.post('/api/admin/integrations/wise/test',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{const out=await testWiseConnection();audit(req,'admin',req.auth.email,'wise_connection_test','integration','wise',{environment:WISE_ENV});res.json(out)}catch(e){res.status(500).json({error:e.message})}});
-app.post('/api/admin/autocab/test-adjustment',adminAuth,requireStaffRole('administrator'),async(req,res)=>{try{const callsign=String(req.body.callsign||'').trim();const d=cacheRows().find(x=>String(x.callsign)===callsign);if(!d)return res.status(404).json({error:'Callsign not found in FaivoPay cache'});const amount=Number(req.body.amount||0);if(!(amount>0))return res.status(400).json({error:'Amount must be greater than zero'});const result=await postAutocabAdjustment({driverId:d.driverId,callsign:d.callsign,amount,isCredit:Boolean(req.body.isCredit),description:String(req.body.description||'FaivoPay test adjustment'),adjustmentReason:String(req.body.adjustmentReason||'FaivoPay Test'),eventKey:`test:${Date.now()}:${d.driverId}`,force:true});audit(req,'admin',req.auth.email,'autocab_test_adjustment','driver',d.callsign,{callsign:d.callsign,amount,isCredit:Boolean(req.body.isCredit)});setTimeout(()=>syncAutocab().catch(()=>{}),500);res.json({ok:true,driver:{driverId:d.driverId,callsign:d.callsign,fullName:d.fullName},result})}catch(e){res.status(500).json({error:e.message})}});
+app.post('/api/admin/autocab/test-adjustment',adminAuth,requireStaffRole('administrator'),async(req,res)=>{try{const callsign=String(req.body.callsign||'').trim();const d=cacheRows().find(x=>String(x.callsign)===callsign);if(!d)return res.status(404).json({error:'Callsign not found in FaivoPay cache'});const amount=Number(req.body.amount||0);if(!(amount>0))return res.status(400).json({error:'Amount must be greater than zero'});const result=await postAutocabAdjustment({driverId:d.driverId,callsign:d.callsign,amount,isCredit:Boolean(req.body.isCredit),description:String(req.body.description||'FaivoPay test adjustment'),adjustmentReason:String(req.body.adjustmentReason||'FaivoPay Test'),eventKey:`test:${Date.now()}:${d.driverId}`});audit(req,'admin',req.auth.email,'autocab_test_adjustment','driver',d.callsign,{callsign:d.callsign,amount,isCredit:Boolean(req.body.isCredit)});setTimeout(()=>syncAutocab().catch(()=>{}),500);res.json({ok:true,driver:{driverId:d.driverId,callsign:d.callsign,fullName:d.fullName},result})}catch(e){res.status(500).json({error:e.message})}});
+// STEP138_AUTOCAB_RECONCILIATION_API
+// Administrator-only investigation. No financial mutation or Autocab calls.
+app.get(
+ '/api/admin/autocab/reconciliation',
+ adminAuth,
+ requireStaffRole('administrator'),
+ (req,res)=>{
+  const rows=db.prepare(`
+   SELECT
+    a.id,
+    a.event_key AS eventKey,
+    a.driver_id AS driverId,
+    a.callsign,
+    a.amount,
+    a.is_credit AS isCredit,
+    a.description,
+    a.adjustment_reason AS adjustmentReason,
+    a.status AS financialStatus,
+    a.error,
+    a.created_at AS createdAt,
+    a.completed_at AS completedAt,
+    (
+     SELECT r.investigation_status
+     FROM autocab_adjustment_reviews r
+     WHERE r.adjustment_id=a.id
+     ORDER BY r.reviewed_at DESC,r.rowid DESC
+     LIMIT 1
+    ) AS investigationStatus
+   FROM autocab_adjustments a
+   WHERE a.status IN ('pending','uncertain','failed')
+   ORDER BY a.created_at DESC
+   LIMIT 250
+  `).all();
+
+  // STEP145_RECONCILIATION_HISTORY
+  const historyStmt=db.prepare(`
+   SELECT
+    id,
+    investigation_status AS investigationStatus,
+    note,
+    reviewed_by AS reviewedBy,
+    reviewed_at AS reviewedAt
+   FROM autocab_adjustment_reviews
+   WHERE adjustment_id=?
+   ORDER BY reviewed_at DESC,rowid DESC
+   LIMIT 100
+  `);
+
+  res.json({
+   adjustments:rows.map(row=>({
+    ...row,
+    isCredit:Boolean(row.isCredit),
+    investigationStatus:row.investigationStatus||'open',
+    reviewHistory:historyStmt.all(row.id),
+    transactionVerified:false,
+    safeToRetry:false
+   }))
+  });
+ }
+);
+
+app.post(
+ '/api/admin/autocab/reconciliation/:adjustmentId/reviews',
+ adminAuth,
+ requireStaffRole('administrator'),
+ (req,res)=>{
+  const adjustmentId=String(req.params.adjustmentId||'').trim();
+  const status=String(req.body?.investigationStatus||'').trim();
+  const note=String(req.body?.note||'').trim();
+
+  if(!['investigating','needs_evidence','reviewed'].includes(status)){
+   return res.status(400).json({
+    error:'Invalid investigation status.'
+   });
+  }
+
+  if(note.length<10 || note.length>4000){
+   return res.status(400).json({
+    error:'Investigation note must contain 10–4000 characters.'
+   });
+  }
+
+  // STEP139_ATOMIC_RECONCILIATION_REVIEW
+  const reviewId=id('adjreview');
+  const reviewedAt=new Date().toISOString();
+  const reviewedBy=String(req.auth.email||req.auth.staffId||'');
+  let financialStatus=null;
+
+  try{
+   db.exec('BEGIN IMMEDIATE');
+
+   const adjustment=db.prepare(`
+    SELECT id,status,event_key
+    FROM autocab_adjustments
+    WHERE id=?
+   `).get(adjustmentId);
+
+   if(!adjustment){
+    db.exec('ROLLBACK');
+    return res.status(404).json({
+     error:'Autocab adjustment not found.'
+    });
+   }
+
+   if(!['pending','uncertain','failed'].includes(adjustment.status)){
+    db.exec('ROLLBACK');
+    return res.status(409).json({
+     error:'Only unresolved adjustments can be investigated.'
+    });
+   }
+
+   financialStatus=adjustment.status;
+
+   db.prepare(`
+    INSERT INTO autocab_adjustment_reviews(
+     id,adjustment_id,investigation_status,
+     note,reviewed_by,reviewed_at
+    ) VALUES(?,?,?,?,?,?)
+   `).run(
+    reviewId,adjustmentId,status,note,reviewedBy,reviewedAt
+   );
+
+   audit(
+    req,
+    'staff',
+    reviewedBy,
+    'autocab_adjustment_investigation_recorded',
+    'autocab_adjustment',
+    adjustmentId,
+    {
+     reviewId,
+     eventKey:adjustment.event_key,
+     investigationStatus:status,
+     financialStatusUnchanged:adjustment.status,
+     note
+    }
+   );
+
+   db.exec('COMMIT');
+  }catch(error){
+   try{db.exec('ROLLBACK')}catch{}
+   return res.status(500).json({
+    error:'Unable to record investigation.'
+   });
+  }
+
+  res.status(201).json({
+   ok:true,
+   review:{
+    id:reviewId,
+    adjustmentId,
+    investigationStatus:status,
+    note,
+    reviewedBy,
+    reviewedAt
+   },
+   financialStatus,
+   transactionVerified:false,
+   safeToRetry:false
+  });
+ }
+);
+
 app.get('/api/admin/autocab/adjustments',adminAuth,(req,res)=>{const rows=db.prepare('SELECT id,event_key eventKey,driver_id driverId,callsign,amount,is_credit isCredit,description,adjustment_reason adjustmentReason,status,created_at createdAt,completed_at completedAt,error FROM autocab_adjustments ORDER BY created_at DESC LIMIT 250').all().map(x=>({...x,isCredit:Boolean(x.isCredit)}));res.json({adjustments:rows})});
 app.get('/api/admin/dashboard',adminAuth,(req,res)=>{const drivers=cacheRows();const matched=drivers.filter(d=>d.currentBalance!==null).length;const owedOut=drivers.reduce((s,d)=>s+Math.max(0,Number(d.currentBalance||0)),0),owedIn=drivers.reduce((s,d)=>s+Math.max(0,-Number(d.currentBalance||0)),0);const stats={count:drivers.length,matched,unmatched:drivers.length-matched,owedOut,owedIn,openPaymentRequests:Number(db.prepare("SELECT COUNT(*) c FROM payment_requests WHERE status='open'").get().c),queuedPayouts:Number(db.prepare("SELECT COUNT(*) c FROM payouts WHERE status IN ('queued','requested','approved','batched')").get().c),pendingUsers:Number(db.prepare('SELECT COUNT(*) c FROM driver_users WHERE approved=0').get().c)};const lastSync=db.prepare('SELECT MAX(synced_at) lastSync FROM driver_cache').get()?.lastSync||null;res.json({fetchedAt:new Date().toISOString(),lastSync,stats,drivers})});
 app.get('/api/drivers',adminAuth,(req,res)=>{const drivers=cacheRows().map(d=>({...d,bankAccount:adminBankAccountInfo(d.driverId)}));const matched=drivers.filter(d=>d.currentBalance!==null).length;const lastSync=db.prepare('SELECT MAX(synced_at) lastSync FROM driver_cache').get()?.lastSync||null;const bankReady=drivers.filter(d=>d.bankAccount?.ready).length,bankMissing=drivers.length-bankReady,bankRecentlyChanged=drivers.filter(d=>d.bankAccount?.changedRecently).length;res.json({fetchedAt:new Date().toISOString(),lastSync,count:drivers.length,matched,unmatched:drivers.length-matched,bankReady,bankMissing,bankRecentlyChanged,drivers})});
@@ -7392,10 +7895,61 @@ app.patch('/api/admin/users/:id',adminAuth,requireStaffRole('administrator','off
 
 app.get('/api/admin/settlements',adminAuth,(req,res)=>{const runs=db.prepare('SELECT * FROM settlement_runs ORDER BY created_at DESC').all().map(r=>({id:r.id,createdAt:r.created_at,status:r.status,settings:JSON.parse(r.settings_json),items:JSON.parse(r.items_json)}));const payouts=db.prepare('SELECT *, driver_id driverId, driver_name driverName, gross_balance grossBalance, weekly_fee weeklyFee, carried_charges carriedCharges, gross_amount grossAmount, net_amount netAmount, payout_run_id payoutRunId, created_at createdAt, updated_at updatedAt, paid_at paidAt, decline_reason declineReason, eligible_run_date eligibleRunDate, submitted_after_cutoff submittedAfterCutoff FROM payouts ORDER BY created_at DESC').all();const paymentRequests=db.prepare('SELECT *, driver_id driverId, driver_name driverName, weekly_fee weeklyFee, carried_charges carriedCharges, payment_url paymentUrl, provider_session_id providerSessionId, created_at createdAt, updated_at updatedAt, paid_at paidAt FROM payment_requests ORDER BY created_at DESC').all();const payoutRuns=db.prepare('SELECT * FROM payout_runs ORDER BY created_at DESC').all().map(serializePayoutRun);res.json({runs,payoutRuns,payouts,paymentRequests,earlyPayoutRequests:payouts.filter(x=>x.type==='early')})});
 
-app.patch('/api/admin/payouts/:id',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{const item=db.prepare('SELECT * FROM payouts WHERE id=?').get(req.params.id);if(!item)return res.status(404).json({error:'Payout not found'});const status=String(req.body.status||item.status),reason=String(req.body.reason||'').trim(),now=new Date().toISOString();if(status==='declined'&&!reason)return res.status(400).json({error:'A decline reason is required'});db.prepare('UPDATE payouts SET status=?,decline_reason=?,decision_at=?,decision_by=?,updated_at=? WHERE id=?').run(status,status==='declined'?reason:null,['approved','declined'].includes(status)?now:item.decision_at,['approved','declined'].includes(status)?req.auth.email:item.decision_by,now,item.id);if(item.type==='early'&&status==='approved'&&item.status!=='approved'){const runDate=item.eligible_run_date||londonWindow().date;const today=londonWindow().date;const timing=runDate===today?'Payment will be made to your assigned bank account by midday today.':`It has been approved for the ${formatRunDate(runDate)} payment run.`;notify(item.driver_id,'Early payout approved',`Your early payout of £${Number(item.net_amount||item.amount||0).toFixed(2)} has been approved. ${timing}`,'success',item.id)}if(item.type==='early'&&status==='declined'&&item.status!=='declined'){notify(item.driver_id,'Early payout declined',`Your early payout request was declined. Reason: ${reason}`,'warning',item.id)}if(status==='paid'&&item.status!=='paid'){await markPayoutPaid(item,req)}audit(req,'admin',req.auth.email,'payout_status_changed','payout',item.id,{from:item.status,to:status,reason});res.json({ok:true,status,reason})});
+app.patch('/api/admin/payouts/:id',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{const item=db.prepare('SELECT * FROM payouts WHERE id=?').get(req.params.id);if(!item)return res.status(404).json({error:'Payout not found'});/* STEP232_CLOSE_WEEKLY_PAYOUT_BYPASSES */if(item.type==='weekly'||item.run_id)return res.status(409).json({error:'Weekly payouts must be managed through the verified Monday settlement workflow.'});if(item.payout_run_id)return res.status(409).json({
+ error:'This payout belongs to a payment run and cannot be changed individually.'
+});
+const requestedStatus=String(req.body.status||item.status);
+if(requestedStatus==='paid')return res.status(409).json({
+ error:'Payouts cannot be marked paid individually. Confirm provider outcomes through the payment run.'
+});
+
+ const permittedTransitions={
+  pending_approval:['approved','declined'],
+  approved:['pending_approval','declined'],
+  declined:['pending_approval']
+ };
+
+ if(
+  requestedStatus!==item.status &&
+  !permittedTransitions[item.status]?.includes(requestedStatus)
+ ){
+  return res.status(409).json({
+   error:`Payout status cannot change from ${item.status} to ${requestedStatus}.`
+  });
+ }
+
+ if(!Object.hasOwn(permittedTransitions,item.status)){
+  return res.status(409).json({
+   error:`Payout in ${item.status} status is locked against manual changes.`
+  });
+ }
+
+ if(!permittedTransitions[item.status].includes(requestedStatus)){
+  return res.status(409).json({
+   error:`Unsupported manual payout status: ${requestedStatus}.`
+  });
+ }
+
+ if(item.run_id){
+  const settlement=db.prepare(
+   'SELECT status,payout_run_id FROM settlement_runs WHERE id=?'
+  ).get(item.run_id);
+
+  if(
+   !settlement ||
+   settlement.status!=='draft' ||
+   settlement.payout_run_id
+  ){
+   return res.status(409).json({
+    error:'The linked Monday settlement is not editable.'
+   });
+  }
+ }
+
+const status=requestedStatus,reason=String(req.body.reason||'').trim(),now=new Date().toISOString();if(status==='declined'&&!reason)return res.status(400).json({error:'A decline reason is required'});db.prepare('UPDATE payouts SET status=?,decline_reason=?,decision_at=?,decision_by=?,updated_at=? WHERE id=?').run(status,status==='declined'?reason:null,['approved','declined'].includes(status)?now:item.decision_at,['approved','declined'].includes(status)?req.auth.email:item.decision_by,now,item.id);if(item.type==='early'&&status==='approved'&&item.status!=='approved'){const runDate=item.eligible_run_date||londonWindow().date;const today=londonWindow().date;const timing=runDate===today?'Payment will be made to your assigned bank account by midday today.':`It has been approved for the ${formatRunDate(runDate)} payment run.`;notify(item.driver_id,'Early payout approved',`Your early payout of £${Number(item.net_amount||item.amount||0).toFixed(2)} has been approved. ${timing}`,'success',item.id)}if(item.type==='early'&&status==='declined'&&item.status!=='declined'){notify(item.driver_id,'Early payout declined',`Your early payout request was declined. Reason: ${reason}`,'warning',item.id)}if(status==='paid'&&item.status!=='paid'){await markPayoutPaid(item,req)}audit(req,'admin',req.auth.email,'payout_status_changed','payout',item.id,{from:item.status,to:status,reason});res.json({ok:true,status,reason})});
 
 app.post('/api/admin/payout-runs',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{
- const runType=String(req.body.runType||'early');if(!['early','weekly'].includes(runType))return res.status(400).json({error:'runType must be early or weekly'});
+ const runType=String(req.body.runType||'early');if(!['early','weekly'].includes(runType))return res.status(400).json({error:'runType must be early or weekly'});if(runType==='weekly')return res.status(409).json({error:'Weekly payout batches must be created through the verified Monday settlement workflow.'});
  const today=londonWindow().date;const eligible=runType==='early'?db.prepare("SELECT * FROM payouts WHERE type='early' AND status='approved' AND payout_run_id IS NULL AND (eligible_run_date IS NULL OR eligible_run_date<=?) ORDER BY COALESCE(eligible_run_date,substr(created_at,1,10)),created_at").all(today):db.prepare("SELECT * FROM payouts WHERE type='weekly' AND status='queued' AND payout_run_id IS NULL ORDER BY created_at").all();
  if(!eligible.length)return res.status(400).json({error:`No ${runType} payouts are ready to batch`});
  const runId=id('payrun'),now=new Date().toISOString(),total=eligible.reduce((s,x)=>s+Number(x.net_amount||x.amount||0),0);
@@ -7404,11 +7958,18 @@ app.post('/api/admin/payout-runs',adminAuth,requireStaffRole('administrator','fi
  audit(req,'admin',req.auth.email,'payout_run_created','payout_run',runId,{runType,itemCount:eligible.length,totalAmount:total,callsigns:eligible.map(x=>x.callsign)});
  res.json({run:serializePayoutRun(db.prepare('SELECT * FROM payout_runs WHERE id=?').get(runId)),items:eligible.map(x=>({id:x.id,callsign:x.callsign,driverName:x.driver_name,amount:Number(x.net_amount||x.amount||0)}))});
 });
-app.patch('/api/admin/payout-runs/:id',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{
- const run=db.prepare('SELECT * FROM payout_runs WHERE id=?').get(req.params.id);if(!run)return res.status(404).json({error:'Payout run not found'});const status=String(req.body.status||run.status),now=new Date().toISOString();
- if(status==='paid'&&run.status!=='paid'){if(!['submitted_sandbox','submitted','processing'].includes(run.status))return res.status(400).json({error:'This run must be released to the payment provider before it can be confirmed paid.'});const items=db.prepare('SELECT * FROM payouts WHERE payout_run_id=?').all(run.id);for(const item of items)await markPayoutPaid(item,req,'payout_run');db.prepare('UPDATE payout_runs SET status=?,paid_at=?,reconciled_at=? WHERE id=?').run('paid',now,now,run.id);audit(req,'admin',req.auth.email,'payout_run_paid','payout_run',run.id,{runType:run.run_type,itemCount:items.length,totalAmount:run.total_amount,callsigns:items.map(x=>x.callsign)});}else db.prepare('UPDATE payout_runs SET status=? WHERE id=?').run(status,run.id);
- res.json({ok:true});
-});
+app.patch(
+ '/api/admin/payout-runs/:id',
+ adminAuth,
+ requireStaffRole('administrator','finance'),
+ (req,res)=>{
+  return res.status(409).json({
+   error:'Direct payment-run status changes are disabled. '+
+    'Use the dedicated funding, cancellation and verified '+
+    'provider reconciliation workflows.'
+  });
+ }
+);
 
 app.post('/api/admin/payout-runs/:id/cancel',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{
  const run=db.prepare('SELECT * FROM payout_runs WHERE id=?').get(req.params.id);if(!run)return res.status(404).json({error:'Payout run not found'});
@@ -7418,9 +7979,168 @@ app.post('/api/admin/payout-runs/:id/cancel',adminAuth,requireStaffRole('adminis
  if(run.provider_ref||run.released_at)return res.status(400).json({error:'This payment run has already been released to the payment provider and cannot be cancelled safely.'});
  const reason=String(req.body?.reason||'').trim();if(!reason)return res.status(400).json({error:'A cancellation reason is required'});
  const now=new Date().toISOString();
- const items=db.prepare('SELECT * FROM payouts WHERE payout_run_id=?').all(run.id);
+ let items=[];
  db.exec('BEGIN IMMEDIATE');
  try{
+  const lockedRun=db.prepare(
+   'SELECT * FROM payout_runs WHERE id=?'
+  ).get(run.id);
+
+  if(
+   !lockedRun ||
+   !['ready','funding_pending','funded'].includes(lockedRun.status) ||
+   lockedRun.provider_ref ||
+   lockedRun.released_at ||
+   lockedRun.paid_at
+  ){
+   throw new Error(
+    'Payment-run state changed or provider execution has begun.'
+   );
+  }
+
+  items=db.prepare(
+   'SELECT * FROM payouts WHERE payout_run_id=?'
+  ).all(run.id);
+
+  if(
+   items.length!==Number(lockedRun.item_count) ||
+   items.some(item=>
+    item.status!=='batched' ||
+    item.payout_run_id!==run.id ||
+    Boolean(item.paid_at)
+   )
+  ){
+   throw new Error(
+    'Payout items are missing, changed or already processed.'
+   );
+  }
+
+  const settlement=db.prepare(
+   'SELECT * FROM settlement_runs WHERE payout_run_id=?'
+  ).get(run.id);
+
+  if(run.run_type==='weekly' && !settlement){
+   throw new Error('Linked Monday settlement is missing.');
+  }
+
+  if(settlement){
+   if(settlement.status!=='batched'){
+    throw new Error('Monday settlement is not batched.');
+   }
+
+   const allocations=db.prepare(
+    'SELECT * FROM payment_plan_settlement_allocations WHERE run_id=?'
+   ).all(settlement.id);
+
+   if(allocations.some(a=>a.status!=='pending')){
+    throw new Error(
+     'Payment-plan deduction has started or completed.'
+    );
+   }
+
+   const adjustments=db.prepare(`
+    SELECT COUNT(*) AS n
+    FROM autocab_adjustments
+    WHERE event_key IN (
+     SELECT autocab_event_key
+     FROM payment_plan_settlement_allocations
+     WHERE run_id=?
+    )
+   `).get(settlement.id).n;
+
+   if(adjustments){
+    throw new Error(
+     'Autocab adjustment exists and requires reconciliation.'
+    );
+   }
+
+   const requests=db.prepare(
+    'SELECT * FROM payment_requests WHERE run_id=?'
+   ).all(settlement.id);
+
+   if(requests.some(r=>
+    r.status!=='pending_release' ||
+    Boolean(r.payment_url) ||
+    Boolean(r.provider_session_id) ||
+    Boolean(r.provider_payment_intent_id) ||
+    Boolean(r.paid_at)
+   )){
+    throw new Error(
+     'A Monday collection request has been released or processed.'
+    );
+   }
+
+   const ledgerCount=db.prepare(`
+    SELECT COUNT(*) AS n
+    FROM driver_ledger
+    WHERE reference_id=?
+       OR reference_id IN (
+        SELECT id FROM payouts WHERE run_id=?
+       )
+       OR reference_id IN (
+        SELECT id FROM payment_requests WHERE run_id=?
+       )
+   `).get(settlement.id,settlement.id,settlement.id).n;
+
+   if(ledgerCount){
+    throw new Error('Settlement ledger entries already exist.');
+   }
+
+   const feeCount=db.prepare(`
+    SELECT COUNT(*) AS n
+    FROM fee_ledger
+    WHERE source_type='settlement'
+      AND (source_id=? OR source_id LIKE ?)
+   `).get(settlement.id,settlement.id+':%').n;
+
+   if(feeCount){
+    throw new Error('Settlement fees have already been posted.');
+   }
+  }
+
+
+  // Evidence may indicate a provider transfer has started.
+  // Do not discard the batch until every outcome is reconciled.
+
+   const transferIntents=db.prepare(`
+    SELECT id,status,provider_transfer_id
+    FROM payout_transfer_intents
+    WHERE payout_run_id=?
+   `).all(run.id);
+
+   const irreversible=transferIntents.filter(x=>
+    !['prepared','cancelled'].includes(x.status) ||
+    Boolean(x.provider_transfer_id)
+   );
+
+   if(irreversible.length){
+    throw new Error(
+     'Payment instructions have been submitted or may have '+
+     'reached the provider. Reconcile them before cancellation.'
+    );
+   }
+
+   // Prepared instructions have not been submitted.
+   // Cancel them within the same transaction as the payout batch.
+   db.prepare(`
+    UPDATE payout_transfer_intents
+    SET status='cancelled',updated_at=?
+    WHERE payout_run_id=? AND status='prepared'
+   `).run(now,run.id);
+
+   const evidenceCount=db.prepare(`
+   SELECT COUNT(*) AS n
+   FROM payout_confirmations
+   WHERE payout_run_id=?
+  `).get(run.id).n;
+
+  if(evidenceCount>0){
+   throw new Error(
+    'Provider payment evidence exists for this batch. '+
+    'Reconcile the provider outcomes before attempting cancellation.'
+   );
+  }
+
   const restore=db.prepare("UPDATE payouts SET payout_run_id=NULL,status='approved',updated_at=? WHERE id=? AND status='batched'");
   for(const item of items)restore.run(now,item.id);
   if(run.run_type==='weekly'){
@@ -7431,7 +8151,7 @@ app.post('/api/admin/payout-runs/:id/cancel',adminAuth,requireStaffRole('adminis
   db.exec('COMMIT');
  }catch(e){
   try{db.exec('ROLLBACK')}catch{}
-  throw e;
+  return res.status(409).json({error:e.message});
  }
  audit(req,'staff',req.auth.email,'payout_run_cancelled','payout_run',run.id,{runType:run.run_type,itemCount:items.length,totalAmount:run.total_amount,reason,callsigns:items.map(x=>x.callsign)});
  res.json({ok:true,status:'cancelled',restoredItems:items.filter(x=>x.status==='batched').length});
@@ -7465,11 +8185,341 @@ app.post('/api/admin/payout-runs/:id/wise-sandbox',adminAuth,requireStaffRole('a
  audit(req,'admin',req.auth.email,'wise_sandbox_run_submitted','payout_run',run.id,{runType:run.run_type,itemCount:run.item_count,totalAmount:run.total_amount,providerRef:ref});
  res.json({ok:true,demo:true,message:'Wise sandbox demo submission recorded. No real money moved.',providerRef:ref,wiseEnvironment:wise.environment});
  }catch(e){res.status(500).json({error:e.message})}});
+
+
+// Import provider evidence for investigation only.
+// All evidence remains unverified; this endpoint never finalises payouts.
+app.post(
+ '/api/admin/payout-runs/:id/evidence',
+ adminAuth,
+ requireStaffRole('administrator','finance'),
+ (req,res)=>{
+  const run=db.prepare(
+   'SELECT * FROM payout_runs WHERE id=?'
+  ).get(req.params.id);
+
+  if(!run){
+   return res.status(404).json({
+    error:'Payout run not found'
+   });
+  }
+
+  if(run.status==='cancelled'){
+   return res.status(409).json({
+    error:'Cannot import evidence into a cancelled payment run.'
+   });
+  }
+
+  const payoutId=String(req.body?.payoutId||'').trim();
+  const provider=String(req.body?.provider||'').trim().toLowerCase();
+  const transactionId=String(
+   req.body?.providerTransactionId||''
+  ).trim();
+
+  const outcome=String(req.body?.outcome||'').trim().toLowerCase();
+  const currency=String(
+   req.body?.currency||'GBP'
+  ).trim().toUpperCase();
+
+  const amount=Number(req.body?.amount);
+  const source=String(req.body?.evidenceSource||'').trim();
+  const reference=String(req.body?.evidenceReference||'').trim();
+
+  if(
+   !payoutId ||
+   !provider ||
+   !transactionId ||
+   !source ||
+   !reference
+  ){
+   return res.status(400).json({
+    error:'Payout, provider, transaction ID and evidence source/reference are required.'
+   });
+  }
+
+  if(
+   provider.length>80 ||
+   transactionId.length>200 ||
+   source.length>80 ||
+   reference.length>300
+  ){
+   return res.status(400).json({
+    error:'Evidence fields exceed permitted lengths.'
+   });
+  }
+
+  if(!['pending','paid','failed','uncertain'].includes(outcome)){
+   return res.status(400).json({
+    error:'Invalid reported payment outcome.'
+   });
+  }
+
+  if(currency!=='GBP' || !Number.isFinite(amount) || amount<=0){
+   return res.status(400).json({
+    error:'Evidence must specify a positive GBP amount.'
+   });
+  }
+
+  const payout=db.prepare(`
+   SELECT *
+   FROM payouts
+   WHERE id=?
+     AND payout_run_id=?
+  `).get(payoutId,run.id);
+
+  if(!payout){
+   return res.status(404).json({
+    error:'Payout does not belong to this payment run.'
+   });
+  }
+
+  const expectedPence=Math.round(
+   Number(payout.net_amount??payout.amount??0)*100
+  );
+
+  if(Math.round(amount*100)!==expectedPence){
+   return res.status(409).json({
+    error:'Provider evidence amount does not match the locked payout amount.'
+   });
+  }
+
+  const existing=db.prepare(`
+   SELECT id,payout_id,payout_run_id,outcome,amount,currency
+   FROM payout_confirmations
+   WHERE provider=?
+     AND provider_transaction_id=?
+  `).get(provider,transactionId);
+
+  if(existing){
+   return res.status(409).json({
+    error:'This provider transaction reference has already been recorded.',
+    existingEvidenceId:existing.id
+   });
+  }
+
+  const now=new Date().toISOString();
+  const evidenceId=id('payevidence');
+
+  try{
+   db.exec('BEGIN IMMEDIATE');
+
+   const currentRun=db.prepare(
+    'SELECT status FROM payout_runs WHERE id=?'
+   ).get(run.id);
+
+   const currentPayout=db.prepare(`
+    SELECT payout_run_id,status,net_amount,amount
+    FROM payouts
+    WHERE id=?
+   `).get(payoutId);
+
+   if(
+    !currentRun ||
+    currentRun.status==='cancelled' ||
+    !currentPayout ||
+    currentPayout.payout_run_id!==run.id ||
+    currentPayout.status==='cancelled' ||
+    Math.round(Number(
+     currentPayout.net_amount??currentPayout.amount??0
+    )*100)!==expectedPence
+   ){
+    throw new Error('Payment-run or payout state changed.');
+   }
+
+   db.prepare(`
+    INSERT INTO payout_confirmations(
+     id,payout_id,payout_run_id,provider,
+     provider_transaction_id,outcome,amount,currency,
+     evidence_source,evidence_reference,
+     verification_status,created_by,created_at
+    )
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+   `).run(
+    evidenceId,payoutId,run.id,provider,
+    transactionId,outcome,expectedPence/100,'GBP',
+    source,reference,'unverified',
+    req.auth.email,now
+   );
+
+   audit(
+    req,'staff',req.auth.email,
+    'payout_evidence_imported',
+    'payout_confirmation',evidenceId,
+    {
+     payoutRunId:run.id,
+     payoutId,
+     provider,
+     providerTransactionId:transactionId,
+     reportedOutcome:outcome,
+     verificationStatus:'unverified'
+    }
+   );
+
+   db.exec('COMMIT');
+  }catch(e){
+   try{db.exec('ROLLBACK')}catch{}
+
+   if(
+    String(e.message).includes('UNIQUE constraint failed')
+   ){
+    return res.status(409).json({
+     error:'Duplicate payment evidence.'
+    });
+   }
+
+   return res.status(409).json({
+    error:'Evidence import could not be completed safely.'
+   });
+  }
+
+  res.status(201).json({
+   ok:true,
+   evidenceId,
+   payoutId,
+   reportedOutcome:outcome,
+   verificationStatus:'unverified',
+   payoutStatus:payout.status,
+   message:'Evidence recorded for independent reconciliation. No payment finalisation occurred.'
+  });
+ }
+);
+
+// Read-only reconciliation: evidence is not proof of finalised payment.
+app.get(
+ '/api/admin/payout-runs/:id/reconciliation',
+ adminAuth,
+ requireStaffRole('administrator','finance'),
+ (req,res)=>{
+  const run=db.prepare(
+   'SELECT * FROM payout_runs WHERE id=?'
+  ).get(req.params.id);
+
+  if(!run){
+   return res.status(404).json({
+    error:'Payout run not found'
+   });
+  }
+
+  const payouts=db.prepare(`
+   SELECT
+    id,driver_id,callsign,driver_name,
+    status,amount,net_amount,paid_at
+   FROM payouts
+   WHERE payout_run_id=?
+   ORDER BY CAST(callsign AS INTEGER),callsign,id
+  `).all(run.id);
+
+  const evidence=db.prepare(`
+   SELECT
+    id,payout_id,payout_run_id,provider,
+    provider_transaction_id,outcome,amount,currency,
+    evidence_source,evidence_reference,
+    verification_status,verified_by,verified_at,
+    created_by,created_at,updated_at
+   FROM payout_confirmations
+   WHERE payout_run_id=?
+   ORDER BY created_at,id
+  `).all(run.id);
+
+  const byPayout=new Map();
+
+  for(const row of evidence){
+   const list=byPayout.get(row.payout_id)||[];
+   list.push({
+    id:row.id,
+    provider:row.provider,
+    providerTransactionId:row.provider_transaction_id,
+    outcome:row.outcome,
+    amount:Number(row.amount),
+    currency:row.currency,
+    evidenceSource:row.evidence_source,
+    evidenceReference:row.evidence_reference,
+    verificationStatus:row.verification_status,
+    verifiedBy:row.verified_by,
+    verifiedAt:row.verified_at,
+    createdBy:row.created_by,
+    createdAt:row.created_at,
+    updatedAt:row.updated_at
+   });
+   byPayout.set(row.payout_id,list);
+  }
+
+  const items=payouts.map(item=>{
+   const confirmations=byPayout.get(item.id)||[];
+   const expectedAmount=Number(
+    item.net_amount??item.amount??0
+   );
+
+   const matchingVerifiedPaid=confirmations.filter(c=>
+    c.outcome==='paid' &&
+    c.verificationStatus==='verified' &&
+    c.currency==='GBP' &&
+    Math.round(c.amount*100)===
+     Math.round(expectedAmount*100)
+   );
+
+   const hasUncertainEvidence=confirmations.some(c=>
+    c.outcome==='uncertain' ||
+    c.outcome==='pending' ||
+    c.verificationStatus==='unverified'
+   );
+
+   return {
+    payoutId:item.id,
+    driverId:item.driver_id,
+    callsign:item.callsign,
+    driverName:item.driver_name,
+    expectedAmount,
+    currency:'GBP',
+    payoutStatus:item.status,
+    paidAt:item.paid_at,
+    hasMatchingVerifiedPaidEvidence:
+     matchingVerifiedPaid.length===1,
+    hasUncertainEvidence,
+    confirmations
+   };
+  });
+
+  const accountingPaid=items.filter(
+   item=>item.payoutStatus==='paid'
+  ).length;
+
+  const evidenceVerified=items.filter(
+   item=>item.hasMatchingVerifiedPaidEvidence
+  ).length;
+
+  res.json({
+   run:{
+    id:run.id,
+    status:run.status,
+    provider:run.provider,
+    providerRef:run.provider_ref,
+    itemCount:run.item_count,
+    totalAmount:Number(run.total_amount),
+    releasedAt:run.released_at,
+    reconciledAt:run.reconciled_at
+   },
+   summary:{
+    totalPayouts:items.length,
+    withMatchingVerifiedPaidEvidence:evidenceVerified,
+    accountingMarkedPaid:accountingPaid,
+    awaitingOrRequiringReview:
+     items.filter(item=>
+      item.payoutStatus!=='paid' ||
+      !item.hasMatchingVerifiedPaidEvidence
+     ).length
+   },
+   items
+  });
+ }
+);
+
 app.get('/api/admin/payout-runs/:id/csv',adminAuth,(req,res)=>{const run=db.prepare('SELECT * FROM payout_runs WHERE id=?').get(req.params.id);if(!run)return res.status(404).json({error:'Payout run not found'});const items=db.prepare('SELECT callsign,driver_name,net_amount,amount,type,status FROM payouts WHERE payout_run_id=? ORDER BY CAST(callsign AS INTEGER),callsign').all(run.id);const esc=v=>`"${String(v??'').replaceAll('"','""')}"`;const csv=['Callsign,Driver,Amount,Type,Status',...items.map(x=>[esc(x.callsign),esc(x.driver_name),Number(x.net_amount||x.amount||0).toFixed(2),x.type,x.status].join(','))].join('\n');res.setHeader('Content-Type','text/csv');res.setHeader('Content-Disposition',`attachment; filename=FaivoPay-${run.run_type}-${run.id}.csv`);res.send(csv)});
 
 app.post('/api/admin/payment-requests/:id/stripe',adminAuth,requireStaffRole('administrator','finance','office'),async(req,res)=>{try{if(!getStripeClient())return res.status(400).json({error:'Stripe is not configured. Add STRIPE_SECRET_KEY to .env'});const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(req.params.id);if(!item)return res.status(404).json({error:'Payment request not found'});if(item.status==='paid')return res.status(400).json({error:'This payment request is already paid'});if(item.payment_plan_id&&item.request_type==='payment_plan_instalment'){const pendingExtra=db.prepare(`SELECT * FROM payment_requests WHERE payment_plan_id=? AND request_type='payment_plan_extra' AND status='open' ORDER BY created_at DESC LIMIT 1`).get(item.payment_plan_id);if(pendingExtra){await safelyExpirePlanPaymentSession(pendingExtra);db.prepare(`UPDATE payment_requests SET status='cancelled',payment_url=NULL,provider=NULL,provider_session_id=NULL,provider_payment_intent_id=NULL,updated_at=? WHERE id=? AND status='open'`).run(new Date().toISOString(),pendingExtra.id);audit(req,'staff',req.auth.email,'payment_plan_extra_payment_cancelled','driver_payment_plan',item.payment_plan_id,{paymentRequestId:pendingExtra.id,reason:'scheduled_instalment_checkout_started'})}}const session=await createStripePaymentRequest(item);audit(req,'admin',req.auth.email,'stripe_payment_request_created','payment_request',item.id,{callsign:item.callsign,amount:item.amount,sessionId:session.id});res.json({ok:true,paymentUrl:session.url})}catch(e){res.status(500).json({error:e.message})}});
 app.patch('/api/admin/payment-requests/:id',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{
  const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(req.params.id);if(!item)return res.status(404).json({error:'Payment request not found'});
+ if(item.status==='pending_release')return res.status(409).json({error:'Monday payment requests cannot be changed before formal release.'});
  const status='status'in req.body?String(req.body.status):item.status,url='paymentUrl'in req.body?(req.body.paymentUrl?String(req.body.paymentUrl):null):item.payment_url,now=new Date().toISOString();
  db.prepare("UPDATE payment_requests SET status=?,payment_url=?,paid_at=CASE WHEN ?='paid' THEN ? ELSE paid_at END,updated_at=? WHERE id=?").run(status,url,status,now,now,item.id);
  if(status==='paid'&&item.status!=='paid'){
@@ -7857,8 +8907,48 @@ async function sendOutstandingCommunications(item,d){
  db.prepare('UPDATE payment_requests SET due_at=?,email_sent_at=COALESCE(?,email_sent_at),sms_sent_at=COALESCE(?,sms_sent_at),communication_error=?,updated_at=? WHERE id=?').run(due.dueAt,emailSentAt,smsSentAt,errors.join(' | ')||null,new Date().toISOString(),item.id);
  return {emailSentAt,smsSentAt,errors,dueAt:due.dueAt};
 }
+
+// STEP78_ONE_RUN_EXCLUSION_OVERRIDE
+function hasMondayPayoutOverride(runId,payoutId){
+ const row=db.prepare(
+  'SELECT items_json FROM settlement_runs WHERE id=?'
+ ).get(runId);
+
+ if(!row)return false;
+
+ let items;
+ try{
+  items=JSON.parse(row.items_json||'[]');
+ }catch{
+  return false;
+ }
+
+ const item=items.find(
+  x=>String(x.payoutId)===String(payoutId)
+ );
+
+ return Boolean(
+  item?.oneRunExclusionOverride?.approved===true &&
+  item.oneRunExclusionOverride.runId===runId &&
+  item.oneRunExclusionOverride.payoutId===payoutId &&
+  item.oneRunExclusionOverride.approvedBy &&
+  item.oneRunExclusionOverride.reason
+ );
+}
+
 function updateRunItem(runId,payoutId,approvalStatus,reason=''){
- const run=db.prepare('SELECT * FROM settlement_runs WHERE id=?').get(runId);if(!run)return null;let items=JSON.parse(run.items_json||'[]');const payout=db.prepare('SELECT * FROM payouts WHERE id=? AND run_id=?').get(payoutId,runId);if(!payout)return null;items=items.map(x=>x.payoutId===payoutId?{...x,approvalStatus,exclusionReason:reason||'',decisionAt:new Date().toISOString()}:x);db.prepare('UPDATE settlement_runs SET items_json=? WHERE id=?').run(JSON.stringify(items),runId);return items
+ const run=db.prepare('SELECT * FROM settlement_runs WHERE id=?').get(runId);if(!run)return null;let items=JSON.parse(run.items_json||'[]');const payout=db.prepare('SELECT * FROM payouts WHERE id=? AND run_id=?').get(payoutId,runId);if(!payout)return null;/* STEP80_OVERRIDE_REVOCATION */
+items=items.map(x=>
+ x.payoutId===payoutId
+  ?{
+    ...x,
+    oneRunExclusionOverride:undefined,
+    approvalStatus,
+    exclusionReason:reason||'',
+    decisionAt:new Date().toISOString()
+   }
+  :x
+);db.prepare('UPDATE settlement_runs SET items_json=? WHERE id=?').run(JSON.stringify(items),runId);return items
 }
 function officeSettingsPayload(){const s=getSettings();return {...s,smsAuthConfigured:Boolean(getSecureSetting('smsAuthValue')),smtpPasswordConfigured:Boolean(getSecureSetting('smtpPassword')),smsAuthValue:'',smtpPassword:''}}
 
@@ -11589,16 +12679,297 @@ app.post('/api/admin/communications/test-email',adminAuth,requireStaffRole('admi
 
 app.post('/api/admin/manual-payment',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{const callsign=String(req.body.callsign||'').trim(),type=String(req.body.type||'pay_in'),amount=Number(req.body.amount||0),reason=String(req.body.reason||'').trim();if(!callsign||!(amount>0)||!['pay_in','payout'].includes(type))return res.status(400).json({error:'Callsign, payment type and amount are required'});const d=cacheRows().find(x=>String(x.callsign)===callsign);if(!d)return res.status(404).json({error:'Callsign not found in FaivoPay cache'});const settings=getSettings(),finalReason=reason||(type==='pay_in'?settings.manualPayInReasonDefault:settings.manualPayoutReasonDefault),eventKey=`manual:${Date.now()}:${d.driverId}:${crypto.randomBytes(3).toString('hex')}`;const result=await postAutocabAdjustment({driverId:d.driverId,callsign:d.callsign,amount,isCredit:type==='pay_in',description:finalReason,adjustmentReason:type==='pay_in'?'FaivoPay Manual Pay In':'FaivoPay Manual Payout',eventKey});audit(req,'staff',req.auth.email,'manual_autocab_payment','driver',d.callsign,{driverId:d.driverId,callsign:d.callsign,type,amount,reason:finalReason});setTimeout(()=>syncAutocab().catch(()=>{}),500);res.json({ok:true,driver:{driverId:d.driverId,callsign:d.callsign,fullName:d.fullName},type,amount,reason:finalReason,result})}catch(e){res.status(500).json({error:e.message})}});
 
-app.post('/api/admin/monday-runs',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{
- const today=londonWindow().date,existing=db.prepare("SELECT * FROM settlement_runs WHERE run_date=? AND status IN ('draft','approved','batched') ORDER BY created_at DESC LIMIT 1").get(today);if(existing)return res.status(409).json({error:'A Monday draft already exists for today. Open Monday Run to continue it.',runId:existing.id});const settings=getSettings(),sync=await syncAutocab(),drivers=sync.drivers,runId=id('run'),createdAt=new Date().toISOString(),items=[],allocationRows=[];const insP=db.prepare('INSERT INTO payouts(id,run_id,driver_id,callsign,driver_name,gross_balance,weekly_fee,carried_charges,gross_amount,net_amount,amount,type,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)');const insR=db.prepare('INSERT INTO payment_requests(id,run_id,driver_id,callsign,driver_name,balance,weekly_fee,carried_charges,amount,status,created_at,due_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)');const due=nextTuesdayDueLabel(),settledWeekStart=previousMondayWeekStart(today);
- for(const d of drivers){if(d.previousBalance==null)continue;const activityRow=db.prepare('SELECT worked FROM driver_weekly_activity WHERE driver_id=? AND week_start=?').get(d.driverId,settledWeekStart),workedThisWeek=Boolean(activityRow?.worked),configuredWeeklyFee=Number(settings.weeklyAppFee||0),chargeInactive=settings.chargeWeeklyFeeWhenInactive!==false,potentialFee=chargeInactive||workedThisWeek?configuredWeeklyFee:0,weeklyFeeWaivedInactive=!chargeInactive&&!workedThisWeek&&configuredWeeklyFee>0,carried=0,base=Number(d.previousBalance||0),crossesPositiveThreshold=base>0.00001&&base+0.00001>=Number(settings.minimumPayoutThreshold||0),crossesNegativeThreshold=base<-0.00001&&Math.abs(base)+0.00001>=Number(settings.negativeThreshold||0),fee=crossesPositiveThreshold||crossesNegativeThreshold?potentialFee:0,adjusted=Number((base-fee).toFixed(2)),planSettlement=crossesPositiveThreshold&&adjusted>0.00001?paymentPlanSettlementCandidate(d.driverId,adjusted):null,planAllocation=Number(planSettlement?.allocatedAmount||0),payoutAvailable=Number(Math.max(0,adjusted-planAllocation).toFixed(2));let action='none',amount=0,payoutId=null,requestId=null,approvalStatus=null;if(base>0.00001){const payoutThreshold=Number(settings.minimumPayoutThreshold||0);if(base+0.00001<payoutThreshold){action='payout_carry_forward';amount=base;}else if(payoutAvailable<=0.00001){action='plan_allocation';amount=0;}else{action='payout';amount=payoutAvailable;payoutId=id('payout');const cached=cachedDriver(d.driverId),persistentlyExcluded=Boolean(cached?.payoutExcluded),persistentReason=cached?.payoutExclusionReason||'';approvalStatus=persistentlyExcluded?'excluded':'pending';insP.run(payoutId,runId,d.driverId,d.callsign,d.fullName,base,fee,carried,adjusted,payoutAvailable,payoutAvailable,'weekly',persistentlyExcluded?'declined':'pending_approval',createdAt);if(persistentlyExcluded)db.prepare('UPDATE payouts SET decline_reason=?,decision_at=?,decision_by=? WHERE id=?').run(persistentReason,new Date().toISOString(),'persistent_driver_setting',payoutId);}}else if(base<-0.00001){const rawOwing=Math.abs(base);const owing=Number((rawOwing+fee).toFixed(2));amount=rawOwing;if(rawOwing>=Number(settings.negativeThreshold||0)){amount=owing;action='payment_request';requestId=id('request');insR.run(requestId,runId,d.driverId,d.callsign,d.fullName,base,fee,carried,owing,'open',createdAt,due.dueAt);notify(d.driverId,'Payment due',`Your Monday FaivoPay settlement has an amount due of £${owing.toFixed(2)}. Payment is due by ${settings.outstandingDueTime||'17:00'} on ${due.label}.`,'warning',requestId);if(settings.outstandingExternalCommunicationsEnabled){setTimeout(()=>{const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(requestId);sendOutstandingCommunications(item,d).catch(()=>{})},50)}}else{action='carry_forward';}}else{action='carry_forward';amount=0;}if(fee>0&&['payout','payment_request','plan_allocation'].includes(action)){ledger(d.driverId,'weekly_fee','debit',fee,fee,'Weekly FaivoPay fee',runId,'charged');recordFee({feeType:'weekly',sourceType:'settlement',sourceId:`${runId}:${d.driverId}`,driverId:d.driverId,callsign:d.callsign,description:'Weekly FaivoPay fee',amount:fee,createdAt,serviceDate:isoDateShift(settledWeekStart,6)})}items.push({driverId:d.driverId,callsign:d.callsign,driverName:d.fullName,currentBalance:d.currentBalance,previousBalance:base,weeklyFee:fee,configuredWeeklyFee,workedThisWeek,weeklyFeeWaivedInactive,settledWeekStart,carriedCharges:carried,adjustedBalance:adjusted,planAllocation,payoutAvailable,planId:planSettlement?.plan?.id||null,planInstalmentId:planSettlement?.instalment?.id||null,planInstalmentScheduledAmount:Number(planSettlement?.scheduledAmount||0),planInstalmentPaidAmount:Number(planSettlement?.alreadyPaidAmount||0),planInstalmentRemaining:Number(planSettlement?.instalmentRemaining||0),planRemainingAmount:Number(planSettlement?.planRemaining||0),action,amount,payoutId,requestId,approvalStatus,persistentPayoutExclusion:Boolean(cachedDriver(d.driverId)?.payoutExcluded),exclusionReason:approvalStatus==='excluded'?(cachedDriver(d.driverId)?.payoutExclusionReason||'Persistent payout exclusion'):''});if(planSettlement&&planAllocation>0.00001){allocationRows.push({id:id('planalloc'),runId,payoutId,driverId:d.driverId,callsign:d.callsign,planId:planSettlement.plan.id,instalmentId:planSettlement.instalment.id,paymentRequestId:planSettlement.paymentRequestId||null,scheduledAmount:Number(planSettlement.scheduledAmount||0),allocatedAmount:planAllocation,autocabEventKey:`plan:${planSettlement.plan.id}:monday:${runId}:${planSettlement.instalment.id}`,createdAt})}}
- db.prepare('INSERT INTO settlement_runs(id,created_at,status,settings_json,items_json,run_date,created_by) VALUES(?,?,?,?,?,?,?)').run(runId,createdAt,'draft',JSON.stringify(settings),JSON.stringify(items),today,req.auth.email);const insA=db.prepare(`INSERT INTO payment_plan_settlement_allocations(id,run_id,payout_id,driver_id,callsign,plan_id,instalment_id,payment_request_id,scheduled_amount,allocated_amount,status,autocab_event_key,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`);for(const a of allocationRows){insA.run(a.id,a.runId,a.payoutId,a.driverId,a.callsign,a.planId,a.instalmentId,a.paymentRequestId,a.scheduledAmount,a.allocatedAmount,'pending',a.autocabEventKey,a.createdAt)}audit(req,'staff',req.auth.email,'monday_draft_created','settlement_run',runId,{runDate:today,drivers:items.length,payouts:items.filter(x=>x.action==='payout').length,paymentRequests:items.filter(x=>x.action==='payment_request').length,sourceBalance:'previousBalance'});res.json({id:runId,createdAt,status:'draft',runDate:today,items})
+// FAIVOPAY_STEP289_MONDAY_SYNC_GUARD: single-process protection during awaited Autocab sync.
+// Existing SQLite unique index remains the final duplicate-run safeguard.
+let mondayCreationInProgress=false;
+app.post('/api/admin/monday-runs',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{
+ if(mondayCreationInProgress)return res.status(409).json({error:'A Monday run is already syncing Autocab balances. Wait for it to finish, then refresh Monday Payments.'});
+ mondayCreationInProgress=true;
+ let settlementTransactionOpen=false;
+ try{
+ const today=londonWindow().date,existing=db.prepare("SELECT * FROM settlement_runs WHERE run_date=? AND status IN ('draft','approved','batched') ORDER BY created_at DESC LIMIT 1").get(today);if(existing)return res.status(409).json({error:'A Monday draft already exists for today. Open Monday Run to continue it.',runId:existing.id});const settings=getSettings(),sync=await syncAutocab(),drivers=sync.drivers;
+
+// STEP169_MONDAY_FINANCIAL_SOURCE_GATE
+const verification=sync.financialVerification;
+
+if(
+ !verification ||
+ !verification.financialVerificationReady ||
+ !verification.valid ||
+ !verification.complete
+){
+ return res.status(409).json({
+  error:
+   'Monday settlement blocked: Autocab financial source '+
+   'could not be fully verified.',
+  financialVerificationReady:false,
+  issues:verification?.errors||[
+   'Financial verification evidence is unavailable.'
+  ]
+ });
+}
+
+const runId=id('run'),createdAt=new Date().toISOString(),items=[],allocationRows=[];
+
+// STEP181_PREPARE_MONDAY_EVIDENCE
+// Prepare validated source evidence before financial writes.
+const sourceEvidence=prepareMondaySourceEvidence({
+ runId,
+ verification,
+ drivers,
+ retrievedAt:sync.syncedAt
+});
+const insP=db.prepare('INSERT INTO payouts(id,run_id,driver_id,callsign,driver_name,gross_balance,weekly_fee,carried_charges,gross_amount,net_amount,amount,type,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)');const insR=db.prepare('INSERT INTO payment_requests(id,run_id,driver_id,callsign,driver_name,balance,weekly_fee,carried_charges,amount,status,created_at,due_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)');const due=nextTuesdayDueLabel(),settledWeekStart=previousMondayWeekStart(today);
+ // STEP182_ATOMIC_SETTLEMENT_TRANSACTION
+db.exec('BEGIN IMMEDIATE');
+settlementTransactionOpen=true;
+
+for(const d of drivers){if(d.previousBalance==null)continue;const activityRow=db.prepare('SELECT worked FROM driver_weekly_activity WHERE driver_id=? AND week_start=?').get(d.driverId,settledWeekStart),workedThisWeek=Boolean(activityRow?.worked),configuredWeeklyFee=Number(settings.weeklyAppFee||0),chargeInactive=settings.chargeWeeklyFeeWhenInactive!==false,potentialFee=chargeInactive||workedThisWeek?configuredWeeklyFee:0,weeklyFeeWaivedInactive=!chargeInactive&&!workedThisWeek&&configuredWeeklyFee>0,carried=0,base=Number(d.previousBalance||0),crossesPositiveThreshold=base>0.00001&&base+0.00001>=Number(settings.minimumPayoutThreshold||0),crossesNegativeThreshold=base<-0.00001&&Math.abs(base)+0.00001>=Number(settings.negativeThreshold||0),fee=crossesPositiveThreshold||crossesNegativeThreshold?potentialFee:0,adjusted=Number((base-fee).toFixed(2)),planSettlement=crossesPositiveThreshold&&adjusted>0.00001?paymentPlanSettlementCandidate(d.driverId,adjusted):null,planAllocation=Number(planSettlement?.allocatedAmount||0),payoutAvailable=Number(Math.max(0,adjusted-planAllocation).toFixed(2));let action='none',amount=0,payoutId=null,requestId=null,approvalStatus=null;if(base>0.00001){const payoutThreshold=Number(settings.minimumPayoutThreshold||0);if(base+0.00001<payoutThreshold){action='payout_carry_forward';amount=base;}else if(payoutAvailable<=0.00001){action='plan_allocation';amount=0;}else{action='payout';amount=payoutAvailable;payoutId=id('payout');const cached=cachedDriver(d.driverId),persistentlyExcluded=Boolean(cached?.payoutExcluded),persistentReason=cached?.payoutExclusionReason||'';approvalStatus=persistentlyExcluded?'excluded':'pending';insP.run(payoutId,runId,d.driverId,d.callsign,d.fullName,base,fee,carried,adjusted,payoutAvailable,payoutAvailable,'weekly',persistentlyExcluded?'declined':'pending_approval',createdAt);if(persistentlyExcluded)db.prepare('UPDATE payouts SET decline_reason=?,decision_at=?,decision_by=? WHERE id=?').run(persistentReason,new Date().toISOString(),'persistent_driver_setting',payoutId);}}else if(base<-0.00001){const rawOwing=Math.abs(base);const owing=Number((rawOwing+fee).toFixed(2));amount=rawOwing;if(rawOwing>=Number(settings.negativeThreshold||0)){amount=owing;action='payment_request';requestId=id('request');insR.run(requestId,runId,d.driverId,d.callsign,d.fullName,base,fee,carried,owing,'pending_release',createdAt,due.dueAt);}else{action='carry_forward';}}else{action='carry_forward';amount=0;}/* Weekly fees are calculated in the Monday draft but are not posted
+to either ledger until financial finalisation is confirmed. */items.push({driverId:d.driverId,callsign:d.callsign,driverName:d.fullName,currentBalance:d.currentBalance,previousBalance:base,weeklyFee:fee,configuredWeeklyFee,workedThisWeek,weeklyFeeWaivedInactive,settledWeekStart,carriedCharges:carried,adjustedBalance:adjusted,planAllocation,payoutAvailable,planId:planSettlement?.plan?.id||null,planInstalmentId:planSettlement?.instalment?.id||null,planInstalmentScheduledAmount:Number(planSettlement?.scheduledAmount||0),planInstalmentPaidAmount:Number(planSettlement?.alreadyPaidAmount||0),planInstalmentRemaining:Number(planSettlement?.instalmentRemaining||0),planRemainingAmount:Number(planSettlement?.planRemaining||0),action,amount,payoutId,requestId,approvalStatus,persistentPayoutExclusion:Boolean(cachedDriver(d.driverId)?.payoutExcluded),exclusionReason:approvalStatus==='excluded'?(cachedDriver(d.driverId)?.payoutExclusionReason||'Persistent payout exclusion'):''});if(planSettlement&&planAllocation>0.00001){allocationRows.push({id:id('planalloc'),runId,payoutId,driverId:d.driverId,callsign:d.callsign,planId:planSettlement.plan.id,instalmentId:planSettlement.instalment.id,paymentRequestId:planSettlement.paymentRequestId||null,scheduledAmount:Number(planSettlement.scheduledAmount||0),allocatedAmount:planAllocation,autocabEventKey:`plan:${planSettlement.plan.id}:monday:${runId}:${planSettlement.instalment.id}`,createdAt})}}
+ db.prepare('INSERT INTO settlement_runs(id,created_at,status,settings_json,items_json,run_date,created_by) VALUES(?,?,?,?,?,?,?)').run(runId,createdAt,'draft',JSON.stringify(settings),JSON.stringify(items),today,req.auth.email);const insA=db.prepare(`INSERT INTO payment_plan_settlement_allocations(id,run_id,payout_id,driver_id,callsign,plan_id,instalment_id,payment_request_id,scheduled_amount,allocated_amount,status,autocab_event_key,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`);for(const a of allocationRows){insA.run(a.id,a.runId,a.payoutId,a.driverId,a.callsign,a.planId,a.instalmentId,a.paymentRequestId,a.scheduledAmount,a.allocatedAmount,'pending',a.autocabEventKey,a.createdAt)}// STEP183_PENDING_SOURCE_VERIFICATION
+// Source evidence is recorded but does not authorise a payout.
+db.prepare(`
+ INSERT INTO monday_settlement_verifications(
+  id,
+  run_id,
+  status,
+  autocab_source_hash,
+  evidence_json,
+  created_at
+ ) VALUES(?,?,?,?,?,?)
+`).run(
+ id('mverify'),
+ runId,
+ 'pending',
+ sourceEvidence.sourceHash,
+ JSON.stringify(sourceEvidence),
+ createdAt
+);
+
+db.exec('COMMIT');
+settlementTransactionOpen=false;
+
+audit(req,'staff',req.auth.email,'monday_draft_created','settlement_run',runId,{runDate:today,drivers:items.length,payouts:items.filter(x=>x.action==='payout').length,paymentRequests:items.filter(x=>x.action==='payment_request').length,sourceBalance:'previousBalance'});res.json({id:runId,createdAt,status:'draft',runDate:today,items})
  }catch(e){
+if(settlementTransactionOpen){
+ try{db.exec('ROLLBACK')}catch{}
+ settlementTransactionOpen=false;
+}
+
  if(String(e?.message||'').includes('idx_settlement_runs_active_monday_date')||String(e?.message||'').includes('UNIQUE constraint failed: settlement_runs.run_date')){
   return res.status(409).json({error:'A Monday run already exists for today. Open Monday Run to continue it.'})
  }
  res.status(500).json({error:e.message})
-}});
+}finally{
+  mondayCreationInProgress=false;
+ }});
+
+// Cancel an unexecuted Monday settlement without deleting its audit records.
+app.post(
+ '/api/admin/monday-runs/:runId/cancel',
+ adminAuth,
+ requireStaffRole('administrator','finance'),
+ (req,res)=>{
+  const reason=String(req.body?.reason||'').trim();
+
+  if(reason.length<5){
+   return res.status(400).json({
+    error:'Enter a cancellation reason of at least five characters.'
+   });
+  }
+
+  let transactionOpen=false;
+
+  try{
+   db.exec('BEGIN IMMEDIATE');
+   transactionOpen=true;
+
+   const run=db.prepare(
+    'SELECT * FROM settlement_runs WHERE id=?'
+   ).get(req.params.runId);
+
+   if(!run){
+    db.exec('ROLLBACK');
+    transactionOpen=false;
+    return res.status(404).json({error:'Monday run not found'});
+   }
+
+   if(run.status==='cancelled'){
+    db.exec('ROLLBACK');
+    transactionOpen=false;
+    return res.json({ok:true,alreadyCancelled:true});
+   }
+
+   if(
+    !['draft','approved'].includes(run.status) ||
+    run.payout_run_id
+   ){
+    throw new Error(
+     'This settlement has progressed beyond a safely '+
+     'cancellable draft or approved run.'
+    );
+   }
+
+   const payouts=db.prepare(
+    'SELECT * FROM payouts WHERE run_id=?'
+   ).all(run.id);
+
+   const requests=db.prepare(
+    'SELECT * FROM payment_requests WHERE run_id=?'
+   ).all(run.id);
+
+   const allocations=db.prepare(
+    'SELECT * FROM payment_plan_settlement_allocations WHERE run_id=?'
+   ).all(run.id);
+
+   if(payouts.some(p=>
+    p.payout_run_id ||
+    !['pending_approval','approved','declined'].includes(p.status) ||
+    p.paid_at
+   )){
+    throw new Error(
+     'A payout has progressed beyond an unexecuted state. '+
+     'Cancellation requires reconciliation.'
+    );
+   }
+
+   if(requests.some(r=>
+    r.status!=='pending_release' ||
+    r.payment_url ||
+    r.provider_session_id ||
+    r.provider_payment_intent_id ||
+    r.paid_at
+   )){
+    throw new Error(
+     'A collection request has been released, paid or '+
+     'connected to a provider. Cancellation is blocked.'
+    );
+   }
+
+   if(allocations.some(a=>a.status!=='pending')){
+    throw new Error(
+     'A payment-plan allocation has started or completed. '+
+     'Cancellation requires reconciliation.'
+    );
+   }
+
+   const adjustmentCount=db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM autocab_adjustments
+    WHERE event_key IN (
+     SELECT autocab_event_key
+     FROM payment_plan_settlement_allocations
+     WHERE run_id=?
+    )
+   `).get(run.id).count;
+
+   if(adjustmentCount){
+    throw new Error(
+     'An Autocab payment-plan adjustment has been '+
+     'recorded. Its outcome must be reviewed.'
+    );
+   }
+
+   const ledgerCount=db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM driver_ledger
+    WHERE reference_id=?
+       OR reference_id IN (
+        SELECT id FROM payouts WHERE run_id=?
+       )
+       OR reference_id IN (
+        SELECT id FROM payment_requests WHERE run_id=?
+       )
+   `).get(run.id,run.id,run.id).count;
+
+   if(ledgerCount){
+    throw new Error(
+     'Financial ledger entries exist for this settlement. '+
+     'Cancellation requires manual review.'
+    );
+   }
+
+   const feeCount=db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM fee_ledger
+    WHERE source_type='settlement'
+      AND (source_id=? OR source_id LIKE ?)
+   `).get(run.id,`${run.id}:%`).count;
+
+   if(feeCount){
+    throw new Error(
+     'Recorded settlement fees exist. '+
+     'Cancellation requires manual review.'
+    );
+   }
+
+   const now=new Date().toISOString();
+
+   db.prepare(`
+    UPDATE payouts
+    SET status='cancelled',updated_at=?
+    WHERE run_id=?
+   `).run(now,run.id);
+
+   db.prepare(`
+    UPDATE payment_requests
+    SET status='cancelled',updated_at=?
+    WHERE run_id=?
+      AND status='pending_release'
+   `).run(now,run.id);
+
+   db.prepare(`
+    UPDATE payment_plan_settlement_allocations
+    SET status='cancelled',updated_at=?
+    WHERE run_id=?
+      AND status='pending'
+   `).run(now,run.id);
+
+   db.prepare(`
+    UPDATE settlement_runs
+    SET status='cancelled'
+    WHERE id=?
+   `).run(run.id);
+
+   audit(
+    req,
+    'staff',
+    req.auth.email,
+    'monday_settlement_cancelled',
+    'settlement_run',
+    run.id,
+    {
+     reason,
+     cancelledAt:now,
+     payouts:payouts.length,
+     paymentRequests:requests.length,
+     planAllocations:allocations.length
+    }
+   );
+
+   db.exec('COMMIT');
+   transactionOpen=false;
+
+   return res.json({
+    ok:true,
+    status:'cancelled',
+    payoutsCancelled:payouts.length,
+    requestsCancelled:requests.length,
+    allocationsCancelled:allocations.length
+   });
+
+  }catch(e){
+   if(transactionOpen){
+    try{db.exec('ROLLBACK')}catch{}
+   }
+
+   return res.status(409).json({
+    error:e.message
+   });
+  }
+ }
+);
+
 app.get('/api/admin/monday-runs',adminAuth,(req,res)=>{const runs=db.prepare("SELECT * FROM settlement_runs WHERE run_date IS NOT NULL ORDER BY created_at DESC LIMIT 40").all().map(r=>({id:r.id,createdAt:r.created_at,status:r.status,runDate:r.run_date,createdBy:r.created_by,approvedAt:r.approved_at,payoutRunId:r.payout_run_id,settings:JSON.parse(r.settings_json||'{}'),items:JSON.parse(r.items_json||'[]')}));res.json({runs})});
 
 app.get(
@@ -11670,7 +13041,7 @@ app.post(
     });
    }
 
-   if(run.status==='batched' || run.payout_run_id){
+   if(run.status!=='draft' || run.payout_run_id){
     return res.status(409).json({
      error:'Payment-plan deductions cannot be changed after the Monday run has been batched.'
     });
@@ -11786,9 +13157,1144 @@ app.post(
  }
 );
 
-app.patch('/api/admin/monday-runs/:runId/payouts/:payoutId',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const status=String(req.body.status||''),reason=String(req.body.reason||'').trim();if(!['approved','excluded','pending'].includes(status))return res.status(400).json({error:'Invalid approval status'});if(status==='excluded'&&!reason)return res.status(400).json({error:'Enter a reason for excluding this driver'});const pmt=db.prepare('SELECT * FROM payouts WHERE id=? AND run_id=? AND type=\'weekly\'').get(req.params.payoutId,req.params.runId);if(!pmt)return res.status(404).json({error:'Weekly payout not found'});if(pmt.payout_run_id)return res.status(400).json({error:'This payout is already locked into a payment run'});const driver=cachedDriver(pmt.driver_id);if(status==='approved'&&driver?.payoutExcluded)return res.status(400).json({error:`Callsign ${pmt.callsign} is permanently excluded from payouts. Enable payouts on the Drivers page first.`});const dbStatus=status==='approved'?'approved':status==='excluded'?'declined':'pending_approval';db.prepare('UPDATE payouts SET status=?,decline_reason=?,decision_at=?,decision_by=?,updated_at=? WHERE id=?').run(dbStatus,status==='excluded'?reason:null,status==='pending'?null:new Date().toISOString(),status==='pending'?null:req.auth.email,new Date().toISOString(),pmt.id);const items=updateRunItem(req.params.runId,pmt.id,status,reason);audit(req,'staff',req.auth.email,'weekly_payout_approval_changed','payout',pmt.id,{runId:req.params.runId,callsign:pmt.callsign,status,reason});res.json({ok:true,items})});
-app.post('/api/admin/monday-runs/:runId/approve-all',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const rows=db.prepare("SELECT * FROM payouts WHERE run_id=? AND type='weekly' AND status='pending_approval' AND payout_run_id IS NULL").all(req.params.runId),now=new Date().toISOString();const up=db.prepare("UPDATE payouts SET status='approved',decision_at=?,decision_by=?,updated_at=? WHERE id=?");for(const r of rows){up.run(now,req.auth.email,now,r.id);updateRunItem(req.params.runId,r.id,'approved','')}db.prepare("UPDATE settlement_runs SET status='approved',approved_at=? WHERE id=?").run(now,req.params.runId);audit(req,'staff',req.auth.email,'weekly_payouts_approved_all','settlement_run',req.params.runId,{count:rows.length});res.json({ok:true,count:rows.length})});
-app.post('/api/admin/monday-runs/:runId/create-payout-run',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const settlement=db.prepare('SELECT * FROM settlement_runs WHERE id=?').get(req.params.runId);if(!settlement)return res.status(404).json({error:'Monday run not found'});if(settlement.payout_run_id)return res.status(409).json({error:'A payout batch has already been created for this Monday run',payoutRunId:settlement.payout_run_id});const unresolvedPlanAllocations=db.prepare("SELECT COUNT(*) count FROM payment_plan_settlement_allocations WHERE run_id=? AND status!='applied'").get(req.params.runId)?.count||0;if(unresolvedPlanAllocations>0)return res.status(409).json({error:`Apply the ${unresolvedPlanAllocations} pending payment-plan deduction${unresolvedPlanAllocations===1?'':'s'} before creating the payout batch.`,pendingPlanAllocations:unresolvedPlanAllocations});const eligible=db.prepare("SELECT * FROM payouts WHERE run_id=? AND type='weekly' AND status='approved' AND payout_run_id IS NULL ORDER BY CAST(callsign AS INTEGER),callsign").all(req.params.runId);if(!eligible.length)return res.status(400).json({error:'No approved weekly payouts are ready'});const runId=id('payrun'),now=new Date().toISOString(),total=eligible.reduce((a,x)=>a+Number(x.net_amount||x.amount||0),0);db.prepare('INSERT INTO payout_runs(id,run_type,status,created_at,created_by,scheduled_for,total_amount,item_count,provider,notes,funding_status,funding_required) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(runId,'weekly','ready',now,req.auth.email,now,total,eligible.length,String(req.body.provider||'wise'),`Monday run ${settlement.id}`,'not_started',total);const up=db.prepare("UPDATE payouts SET payout_run_id=?,status='batched',updated_at=? WHERE id=?");for(const x of eligible)up.run(runId,now,x.id);db.prepare("UPDATE settlement_runs SET status='batched',payout_run_id=? WHERE id=?").run(runId,settlement.id);audit(req,'staff',req.auth.email,'weekly_payout_run_created','payout_run',runId,{settlementRunId:settlement.id,itemCount:eligible.length,totalAmount:total,callsigns:eligible.map(x=>x.callsign)});res.json({run:serializePayoutRun(db.prepare('SELECT * FROM payout_runs WHERE id=?').get(runId)),items:eligible.map(x=>({id:x.id,callsign:x.callsign,driverName:x.driver_name,amount:Number(x.net_amount||x.amount||0)}))})});
+app.patch('/api/admin/monday-runs/:runId/payouts/:payoutId',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const status=String(req.body.status||''),reason=String(req.body.reason||'').trim();if(!['approved','excluded','pending'].includes(status))return res.status(400).json({error:'Invalid approval status'});if(status==='excluded'&&!reason)return res.status(400).json({error:'Enter a reason for excluding this driver'});const settlement=db.prepare('SELECT status FROM settlement_runs WHERE id=?').get(req.params.runId);if(!settlement)return res.status(404).json({error:'Monday settlement not found'});if(settlement.status!=='draft')return res.status(409).json({error:`Monday settlement is ${settlement.status} and cannot be edited`});if(status==='approved'){const gate=mondayFinancialProgressionGate(req.params.runId);if(!gate.allowed)return res.status(409).json({error:'Monday financial verification required before approval.',issues:gate.issues});}const pmt=db.prepare('SELECT * FROM payouts WHERE id=? AND run_id=? AND type=\'weekly\'').get(req.params.payoutId,req.params.runId);if(!pmt)return res.status(404).json({error:'Weekly payout not found'});if(pmt.payout_run_id)return res.status(400).json({error:'This payout is already locked into a payment run'});const driver=cachedDriver(pmt.driver_id);if(status==='approved'&&driver?.payoutExcluded&&!hasMondayPayoutOverride(req.params.runId,pmt.id))return res.status(400).json({error:`Callsign ${pmt.callsign} is permanently excluded from payouts. Enable payouts on the Drivers page first.`});const dbStatus=status==='approved'?'approved':status==='excluded'?'declined':'pending_approval';db.prepare('UPDATE payouts SET status=?,decline_reason=?,decision_at=?,decision_by=?,updated_at=? WHERE id=?').run(dbStatus,status==='excluded'?reason:null,status==='pending'?null:new Date().toISOString(),status==='pending'?null:req.auth.email,new Date().toISOString(),pmt.id);const items=updateRunItem(req.params.runId,pmt.id,status,reason);audit(req,'staff',req.auth.email,'weekly_payout_approval_changed','payout',pmt.id,{runId:req.params.runId,callsign:pmt.callsign,status,reason});res.json({ok:true,items})});
+
+app.post(
+ '/api/admin/monday-runs/:runId/payouts/:payoutId/override-exclusion',
+ adminAuth,
+ requireStaffRole('administrator'),
+ (req,res)=>{
+  const reason=String(req.body?.reason||'').trim();
+
+  if(reason.length<10){
+   return res.status(400).json({
+    error:'Enter a reason of at least 10 characters.'
+   });
+  }
+
+  let started=false;
+
+  try{
+   db.exec('BEGIN IMMEDIATE');
+   started=true;
+
+   const run=db.prepare(
+    'SELECT * FROM settlement_runs WHERE id=?'
+   ).get(req.params.runId);
+
+   if(!run||run.status!=='draft'||
+      run.payout_run_id){
+    throw new Error('This settlement cannot be overridden.');
+   }
+
+   const payout=db.prepare(
+    "SELECT * FROM payouts WHERE id=? AND run_id=? AND type='weekly'"
+   ).get(req.params.payoutId,run.id);
+
+   if(
+    !payout ||
+    payout.payout_run_id ||
+    payout.paid_at ||
+    payout.status!=='declined'
+   ){
+    throw new Error('Only an unbatched excluded payout can be overridden.');
+   }
+
+   const driver=cachedDriver(payout.driver_id);
+
+   if(!driver?.payoutExcluded){
+    throw new Error('Driver is not permanently excluded.');
+   }
+
+   const items=JSON.parse(run.items_json||'[]');
+   const index=items.findIndex(
+    x=>String(x.payoutId)===String(payout.id)
+   );
+
+   if(index<0){
+    throw new Error('Payout is missing from settlement snapshot.');
+   }
+
+   if(items[index].oneRunExclusionOverride?.approved){
+    throw new Error('An override already exists for this payout.');
+   }
+
+   const now=new Date().toISOString();
+
+   const override={
+    approved:true,
+    runId:run.id,
+    payoutId:payout.id,
+    driverId:payout.driver_id,
+    approvedBy:req.auth.email,
+    approvedAt:now,
+    reason,
+    originalExclusionReason:driver.payoutExclusionReason||''
+   };
+
+   items[index]={
+    ...items[index],
+    approvalStatus:'approved',
+    exclusionReason:'',
+    oneRunExclusionOverride:override,
+    decisionAt:now
+   };
+
+   db.prepare(
+    'UPDATE settlement_runs SET items_json=? WHERE id=?'
+   ).run(JSON.stringify(items),run.id);
+
+   db.prepare(
+    `UPDATE payouts
+     SET status='approved',
+         decline_reason=NULL,
+         decision_at=?,
+         decision_by=?,
+         updated_at=?
+     WHERE id=?`
+   ).run(now,req.auth.email,now,payout.id);
+
+   audit(
+    req,'staff',req.auth.email,
+    'monday_one_run_payout_exclusion_override',
+    'payout',payout.id,
+    override
+   );
+
+   db.exec('COMMIT');
+   started=false;
+
+   res.json({ok:true,override});
+
+  }catch(e){
+   if(started)try{db.exec('ROLLBACK')}catch{}
+   res.status(409).json({error:e.message});
+  }
+ }
+);
+
+
+
+// STEP120C_SETTLEMENT_FINGERPRINTS
+// Deterministic fingerprints for Monday financial verification.
+// These functions do not approve settlements or execute payments.
+
+function mondayVerificationHash(value){
+ const stable=value=>{
+  if(Array.isArray(value))return value.map(stable);
+  if(value&&typeof value==='object'){
+   return Object.fromEntries(
+    Object.keys(value).sort().map(k=>[k,stable(value[k])])
+   );
+  }
+  return value;
+ };
+
+ return crypto.createHash('sha256')
+  .update(JSON.stringify(stable(value)))
+  .digest('hex');
+}
+
+function mondayFinancialFingerprints(runId){
+ const run=db.prepare(
+  'SELECT * FROM settlement_runs WHERE id=?'
+ ).get(runId);
+
+ if(!run)throw new Error('Monday settlement not found');
+
+ const items=JSON.parse(run.items_json||'[]');
+ const rules=JSON.parse(run.settings_json||'{}');
+
+ if(!Array.isArray(items)){
+  throw new Error('Invalid Monday settlement snapshot');
+ }
+
+ const payouts=db.prepare(
+  `SELECT id,driver_id,callsign,gross_balance,
+          weekly_fee,carried_charges,gross_amount,
+          net_amount,amount,status,decline_reason,
+          payout_run_id
+   FROM payouts
+   WHERE run_id=? AND type='weekly'
+   ORDER BY id`
+ ).all(runId);
+
+ const collections=db.prepare(
+  `SELECT id,driver_id,callsign,balance,weekly_fee,
+          carried_charges,amount,status
+   FROM payment_requests
+   WHERE run_id=?
+   ORDER BY id`
+ ).all(runId);
+
+ const allocations=db.prepare(
+  `SELECT id,payout_id,driver_id,callsign,
+          plan_id,instalment_id,scheduled_amount,
+          allocated_amount,status
+   FROM payment_plan_settlement_allocations
+   WHERE run_id=?
+   ORDER BY id`
+ ).all(runId);
+
+ const driverIds=[
+  ...new Set(items.map(x=>Number(x.driverId)))
+ ];
+
+ const exclusions=driverIds
+  .map(driverId=>{
+   const driver=cachedDriver(driverId);
+   return {
+    driverId,
+    found:Boolean(driver),
+    callsign:driver?.callsign??null,
+    payoutExcluded:driver?.payoutExcluded??null,
+    exclusionReason:driver?.payoutExclusionReason??null
+   };
+  })
+  .sort((a,b)=>a.driverId-b.driverId);
+
+ const snapshotHash=mondayVerificationHash({
+  runId,
+  items,
+  payouts,
+  collections,
+  exclusions
+ });
+
+ // STEP120I_STABLE_FINANCIAL_HASH
+ // Approval decisions are workflow state, not financial amounts.
+ // Financial verification must survive legitimate bulk approval.
+ const financialItems=items.map(item=>{
+  const {
+   approvalStatus,
+   decisionAt,
+   exclusionReason,
+   oneRunExclusionOverride,
+   ...financial
+  }=item;
+  return {
+   ...financial,
+   exclusionReason,
+   oneRunExclusionOverride
+  };
+ });
+
+ const financialPayouts=payouts.map(payout=>{
+  const {
+   status,
+   payout_run_id,
+   ...financial
+  }=payout;
+  return financial;
+ });
+
+ const financialCollections=collections.map(collection=>{
+  const {status,...financial}=collection;
+  return financial;
+ });
+
+ const financialHash=mondayVerificationHash({
+  runId,
+  items:financialItems,
+  payouts:financialPayouts,
+  collections:financialCollections,
+  exclusions
+ });
+
+ const rulesHash=mondayVerificationHash(rules);
+
+ // STEP120G_COMPLETE_FINANCIAL_INPUTS
+ const relevantRules=value=>({
+  weeklyAppFee:Number(value.weeklyAppFee??0),
+  minimumPayoutThreshold:Number(value.minimumPayoutThreshold??0),
+  negativeThreshold:Number(value.negativeThreshold??0),
+  chargeWeeklyFeeWhenInactive:
+   value.chargeWeeklyFeeWhenInactive!==false
+ });
+
+ const savedFinancialRules=relevantRules(rules);
+ const currentFinancialRules=relevantRules(getSettings());
+
+ const currentRulesHash=mondayVerificationHash(
+  currentFinancialRules
+ );
+
+ const planDetails=allocations.map(allocation=>{
+  const plan=db.prepare(
+   `SELECT id,driver_id,source_payment_request_id,
+           original_amount,plan_amount,paid_amount,
+           remaining_amount,frequency,instalment_amount,
+           status,next_due_at
+    FROM driver_payment_plans WHERE id=?`
+  ).get(allocation.plan_id);
+
+  const instalment=db.prepare(
+   `SELECT id,plan_id,driver_id,instalment_number,
+           amount,paid_amount,due_at,status,
+           payment_request_id
+    FROM driver_payment_plan_instalments WHERE id=?`
+  ).get(allocation.instalment_id);
+
+  return {
+   allocation,
+   plan:plan||null,
+   instalment:instalment||null,
+   missingPlan:!plan,
+   missingInstalment:!instalment
+  };
+ });
+
+ const paymentPlansHash=mondayVerificationHash(
+  planDetails
+ );
+
+ return {
+  snapshotHash,
+  financialHash,
+  rulesHash,
+  currentRulesHash,
+  financialRulesChanged:
+   mondayVerificationHash(savedFinancialRules)!==
+   currentRulesHash,
+  paymentPlansHash,
+  missingPaymentPlanReferences:planDetails.filter(
+   x=>x.missingPlan||x.missingInstalment
+  ).length,
+  driverCount:items.length,
+  payoutCount:payouts.length,
+  collectionCount:collections.length,
+  allocationCount:allocations.length
+ };
+}
+
+
+// STEP120D_FINGERPRINT_TEST_EXPORT
+// Test-only endpoint, disabled outside NODE_ENV=test.
+// The existing test harness binds the application to loopback.
+if(process.env.NODE_ENV==='test'){
+ app.get(
+  '/api/admin/test/monday-fingerprints/:runId',
+  adminAuth,
+  requireStaffRole('administrator'),
+  (req,res)=>{
+   try{
+    res.json(mondayFinancialFingerprints(req.params.runId));
+   }catch(e){
+    res.status(409).json({error:e.message});
+   }
+  }
+ );
+}
+
+// STEP115_MONDAY_BALANCE_COMPARISON
+// Compare refreshed Autocab data with a saved settlement.
+// This endpoint does not change the saved settlement or payouts.
+app.post(
+ '/api/admin/monday-runs/:runId/compare-balances',
+ adminAuth,
+ requireStaffRole('administrator','finance'),
+ async(req,res)=>{
+  try{
+   const run=db.prepare(
+    'SELECT * FROM settlement_runs WHERE id=?'
+   ).get(req.params.runId);
+
+   if(!run){
+    return res.status(404).json({
+     error:'Monday settlement not found.'
+    });
+   }
+
+   if(!['draft','approved'].includes(run.status) ||
+      run.payout_run_id){
+    return res.status(409).json({
+     error:'This settlement can no longer be compared for approval.'
+    });
+   }
+
+   const original=JSON.parse(run.items_json||'[]');
+
+   if(!Array.isArray(original)){
+    throw new Error('Invalid settlement snapshot.');
+   }
+
+   // A successful Autocab refresh is required.
+   // Never treat a failed refresh as an unchanged balance.
+   const refreshed=await syncAutocab();
+   const drivers=refreshed?.drivers;
+
+   // STEP194_VERIFIED_AUTOCAB_COMPARISON
+   // A successful transport response alone is not financial evidence.
+   const financialSource=refreshed?.financialVerification;
+
+   if(
+    financialSource?.valid!==true ||
+    financialSource?.complete!==true ||
+    financialSource?.financialVerificationReady!==true
+   ){
+    throw new Error(
+     'Refreshed Autocab financial source is not fully verified.'
+    );
+   }
+
+   if(!Array.isArray(drivers) || !drivers.length){
+    throw new Error(
+     'Autocab returned no drivers. Balance comparison cannot be trusted.'
+    );
+   }
+
+   const byId=new Map(
+    drivers.map(d=>[String(d.driverId),d])
+   );
+
+   const originalIds=new Set(
+    original.map(x=>String(x.driverId))
+   );
+
+   const moneyCents=value=>{
+    if(value===null||value===undefined||value===''){
+     return null;
+    }
+    const n=Number(value);
+    return Number.isFinite(n)?Math.round(n*100):null;
+   };
+
+   const differences=[];
+
+   for(const item of original){
+    const driver=byId.get(String(item.driverId));
+
+    if(!driver){
+     differences.push({
+      type:'missing_driver',
+      driverId:item.driverId,
+      callsign:item.callsign,
+      previousBalance:item.previousBalance,
+      latestBalance:null
+     });
+     continue;
+    }
+
+    const before=moneyCents(item.previousBalance);
+    const after=moneyCents(driver.previousBalance);
+
+    if(before===null || after===null){
+     differences.push({
+      type:'invalid_balance',
+      driverId:item.driverId,
+      callsign:item.callsign,
+      previousBalance:item.previousBalance,
+      latestBalance:driver.previousBalance
+     });
+    }else if(before!==after){
+     differences.push({
+      type:'balance_changed',
+      driverId:item.driverId,
+      callsign:item.callsign,
+      previousBalance:before/100,
+      latestBalance:after/100,
+      difference:(after-before)/100
+     });
+    }
+
+    if(String(item.callsign||'')!==String(driver.callsign||'')){
+     differences.push({
+      type:'callsign_changed',
+      driverId:item.driverId,
+      callsign:item.callsign,
+      latestCallsign:driver.callsign
+     });
+    }
+
+    const current=cachedDriver(item.driverId);
+
+    if(
+     Boolean(item.persistentPayoutExclusion)!==
+     Boolean(current?.payoutExcluded)
+    ){
+     differences.push({
+      type:'payout_exclusion_changed',
+      driverId:item.driverId,
+      callsign:item.callsign,
+      previousExcluded:Boolean(item.persistentPayoutExclusion),
+      currentlyExcluded:Boolean(current?.payoutExcluded)
+     });
+    }
+   }
+
+   for(const driver of drivers){
+    if(
+     driver.previousBalance!==null &&
+     driver.previousBalance!==undefined &&
+     !originalIds.has(String(driver.driverId))
+    ){
+     differences.push({
+      type:'new_driver',
+      driverId:driver.driverId,
+      callsign:driver.callsign,
+      latestBalance:Number(driver.previousBalance)
+     });
+    }
+   }
+
+   const result={
+    runId:run.id,
+    runStatus:run.status,
+    comparedAt:new Date().toISOString(),
+    snapshotDriverCount:original.length,
+    refreshedDriverCount:drivers.length,
+    differenceCount:differences.length,
+    balancesUnchanged:differences.length===0,
+    fullFinancialRecalculationVerified:false,
+    readyForAutomaticApproval:false,
+    differences
+   };
+
+   audit(
+    req,
+    'staff',
+    req.auth.email,
+    'monday_balance_comparison',
+    'settlement_run',
+    run.id,
+    {
+     differenceCount:differences.length,
+     snapshotDriverCount:original.length,
+     refreshedDriverCount:drivers.length
+    }
+   );
+
+   res.json(result);
+
+  }catch(e){
+   res.status(409).json({
+    error:
+     'Autocab balance comparison failed: '+e.message,
+    balancesVerified:false
+   });
+  }
+ }
+);
+
+
+// STEP224_MANDATORY_MONDAY_VERIFICATION
+function mondayFinancialProgressionGate(runId){
+ try{
+  const verification=db.prepare(`
+   SELECT *
+   FROM monday_settlement_verifications
+   WHERE run_id=?
+   ORDER BY rowid DESC
+   LIMIT 1
+  `).get(runId);
+
+  const fingerprints=mondayFinancialFingerprints(runId);
+
+  return checkMondayVerificationGate({
+   runId,
+   verification,
+   fingerprints
+  });
+ }catch(e){
+  return {
+   allowed:false,
+   issues:[
+    'Financial verification cannot be established: '+e.message
+   ]
+  };
+ }
+}
+
+
+// STEP226_SERVER_SIDE_MONDAY_VERIFICATION
+// All financial evidence is retrieved and checked server-side.
+// Request-body evidence is deliberately ignored.
+app.post(
+ '/api/admin/monday-runs/:runId/verify-financials',
+ adminAuth,
+ requireStaffRole('administrator','finance'),
+ async(req,res)=>{
+  const runId=req.params.runId;
+
+  const run=db.prepare(
+   'SELECT * FROM settlement_runs WHERE id=?'
+  ).get(runId);
+
+  if(!run){
+   return res.status(404).json({
+    error:'Monday settlement not found.'
+   });
+  }
+
+  if(run.status!=='draft' || run.payout_run_id){
+   return res.status(409).json({
+    error:'Only an unbatched draft can be financially verified.'
+   });
+  }
+
+  // A new attempt immediately invalidates previous authorisation.
+  // This remains committed even if the fresh Autocab call fails.
+  db.prepare(`
+   UPDATE monday_settlement_verifications
+   SET status='invalidated',
+       failure_reason='Superseded by new verification attempt'
+   WHERE run_id=? AND status='passed'
+  `).run(runId);
+
+  try{
+   const sourceRow=db.prepare(`
+    SELECT *
+    FROM monday_settlement_verifications
+    WHERE run_id=? AND status='pending'
+    ORDER BY rowid ASC
+    LIMIT 1
+   `).get(runId);
+
+   if(!sourceRow){
+    throw new Error('Original pending source evidence is missing.');
+   }
+
+   const source=JSON.parse(sourceRow.evidence_json);
+   const items=JSON.parse(run.items_json);
+   const settings=JSON.parse(run.settings_json);
+
+   if(!Array.isArray(items) || !items.length){
+    throw new Error('Invalid saved settlement items.');
+   }
+
+   const sourceCheck=verifyMondaySourceBinding({
+    runId,source,items
+   });
+
+   if(!sourceCheck.valid){
+    throw new Error(
+     'Original source binding failed: '+
+     sourceCheck.issues.join('; ')
+    );
+   }
+
+   const payouts=db.prepare(`
+    SELECT *
+    FROM payouts
+    WHERE run_id=? AND type='weekly'
+   `).all(runId);
+
+   const paymentRequests=db.prepare(`
+    SELECT *
+    FROM payment_requests
+    WHERE run_id=?
+   `).all(runId);
+
+   const settlementCheck=reconcileMondaySettlement({
+    runId,
+    settings,
+    items,
+    payouts,
+    paymentRequests
+   });
+
+   if(!settlementCheck.valid){
+    throw new Error(
+     'Settlement reconciliation failed: '+
+     settlementCheck.issues.slice(0,8).join('; ')
+    );
+   }
+
+   const planCheck=verifyMondayPlansFromDatabase({
+    db,runId,items
+   });
+
+   if(!planCheck.valid){
+    throw new Error(
+     'Payment-plan reconciliation failed: '+
+     planCheck.issues.slice(0,8).join('; ')
+    );
+   }
+
+   // A fresh, fully verified Autocab retrieval is mandatory.
+   const refreshed=await syncAutocab();
+
+   if(
+    refreshed?.financialVerification?.valid!==true ||
+    refreshed?.financialVerification?.complete!==true ||
+    refreshed?.financialVerification?.financialVerificationReady!==true ||
+    !Array.isArray(refreshed?.drivers)
+   ){
+    throw new Error(
+     'Fresh Autocab financial source is not fully verified.'
+    );
+   }
+
+   const drivers=refreshed.drivers;
+   const byId=new Map(
+    drivers.map(driver=>[Number(driver.driverId),driver])
+   );
+
+   const differences=[];
+   const originalIds=new Set();
+
+   const cents=value=>{
+    if(
+     value===null ||
+     value===undefined ||
+     value==='' ||
+     !Number.isFinite(Number(value))
+    ){
+     return null;
+    }
+
+    return Math.round(Number(value)*100);
+   };
+
+   for(const item of items){
+    const driverId=Number(item.driverId);
+    const fresh=byId.get(driverId);
+
+    originalIds.add(driverId);
+
+    if(!fresh){
+     differences.push({
+      driverId,
+      type:'missing_driver'
+     });
+     continue;
+    }
+
+    if(
+     cents(item.previousBalance)===null ||
+     cents(fresh.previousBalance)===null ||
+     cents(item.previousBalance)!==
+      cents(fresh.previousBalance)
+    ){
+     differences.push({
+      driverId,
+      type:'balance_changed'
+     });
+    }
+
+    if(String(item.callsign||'')!==
+       String(fresh.callsign||'')){
+     differences.push({
+      driverId,
+      type:'callsign_changed'
+     });
+    }
+
+    if(
+     Boolean(item.persistentPayoutExclusion)!==
+     Boolean(cachedDriver(driverId)?.payoutExcluded)
+    ){
+     differences.push({
+      driverId,
+      type:'payout_exclusion_changed'
+     });
+    }
+   }
+
+   for(const driver of drivers){
+    if(!originalIds.has(Number(driver.driverId))){
+     differences.push({
+      driverId:Number(driver.driverId),
+      type:'new_driver'
+     });
+    }
+   }
+
+   const comparedAt=new Date().toISOString();
+
+   const comparison={
+    runId,
+    comparedAt,
+    snapshotDriverCount:items.length,
+    refreshedDriverCount:drivers.length,
+    differenceCount:differences.length,
+    balancesUnchanged:differences.length===0,
+    differences
+   };
+
+   // Re-read authoritative financial records after the refresh.
+   // The fingerprints bind the verification to current SQLite state.
+   const fingerprints=mondayFinancialFingerprints(runId);
+
+   const decision=decideMondayVerification({
+    runId,
+    source,
+    comparison,
+    fingerprints,
+    now:comparedAt,
+    maxAgeMinutes:15
+   });
+
+   if(!decision.eligible){
+    throw new Error(
+     'Verification decision failed: '+
+     decision.issues.join('; ')
+    );
+   }
+
+   // Reconcile once more immediately before recording the pass.
+   // Protect against changes during the asynchronous Autocab call.
+   const finalRun=db.prepare(
+    'SELECT * FROM settlement_runs WHERE id=?'
+   ).get(runId);
+
+   if(
+    finalRun?.status!=='draft' ||
+    finalRun.items_json!==run.items_json ||
+    finalRun.settings_json!==run.settings_json
+   ){
+    throw new Error(
+     'Settlement changed during financial verification.'
+    );
+   }
+
+   const finalSettlement=reconcileMondaySettlement({
+    runId,
+    settings,
+    items,
+    payouts:db.prepare(`
+     SELECT * FROM payouts
+     WHERE run_id=? AND type='weekly'
+    `).all(runId),
+    paymentRequests:db.prepare(`
+     SELECT * FROM payment_requests
+     WHERE run_id=?
+    `).all(runId)
+   });
+
+   const finalPlans=verifyMondayPlansFromDatabase({
+    db,runId,items
+   });
+
+   const finalFingerprints=mondayFinancialFingerprints(runId);
+
+   if(
+    !finalSettlement.valid ||
+    !finalPlans.valid ||
+    finalFingerprints.financialHash!==
+     fingerprints.financialHash ||
+    finalFingerprints.rulesHash!==
+     fingerprints.rulesHash ||
+    finalFingerprints.paymentPlansHash!==
+     fingerprints.paymentPlansHash ||
+    finalFingerprints.financialRulesChanged
+   ){
+    throw new Error(
+     'Financial evidence changed during final reconciliation.'
+    );
+   }
+
+   const evidence={
+    runId,
+    settlementVerified:true,
+    financialVerificationReady:true,
+    sourceHash:source.sourceHash,
+    snapshotHash:fingerprints.snapshotHash,
+    financialHash:fingerprints.financialHash,
+    comparedAt,
+    sourceRetrievedAt:source.retrievedAt,
+    driverCount:items.length,
+    payoutCount:finalSettlement.payoutCount,
+    paymentRequestCount:finalSettlement.paymentRequestCount,
+    allocationCount:finalPlans.allocationCount
+   };
+
+   db.prepare(`
+    INSERT INTO monday_settlement_verifications(
+     id,run_id,status,snapshot_hash,
+     autocab_source_hash,rules_hash,payment_plans_hash,
+     evidence_json,difference_count,verified_by,
+     compared_at,expires_at,created_at
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+   `).run(
+    id('mverify'),
+    runId,
+    'passed',
+    fingerprints.snapshotHash,
+    source.sourceHash,
+    fingerprints.rulesHash,
+    fingerprints.paymentPlansHash,
+    JSON.stringify(evidence),
+    0,
+    req.auth.email,
+    comparedAt,
+    decision.expiresAt,
+    comparedAt
+   );
+
+   audit(
+    req,'staff',req.auth.email,
+    'monday_financial_verification_passed',
+    'settlement_run',runId,
+    {
+     expiresAt:decision.expiresAt,
+     driverCount:items.length
+    }
+   );
+
+   res.json({
+    ok:true,
+    status:'passed',
+    runId,
+    comparedAt,
+    expiresAt:decision.expiresAt,
+    driverCount:items.length
+   });
+
+  }catch(error){
+   // Never reuse a previous pass after an unsuccessful attempt.
+   // Record a failed attempt for review.
+   try{
+    db.prepare(`
+     INSERT INTO monday_settlement_verifications(
+      id,run_id,status,evidence_json,
+      failure_reason,created_at
+     ) VALUES(?,?,?,?,?,?)
+    `).run(
+     id('mverify'),
+     runId,
+     'failed',
+     JSON.stringify({
+      runId,
+      settlementVerified:false
+     }),
+     String(error.message).slice(0,2000),
+     new Date().toISOString()
+    );
+   }catch{}
+
+   res.status(409).json({
+    error:'Monday financial verification failed.',
+    details:error.message,
+    status:'failed'
+   });
+  }
+ }
+);
+
+// STEP82_ATOMIC_MONDAY_APPROVAL
+app.post(
+ '/api/admin/monday-runs/:runId/approve-all',
+ adminAuth,
+ requireStaffRole('administrator','finance'),
+ (req,res)=>{
+  let started=false;
+  try{
+   db.exec('BEGIN IMMEDIATE');
+   started=true;
+
+   const run=db.prepare(
+    'SELECT * FROM settlement_runs WHERE id=?'
+   ).get(req.params.runId);
+
+   if(!run||run.status!=='draft'||
+      run.payout_run_id){
+    throw new Error('Settlement cannot be approved in its current state.');
+   }
+
+   const verificationGate=
+     mondayFinancialProgressionGate(run.id);
+
+    if(!verificationGate.allowed){
+     throw new Error(
+      'Monday financial verification required: '+
+      verificationGate.issues.join('; ')
+     );
+    }
+
+    const pending=db.prepare(
+    `SELECT * FROM payouts
+     WHERE run_id=? AND type='weekly'
+       AND status='pending_approval'
+       AND payout_run_id IS NULL`
+   ).all(run.id);
+
+   const blocked=pending.filter(
+    x=>cachedDriver(x.driver_id)?.payoutExcluded &&
+       !hasMondayPayoutOverride(run.id,x.id)
+   );
+
+   if(blocked.length){
+    throw new Error(
+     'Payout exclusion requires review: '+
+     blocked.map(x=>x.callsign).join(', ')
+    );
+   }
+
+   const now=new Date().toISOString();
+
+   const update=db.prepare(
+    `UPDATE payouts
+     SET status='approved',
+         decision_at=?,
+         decision_by=?,
+         updated_at=?
+     WHERE id=? AND status='pending_approval'
+       AND payout_run_id IS NULL`
+   );
+
+   for(const payout of pending){
+    const result=update.run(
+     now,req.auth.email,now,payout.id
+    );
+    if(result.changes!==1){
+     throw new Error(
+      'Payout changed during approval: '+payout.id
+     );
+    }
+    updateRunItem(run.id,payout.id,'approved','');
+   }
+
+   const unresolved=db.prepare(
+    `SELECT COUNT(*) AS count FROM payouts
+     WHERE run_id=? AND type='weekly'
+       AND status='pending_approval'`
+   ).get(run.id).count;
+
+   if(unresolved){
+    throw new Error(
+     'There are unresolved payout decisions.'
+    );
+   }
+
+   db.prepare(
+    `UPDATE settlement_runs
+     SET status='approved',approved_at=?
+     WHERE id=?`
+   ).run(now,run.id);
+
+   audit(
+    req,'staff',req.auth.email,
+    'weekly_settlement_approved',
+    'settlement_run',run.id,
+    {approvedCount:pending.length}
+   );
+
+   db.exec('COMMIT');
+   started=false;
+
+   res.json({
+    ok:true,
+    approvedCount:pending.length
+   });
+
+  }catch(e){
+   if(started){
+    try{db.exec('ROLLBACK')}catch{}
+   }
+   res.status(409).json({error:e.message});
+  }
+ }
+);
+
+app.post('/api/admin/monday-runs/:runId/create-payout-run',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const settlement=db.prepare('SELECT * FROM settlement_runs WHERE id=?').get(req.params.runId);if(!settlement)return res.status(404).json({error:'Monday run not found'});if(settlement.status!=='approved')return res.status(409).json({error:`Monday settlement must be approved before batching; current status: ${settlement.status}`});if(settlement.payout_run_id)return res.status(409).json({error:'A payout batch has already been created for this Monday run',payoutRunId:settlement.payout_run_id});const gate=mondayFinancialProgressionGate(req.params.runId);if(!gate.allowed)return res.status(409).json({error:'Monday financial verification required before payout batching.',issues:gate.issues});const unresolvedPlanAllocations=db.prepare("SELECT COUNT(*) count FROM payment_plan_settlement_allocations WHERE run_id=? AND status!='applied'").get(req.params.runId)?.count||0;if(unresolvedPlanAllocations>0)return res.status(409).json({error:`Apply the ${unresolvedPlanAllocations} pending payment-plan deduction${unresolvedPlanAllocations===1?'':'s'} before creating the payout batch.`,pendingPlanAllocations:unresolvedPlanAllocations});const eligible=db.prepare("SELECT * FROM payouts WHERE run_id=? AND type='weekly' AND status='approved' AND payout_run_id IS NULL ORDER BY CAST(callsign AS INTEGER),callsign").all(req.params.runId);
+
+/* STEP118A_BATCH_SNAPSHOT_INTEGRITY
+   Reject payout batches if database payout rows no longer
+   match the approved Monday settlement snapshot.
+   This is NOT an Autocab freshness verification. */
+let approvedSnapshotItems;
+
+try{
+ const snapshot=JSON.parse(settlement.items_json||'[]');
+
+ if(!Array.isArray(snapshot)){
+  throw new Error('Invalid settlement snapshot');
+ }
+
+ const referenced=new Set();
+ const approved=new Map();
+
+ for(const item of snapshot){
+  if(!item.payoutId)continue;
+
+  const key=String(item.payoutId);
+
+  if(referenced.has(key)){
+   throw new Error('Duplicate payout in settlement snapshot');
+  }
+
+  referenced.add(key);
+
+  if(item.approvalStatus==='approved'){
+   approved.set(key,item);
+  }
+ }
+
+ if(approved.size!==eligible.length){
+  throw new Error(
+   'Approved payout count differs from settlement snapshot'
+  );
+ }
+
+ const cents=value=>{
+  if(value===null||value===undefined||value===''){
+   throw new Error('Missing payout amount');
+  }
+  const n=Number(value);
+  if(!Number.isFinite(n)||n<0){
+   throw new Error('Invalid payout amount');
+  }
+  return Math.round(n*100);
+ };
+
+ for(const payout of eligible){
+  const item=approved.get(String(payout.id));
+
+  if(!item){
+   throw new Error(
+    'Approved payout missing from settlement snapshot: '+
+    payout.id
+   );
+  }
+
+  if(String(item.driverId)!==String(payout.driver_id)){
+   throw new Error(
+    'Driver identity mismatch: '+payout.id
+   );
+  }
+
+  const actual=cents(
+   payout.net_amount??payout.amount
+  );
+
+  const expected=cents(item.amount);
+
+  if(actual!==expected){
+   throw new Error(
+    'Approved payout amount mismatch: '+payout.callsign
+   );
+  }
+
+  if(actual<=0){
+   throw new Error(
+    'Approved payout must be positive: '+payout.callsign
+   );
+  }
+ }
+
+ approvedSnapshotItems=approved.size;
+
+}catch(e){
+ return res.status(409).json({
+  error:
+   'Payment batch blocked: approved settlement integrity '+
+   'check failed. '+e.message
+ });
+}
+
+const excludedApproved=eligible.filter(
+ x=>cachedDriver(x.driver_id)?.payoutExcluded && !hasMondayPayoutOverride(req.params.runId,x.id)
+);
+if(excludedApproved.length){
+ return res.status(409).json({
+  error:
+   'Payment batch blocked: driver payout exclusions '+
+   'require review: '+
+   excludedApproved.map(x=>x.callsign).join(', ')
+ });
+}
+if(!eligible.length)return res.status(400).json({error:'No approved weekly payouts are ready'});const runId=id('payrun'),now=new Date().toISOString(),total=eligible.reduce((a,x)=>a+Number(x.net_amount||x.amount||0),0);db.prepare('INSERT INTO payout_runs(id,run_type,status,created_at,created_by,scheduled_for,total_amount,item_count,provider,notes,funding_status,funding_required) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(runId,'weekly','ready',now,req.auth.email,now,total,eligible.length,String(req.body.provider||'wise'),`Monday run ${settlement.id}`,'not_started',total);const up=db.prepare("UPDATE payouts SET payout_run_id=?,status='batched',updated_at=? WHERE id=?");for(const x of eligible)up.run(runId,now,x.id);db.prepare("UPDATE settlement_runs SET status='batched',payout_run_id=? WHERE id=?").run(runId,settlement.id);audit(req,'staff',req.auth.email,'weekly_payout_run_created','payout_run',runId,{settlementRunId:settlement.id,itemCount:eligible.length,totalAmount:total,callsigns:eligible.map(x=>x.callsign)});res.json({run:serializePayoutRun(db.prepare('SELECT * FROM payout_runs WHERE id=?').get(runId)),items:eligible.map(x=>({id:x.id,callsign:x.callsign,driverName:x.driver_name,amount:Number(x.net_amount||x.amount||0)}))})});
 
 
 /* ============================================================
@@ -11930,6 +14436,12 @@ function paymentPlanSettlementCandidate(driverId,availableAmount){
 
 
 async function applyMondayPlanSettlementAllocation(allocationId){
+ // TEMPORARY SAFETY GATE:
+ // Do not apply Autocab payment-plan deductions during a cancellable run.
+ throw new Error(
+  'Monday payment-plan deductions are locked until financial '+
+  'execution and reconciliation safeguards are complete.'
+ );
  let allocation=db.prepare(`
   SELECT *
   FROM payment_plan_settlement_allocations
@@ -15597,7 +18109,7 @@ app.post(
 
 
 app.get('/api/admin/outstanding-payments',adminAuth,(req,res)=>{refreshPaymentPlanStatuses();const now=new Date().toISOString().slice(0,16),rows=db.prepare("SELECT *,driver_id driverId,driver_name driverName,weekly_fee weeklyFee,carried_charges carriedCharges,payment_url paymentUrl,created_at createdAt,updated_at updatedAt,paid_at paidAt,due_at dueAt,email_sent_at emailSentAt,sms_sent_at smsSentAt,communication_error communicationError FROM payment_requests ORDER BY CASE status WHEN 'open' THEN 0 ELSE 1 END,created_at DESC").all().map(x=>({...x,overdue:x.status==='open'&&x.dueAt&&String(x.dueAt).slice(0,16)<now}));res.json({payments:rows})});
-app.post('/api/admin/outstanding-payments/:id/resend',adminAuth,requireStaffRole('administrator','finance','office'),async(req,res)=>{try{const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(req.params.id);if(!item)return res.status(404).json({error:'Payment request not found'});const d=cachedDriver(item.driver_id);const out=await sendOutstandingCommunications(item,d);audit(req,'staff',req.auth.email,'outstanding_message_resent','payment_request',item.id,{callsign:item.callsign});res.json({ok:true,...out})}catch(e){res.status(500).json({error:e.message})}});
+app.post('/api/admin/outstanding-payments/:id/resend',adminAuth,requireStaffRole('administrator','finance','office'),async(req,res)=>{try{const item=db.prepare('SELECT * FROM payment_requests WHERE id=?').get(req.params.id);if(!item)return res.status(404).json({error:'Payment request not found'});if(item.status!=='open')return res.status(409).json({error:'This payment request is not released and cannot be resent.'});const d=cachedDriver(item.driver_id);const out=await sendOutstandingCommunications(item,d);audit(req,'staff',req.auth.email,'outstanding_message_resent','payment_request',item.id,{callsign:item.callsign});res.json({ok:true,...out})}catch(e){res.status(500).json({error:e.message})}});
 
 
 /* ============================================================
@@ -18854,6 +21366,25 @@ app.get('/api/admin/demo/payment-plan/early-payout-status',adminAuth,(req,res)=>
 });
 
 
+// FAIVOPAY_STEP274_DEMO_CANCEL — isolated simulation state only.
+// Cancellation is allowed until release, even if simulated funding is sent/cleared.
+app.post('/api/admin/demo/:kind/cancel',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{
+ const kind=String(req.params.kind||'');
+ if(!['monday','early'].includes(kind))return res.status(404).json({error:'Unknown demo run'});
+ const reason=String(req.body?.reason||'').trim();
+ if(reason.length<5)return res.status(400).json({error:'A cancellation reason is required (at least five characters).'});
+ const state=readDemoState(),run=state[kind];
+ if(!run)return res.status(404).json({error:'Demo run not found'});
+ if(run.stage==='cancelled')return res.json(state);
+ if(run.locked||!['rentsheets','sync','review','funding','funding_wait','funded','balance'].includes(run.stage)||run.releasedAt||run.reconciledAt)
+  return res.status(400).json({error:'Cannot cancel once payments have been released or the demo run locked.'});
+ run.stage='cancelled';run.status='cancelled';run.locked=true;
+ run.cancelledAt=demoStamp();run.cancelReason=reason;
+ writeDemoState(state);
+ audit(req,'staff',req.auth.email,'demo_run_cancelled','demo',kind);
+ return res.json(state);
+});
+
 /* Demo Monday: Sync -> Review -> Freeze -> Fund -> Release -> Monitor -> Reconcile */
 app.post('/api/admin/demo/monday/confirm-rentsheets',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const state=readDemoState(),r=state.monday;if(r.locked)return res.status(400).json({error:'This demo run is locked. Reset Demo Lab to start again.'});if(r.stage!=='rentsheets')return res.status(400).json({error:'Rent Sheets have already been confirmed for this demo run.'});r.rentSheetsConfirmedAt=demoStamp();r.stage='sync';r.status='ready_to_sync';writeDemoState(state);res.json(state)});
 app.post('/api/admin/demo/monday/sync',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const state=readDemoState();const r=state.monday;if(r.locked)return res.status(400).json({error:'This demo run is locked. Reset Demo Lab to start again.'});if(r.stage!=='sync')return res.status(400).json({error:'Confirm Monday Rent Sheets before syncing balances.'});r.stage='review';r.status='review';r.syncAt=demoStamp();writeDemoState(state);res.json(state)});
@@ -20123,8 +22654,8 @@ function adminBankAccountInfo(driverId){
  const changedRecently=changed&&(Date.now()-new Date(row.updated_at).getTime())<(7*24*60*60*1000);
  const providerVerified=Boolean(row.provider_recipient_id)&&String(row.status||'').toLowerCase()==='verified';
  return {
-  configured:true,ready:true,status:providerVerified?'verified':changedRecently?'recently_changed':'saved',
-  label:providerVerified?'Provider verified':changedRecently?'Changed recently':'Bank ready',
+  configured:true,ready:providerVerified&&!changedRecently,status:providerVerified&&!changedRecently?'verified':changedRecently?'recently_changed':'saved',
+  label:providerVerified&&!changedRecently?'Provider verified':changedRecently?'Changed recently — review required':'Saved — provider verification required',
   accountHolder,sortCodeMasked:`••-••-${row.sort_code_last2}`,accountNumberMasked:`••••${row.account_number_last4}`,
   changedRecently,providerVerified,createdAt:row.created_at,updatedAt:row.updated_at
  };
@@ -20477,6 +23008,7 @@ app.get('/api/driver/me',driverAuth,(req,res)=>{
          request_type IS NULL
          OR request_type='standard'
         )
+        AND status!='pending_release'
       ORDER BY created_at DESC
       LIMIT 12
     `).all(d.driverId);
@@ -21032,3 +23564,9 @@ app.listen(PORT, '0.0.0.0', () => {
    );
   }
 });
+
+// STEP83_LOCK_APPROVED_SETTLEMENT
+
+// STEP85_CORRECT_SETTLEMENT_LOCKS
+
+// STEP113_LOCK_GENERIC_MONDAY_PAYOUTS

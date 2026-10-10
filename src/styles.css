@@ -13854,3 +13854,217 @@ body {
 .financePaymentsPage.payment-state-card .financeCustomerPaymentSection{
   order:3;
 }
+
+
+/* Monday financial clarity overview */
+.mondayClarityOverview {
+ display:grid;
+ gap:16px;
+}
+.mondayClarityHeading {
+ display:flex;
+ justify-content:space-between;
+ flex-wrap:wrap;
+ gap:8px;
+ align-items:baseline;
+}
+.mondayClarityHeading h4 {
+ margin:0;
+ font-size:15px;
+}
+.mondayClarityHeading small,
+.mondayClarityCard small,
+.mondayClarityNote {
+ opacity:.7;
+}
+.mondayClarityGrid {
+ display:grid;
+ grid-template-columns:repeat(2,minmax(0,1fr));
+ gap:12px;
+}
+.mondayClarityCard {
+ display:flex;
+ flex-direction:column;
+ gap:7px;
+ padding:18px;
+ border:1px solid rgba(128,128,128,.2);
+ border-radius:12px;
+ min-width:0;
+}
+.mondayClarityCard span {
+ font-weight:600;
+ font-size:13px;
+}
+.mondayClarityCard strong {
+ font-size:clamp(21px,2vw,29px);
+ font-variant-numeric:tabular-nums;
+}
+.mondayClarityTableWrap {
+ overflow-x:auto;
+ border:1px solid rgba(128,128,128,.2);
+ border-radius:12px;
+}
+.mondayClarityTable {
+ width:100%;
+ border-collapse:collapse;
+ font-variant-numeric:tabular-nums;
+}
+.mondayClarityTable th,
+.mondayClarityTable td {
+ padding:12px;
+ text-align:left;
+ border-bottom:1px solid rgba(128,128,128,.15);
+}
+.mondayClarityTable th:nth-child(n+2),
+.mondayClarityTable td:nth-child(n+2) {
+ text-align:right;
+}
+.mondayClarityTable tr:last-child td {
+ border-bottom:0;
+}
+.mondayClarityNote {
+ margin:0;
+ font-size:12px;
+ line-height:1.6;
+}
+.mondayClarityDetails {
+ margin-top:16px;
+}
+.mondayClarityDetails summary {
+ cursor:pointer;
+ padding:12px 0;
+ font-weight:600;
+}
+.mondayClarityDetails .mondayFinanceSummary {
+ margin-top:12px;
+}
+@media(max-width:580px) {
+ .mondayClarityGrid {
+  grid-template-columns:1fr;
+ }
+}
+
+
+/* Monday expandable driver sections */
+.mondayDriverDetailsV1 {
+ border:1px solid rgba(128,128,128,.2);
+ border-radius:12px;
+ overflow:hidden;
+}
+.mondayDriverDetailsV1 > summary {
+ display:flex;
+ justify-content:space-between;
+ align-items:center;
+ gap:12px;
+ padding:16px;
+ cursor:pointer;
+ font-weight:600;
+}
+.mondayDriverDetailsV1 > summary:hover {
+ background:rgba(128,128,128,.05);
+}
+.mondayDriverDetailsV1 > summary strong {
+ font-variant-numeric:tabular-nums;
+ white-space:nowrap;
+}
+.mondayDriverDetailsV1[open] > summary {
+ border-bottom:1px solid rgba(128,128,128,.2);
+}
+.mondayDriverDetailsV1 .tableWrap {
+ margin:0;
+}
+
+/* FAIVOPAY_SHARED_WIZARD_PHASE1_20261010 */
+.faivopaySharedWizardHeader{margin-bottom:16px;padding:20px;border-radius:18px}
+.faivopaySharedWizardHeader .panelHead{margin-bottom:14px}
+.faivopaySharedWizardHeader .liveSteps{margin:0}
+.faivopaySharedWizardHeader .liveSteps>div{min-width:0}
+@media(max-width:750px){.faivopaySharedWizardHeader{padding:14px}}
+
+/* FAIVOPAY_WIZARD_PHASE2_COMPACT_20261010 */
+.faivoCompactTotals{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:0 0 14px}
+.faivoCompactTotals>div{background:#fff;border:1px solid #dce5ef;border-radius:14px;padding:14px;min-width:0}
+.faivoCompactTotals span,.faivoCompactTotals small{display:block;color:#64748b;font-size:12px}
+.faivoCompactTotals strong{display:block;font-size:clamp(17px,1.7vw,24px);margin:6px 0;color:#0f172a;overflow-wrap:anywhere}
+.faivoFinanceDisclosure,.faivoHistoryDisclosure{margin:0 0 16px}
+.faivoFinanceDisclosure>summary,.faivoHistoryDisclosure>summary{cursor:pointer;padding:13px 16px;border:1px solid #dce5ef;background:#f8fafc;color:#334155;border-radius:12px;font-weight:700;list-style-position:inside}
+.faivoFinanceDisclosure[open]>summary,.faivoHistoryDisclosure[open]>summary{margin-bottom:12px}
+@media(max-width:780px){.faivoCompactTotals{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* FAIVOPAY_WIZARD_NAVIGATION_STEP273 */
+.faivoWizardNavigator{border-top:1px solid #e2e8f0;margin-top:14px;padding-top:14px;display:flex;align-items:center;justify-content:space-between;gap:16px}
+.faivoWizardNavigatorCopy{display:flex;flex-direction:column;gap:3px;min-width:0}
+.faivoWizardNavigatorCopy span{font-size:11px;font-weight:800;letter-spacing:.06em;color:#64748b}
+.faivoWizardNavigatorCopy strong{font-size:17px;color:#0f172a}
+.faivoWizardNavigatorCopy small{color:#64748b;line-height:1.45}
+.faivoWizardNavigatorActions{display:flex;gap:8px;flex-shrink:0}
+.faivoWizardNavigatorActions button:disabled{opacity:.45;cursor:not-allowed}
+.faivoReviewMessage{margin-top:12px;padding:16px;border:1px solid #bfdbfe;background:#eff6ff;border-radius:12px;color:#1e3a8a}
+.faivoReviewMessage strong{display:block;margin-bottom:6px}
+.faivoReviewMessage p{margin:0 0 10px;font-size:13px}
+/* Hide operational controls while viewing a historical step. Do not hide audit history. */
+.faivopaySharedWizardHeader[data-reviewing="true"]~.wizardStageCard,
+.faivopaySharedWizardHeader[data-reviewing="true"]~.wizardFinancePanel,
+.faivopaySharedWizardHeader[data-reviewing="true"]~.wizardSecondaryPanel,
+.faivopaySharedWizardHeader[data-reviewing="true"]~.wizardActiveRun,
+.demoRunV22:has(.faivoReviewMessage)>.wizardStageBody{display:none}
+@media(max-width:760px){.faivoWizardNavigator{align-items:stretch;flex-direction:column}.faivoWizardNavigatorActions{justify-content:space-between}}
+
+/* FAIVOPAY_STEP275_CONTROLS */
+.faivoWizardHeaderControls{display:flex;align-items:center;justify-content:flex-end;gap:12px;flex-wrap:wrap}
+.faivoWizardHeaderControls .dangerOutline{white-space:nowrap}
+.faivoWizardNavigatorActions button{min-width:132px;font-weight:700}
+.faivoWizardNavigatorActions button:not(:disabled){border-color:#bfd1e5}
+@media(max-width:760px){.faivoWizardHeaderControls{justify-content:flex-start}.faivoWizardNavigatorActions button{min-width:0}}
+
+/* FAIVOPAY_STEP276_NAVIGATION_FIX */
+.faivopaySharedWizardHeader[data-reviewing="true"] .wizardSteps .current{box-shadow:0 0 0 2px #2563eb55}
+
+/* FAIVOPAY_STEP278_LIVE_CARDS — shared visual shell for live run workflows */
+.faivoLiveUnifiedWizard{display:flex;flex-direction:column;gap:14px;background:#fff;border:1px solid #dce5ef;border-radius:20px;padding:22px;margin-bottom:18px;box-shadow:0 8px 30px rgba(15,23,42,.06)}
+.faivoLiveUnifiedWizard>.faivopaySharedWizardHeader{display:contents}
+.faivoLiveUnifiedWizard>.faivopaySharedWizardHeader>.panelHead{order:0;margin-bottom:0}
+.faivoLiveUnifiedWizard>.faivopaySharedWizardHeader>.liveSteps{order:1;margin:8px 0}
+.faivoLiveUnifiedWizard>.faivopaySharedWizardHeader>.faivoReviewMessage{order:2}
+.faivoLiveUnifiedWizard>.faivopaySharedWizardHeader>.faivoWizardNavigator{order:90;border-top:1px solid #e2e8f0;padding-top:18px;margin-top:8px}
+.faivoLiveUnifiedWizard>.faivoCompactTotals{order:3}
+.faivoLiveUnifiedWizard>.faivoFinanceDisclosure{order:20}
+.faivoLiveUnifiedWizard>.wizardStageCard,.faivoLiveUnifiedWizard>.wizardActiveRun{order:30}
+.faivoLiveUnifiedWizard>.wizardSecondaryPanel,.faivoLiveUnifiedWizard>.carryNote,.faivoLiveUnifiedWizard>.operatorWarning,.faivoLiveUnifiedWizard>.summaryBanner,.faivoLiveUnifiedWizard>.officeStats{order:25}
+.faivoLiveUnifiedWizard>.wizardStageCard,.faivoLiveUnifiedWizard>.wizardSecondaryPanel,.faivoLiveUnifiedWizard>.wizardActiveRun,.faivoLiveUnifiedWizard>.liveWorkflowCard{box-shadow:none;border:1px solid #e5eaf2;margin:0}
+.faivoLiveUnifiedWizard>.faivoFinanceDisclosure{border:1px solid #e5eaf2;border-radius:12px;padding:12px 16px}
+.faivoLiveUnifiedWizard>.faivoCompactTotals{margin:0}
+@media(max-width:700px){.faivoLiveUnifiedWizard{padding:14px;gap:12px}.faivoLiveUnifiedWizard .faivoWizardNavigatorActions{display:flex;flex-wrap:wrap}}
+
+/* FAIVO_LIVE_TEST_STEP279 */
+.faivoLiveTestWizard{padding:18px;margin-bottom:16px}
+.faivoLiveTestWizard .liveSteps{margin-bottom:18px}
+.faivoLiveTestStage{display:grid;gap:16px}
+.faivoLiveTestView{display:grid;gap:16px}
+.faivoLiveTestNavigator{display:flex;align-items:center;justify-content:space-between;gap:14px;padding-top:14px;border-top:1px solid #e2e8f0;font-size:13px;font-weight:700;color:#475569}
+@media(max-width:720px){.faivoLiveTestNavigator{flex-direction:column;align-items:stretch}}
+
+/* FAIVO_DEMO_TABBED_STABILITY_281 */
+.faivoDemoTabs{display:flex;flex-wrap:wrap;gap:10px;background:#fff;border:1px solid #e2e8f0;border-radius:15px;padding:12px;position:sticky;top:65px;z-index:5}
+.faivoDemoTabs button{min-height:40px;white-space:normal}
+.demoV22Stack .demoRunV22{min-width:0}
+@media(max-width:650px){.faivoDemoTabs{position:static}.faivoDemoTabs button{flex:1 1 100%}}
+
+
+/* FAIVOPAY_STEP282_DEMO_STABLE_WIZARD — scoped strictly to Demo Lab */
+.demoV22Stack .demoRunV22{width:100%;max-width:100%;min-width:0;overflow:visible}
+.demoV22Stack .demoRunV22>.faivopaySharedWizardHeader{display:flex;flex-direction:column;min-width:0;margin:16px 0 0;padding:18px;border:1px solid #e2e8f0;box-shadow:none}
+.demoV22Stack .demoRunV22 .faivopaySharedWizardHeader>.wizardStageBody{min-height:340px;min-width:0;flex:1}
+.demoV22Stack .demoRunV22 .faivopaySharedWizardHeader>.faivoReviewMessage{min-height:340px;flex:1;min-width:0;margin-top:14px}
+.demoV22Stack .demoRunV22 .faivopaySharedWizardHeader>.faivoWizardNavigator{margin-top:auto;padding-top:16px}
+.demoV22Stack .demoRunV22 .faivopaySharedWizardHeader .tableWrap{max-width:100%;overflow-x:auto}
+.faivoDemoReviewFacts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:16px}
+.faivoDemoReviewFacts>div{padding:12px;border:1px solid #bfdbfe;border-radius:10px;background:#fff;min-width:0}
+.faivoDemoReviewFacts>div span,.faivoDemoReviewFacts>div strong{display:block}
+.faivoDemoReviewFacts>div span{font-size:11px;color:#64748b;margin-bottom:5px}
+.faivoDemoReviewFacts>div strong{color:#0f172a;overflow-wrap:anywhere}
+.faivoDemoReviewDrivers{grid-column:1/-1;margin-top:8px}
+.faivoDemoReviewDrivers>summary{cursor:pointer;font-weight:700;padding:9px 0}
+.faivoDemoReviewDrivers .tableWrap{background:#fff;border:1px solid #e2e8f0;border-radius:10px}
+.faivoDemoRunLock{display:inline-block;font-weight:750;font-size:12px;color:#475569;padding:9px 12px;border:1px solid #cbd5e1;background:#f1f5f9;border-radius:9px}
+@media(max-width:720px){.faivoDemoReviewFacts{grid-template-columns:repeat(2,minmax(0,1fr))}.demoV22Stack .demoRunV22 .faivopaySharedWizardHeader>.wizardStageBody,.demoV22Stack .demoRunV22 .faivopaySharedWizardHeader>.faivoReviewMessage{min-height:260px}}
