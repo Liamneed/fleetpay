@@ -21357,6 +21357,25 @@ app.get('/api/admin/demo/payment-plan/early-payout-status',adminAuth,(req,res)=>
 });
 
 
+// FAIVOPAY_STEP274_DEMO_CANCEL — isolated simulation state only.
+// Cancellation is allowed until release, even if simulated funding is sent/cleared.
+app.post('/api/admin/demo/:kind/cancel',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{
+ const kind=String(req.params.kind||'');
+ if(!['monday','early'].includes(kind))return res.status(404).json({error:'Unknown demo run'});
+ const reason=String(req.body?.reason||'').trim();
+ if(reason.length<5)return res.status(400).json({error:'A cancellation reason is required (at least five characters).'});
+ const state=readDemoState(),run=state[kind];
+ if(!run)return res.status(404).json({error:'Demo run not found'});
+ if(run.stage==='cancelled')return res.json(state);
+ if(run.locked||!['rentsheets','sync','review','funding','funding_wait','funded','balance'].includes(run.stage)||run.releasedAt||run.reconciledAt)
+  return res.status(400).json({error:'Cannot cancel once payments have been released or the demo run locked.'});
+ run.stage='cancelled';run.status='cancelled';run.locked=true;
+ run.cancelledAt=demoStamp();run.cancelReason=reason;
+ writeDemoState(state);
+ audit(req,'staff',req.auth.email,'demo_run_cancelled','demo',kind);
+ return res.json(state);
+});
+
 /* Demo Monday: Sync -> Review -> Freeze -> Fund -> Release -> Monitor -> Reconcile */
 app.post('/api/admin/demo/monday/confirm-rentsheets',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const state=readDemoState(),r=state.monday;if(r.locked)return res.status(400).json({error:'This demo run is locked. Reset Demo Lab to start again.'});if(r.stage!=='rentsheets')return res.status(400).json({error:'Rent Sheets have already been confirmed for this demo run.'});r.rentSheetsConfirmedAt=demoStamp();r.stage='sync';r.status='ready_to_sync';writeDemoState(state);res.json(state)});
 app.post('/api/admin/demo/monday/sync',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{const state=readDemoState();const r=state.monday;if(r.locked)return res.status(400).json({error:'This demo run is locked. Reset Demo Lab to start again.'});if(r.stage!=='sync')return res.status(400).json({error:'Confirm Monday Rent Sheets before syncing balances.'});r.stage='review';r.status='review';r.syncAt=demoStamp();writeDemoState(state);res.json(state)});

@@ -95,7 +95,47 @@ function WizardSteps({steps,currentIndex=0}){
 }
 
 
+// FAIVOPAY_SHARED_WIZARD_PHASE1_20261010
+// FAIVOPAY_WIZARD_NAVIGATION_STEP273
+// Navigation is purely visual; it does not call any payment or adjustment endpoint.
+function PaymentWizardHeader({title,description,steps,currentIndex=0,mode='office',status='',children,toolbar=null,renderReview=null}){
+ const safeIndex=Math.max(0,Math.min(steps.length-1,currentIndex));
+ const [reviewIndex,setReviewIndex]=useState(null);
+ useEffect(()=>setReviewIndex(null),[safeIndex,title]);
+ const displayedIndex=reviewIndex!==null&&reviewIndex<safeIndex?reviewIndex:safeIndex;
+ const reviewing=displayedIndex<safeIndex;
+ const closed=['cancelled','reconciled','complete','paid'].includes(String(status).toLowerCase());
+ return <section className="panel faivopaySharedWizardHeader" data-reviewing={reviewing?'true':'false'}>
+  <div className="panelHead">
+   <div>
+    <span className="sectionKicker">{mode==='demo'?'DEMONSTRATION':mode==='test'?'CONTROLLED TEST':'PAYMENT WIZARD'}</span>
+    <h3>{title}</h3>
+    <p>{description}</p>
+   </div>
+   <div className="faivoWizardHeaderControls"><Pill tone={mode==='test'?'warn':'neutral'}>{status||`Stage ${safeIndex+1} of ${steps.length}`}</Pill>{toolbar}</div>
+  </div>
+  {/* FAIVOPAY_STEP276_NAVIGATION_FIX: highlight the stage being viewed, not the furthest reached. */}
+  <WizardSteps steps={steps} currentIndex={displayedIndex}/>
+  {reviewing
+    ?<div className="faivoReviewMessage" role="status"><strong>{steps[displayedIndex]} — read-only review</strong><p>The figures below reflect the run's current saved records, not a historical snapshot taken at this specific step. No actions can be repeated from this view.</p>{renderReview?renderReview(displayedIndex):null}</div>
+    :children}
+  <div className="faivoWizardNavigator">
+   <div className="faivoWizardNavigatorCopy">
+    <span>{reviewing?'REVIEWING COMPLETED STAGE':'CURRENT WORKING STAGE'} · {displayedIndex+1} OF {steps.length}</span>
+    <strong>{steps[displayedIndex]}</strong>
+    <small>{reviewing?'Read-only review — these actions cannot be repeated.':closed?'This run is closed. No further payment actions or cancellation are available.':'Complete the required action in this stage before the workflow can advance.'}</small>
+   </div>
+   <div className="faivoWizardNavigatorActions">
+    <button type="button" className="secondary" disabled={displayedIndex===0} onClick={()=>setReviewIndex(displayedIndex-1)}>← Previous Step</button>
+    <button type="button" className="secondary" disabled={!reviewing} onClick={()=>setReviewIndex(displayedIndex+1>=safeIndex?null:displayedIndex+1)}>Next Step →</button>
+   </div>
+  </div>
+ </section>;
+}
+
 function DemoLab({demo,loadDemo,resetDemo,action,demoEmail,setDemoEmail,demoMobile,setDemoMobile,sendEmail,sendSms}){
+ // FAIVO_DEMO_TABBED_STABILITY_281 — one workflow visible at a time
+ const [demoTab,setDemoTab]=useState('monday');
  const tone=v=>['paid','updated','approved','reconciled','funded','cleared'].includes(String(v))?'good':['failed','excluded','declined','collection','not_posted'].includes(String(v))?'bad':['processing','waiting','requested','pending','frozen','funding_wait'].includes(String(v))?'warn':'neutral';
  const approved=(r,early=false)=>r?.items?.filter(x=>['approved','paid'].includes(x.status)&&Number(early?x.netAmount:x.amount)>0)||[];
  const failed=(r,early=false)=>approved(r,early).filter(x=>x.wiseStatus==='failed');
@@ -114,6 +154,9 @@ function DemoLab({demo,loadDemo,resetDemo,action,demoEmail,setDemoEmail,demoMobi
  const Funding=({run,title,early=false})=>{if(!['funding','funding_wait','funded','monitor','complete'].includes(run.stage))return null;const required=Number(run.fundingRequired||paymentTotal(run,early)),top=Number(run.topUpRequired||0),sent=Number(run.fundingTransferAmount||0);return <div className="demoFundingBox v23"><div className="demoFundingHead"><div><span>DEMO WISE FUNDING CONTROL</span><h4>{title}</h4></div><Pill tone={run.stage==='funded'||run.stage==='monitor'||run.stage==='complete'?'good':'warn'}>{run.stage==='funded'||run.stage==='monitor'||run.stage==='complete'?'Cleared funds confirmed':run.stage==='funding_wait'?'Bank transfer sent — awaiting clearance':'Funding check required'}</Pill></div><div className="demoFundingGrid"><div><span>Approved payout total</span><strong>{money(required)}</strong></div><div><span>Cleared demo Wise balance</span><strong>{money(run.wiseBalance||0)}</strong></div><div><span>Shortfall to transfer</span><strong className={top>0?'negative':''}>{money(top)}</strong></div><div><span>Payment run reference</span><strong>{run.reference||'—'}</strong></div></div><div className="demoBankDetails"><div><span>Account name</span><b>{run.wiseAccount?.name}</b></div><div><span>Sort code</span><b>{run.wiseAccount?.sortCode}</b></div><div><span>Account number</span><b>{run.wiseAccount?.accountNumber}</b></div></div>{run.stage==='funding'&&<div className="operatorWarning"><AlertTriangle/><div><b>Funding gate</b><span>{top>0?`Transfer exactly ${money(top)} using reference ${run.reference}. FaivoPay must not release any driver payment until Wise reports the money as cleared.`:'The existing Wise balance already covers this run. Check the cleared balance before release.'}</span></div></div>}{run.stage==='funding_wait'&&<div className="operatorWarning blue"><Clock3/><div><b>Waiting for cleared funds</b><span>{money(sent)} has been simulated as sent from the taxi company bank. The payout button stays locked until Wise confirms the credit.</span></div></div>}</div>};
  const StatusTable=({run,early=false})=>!['monitor','complete'].includes(run.stage)?null:<div className="demoMonitor"><div className="panelHead"><div><span className="sectionKicker">PAYMENT + AUTOCAB MONITOR</span><h3>Process each driver to final reconciliation</h3><p>A successful Wise payout is the trigger for the matching Autocab update. Failed bank payments must never reduce the driver’s Autocab balance.</p></div></div><div className="tableWrap proTable"><table><thead><tr><th>Driver</th><th>Payout</th><th>Wise payment</th><th>Autocab adjustment</th><th>Result</th></tr></thead><tbody>{approved(run,early).map(x=><tr key={x.id}><td><div className="driverCell"><span className="callsign">{x.callsign}</span><b>{x.driverName}</b></div></td><td><b>{money(early?x.netAmount:x.amount)}</b></td><td><Pill tone={tone(x.wiseStatus)}>{String(x.wiseStatus||'not_sent').replaceAll('_',' ')}</Pill></td><td><Pill tone={tone(x.autocabStatus)}>{String(x.autocabStatus||'not_posted').replaceAll('_',' ')}</Pill></td><td>{x.failureReason?<span className="failureText"><AlertTriangle/>{x.failureReason}</span>:x.wiseStatus==='paid'&&x.autocabStatus==='updated'?<span className="successText"><CheckCircle2/>Paid & reconciled</span>:'Waiting'}</td></tr>)}</tbody></table></div></div>;
  const RunCard=({kind,run,early=false})=>{
+  // FAIVOPAY_STEP275_CONTROLS: safe demo cancellation through funding.
+  const demoCanCancel=!run.locked&&!run.releasedAt&&!run.reconciledAt&&
+   ['rentsheets','sync','balance','review','funding','funding_wait','funded'].includes(run.stage);
   const base=`/api/admin/demo/${kind}`;
   const title=early?'Early payout':'Monday weekly payout';
   const steps=early
@@ -139,6 +182,25 @@ function DemoLab({demo,loadDemo,resetDemo,action,demoEmail,setDemoEmail,demoMobi
     :run.stage==='complete'?7
     :0;
 
+   const closedDemo=run.stage==='complete'||run.stage==='cancelled'||Boolean(run.reconciledAt)||Boolean(run.releasedAt);
+   const reviewDetails=(step)=>{
+    const items=run.items||[];
+    const total=paymentTotal(run,early);
+    const released=Boolean(run.releasedAt)||['monitor','complete'].includes(run.stage);
+    const facts=[
+     ['Stage being reviewed',steps[step]],
+     ['Run state',run.stage==='complete'?'Reconciled':run.stage==='cancelled'?'Cancelled':String(run.status||run.stage).replaceAll('_',' ')],
+     ['Included drivers',String(approved(run,early).length)],
+     ['Approved payout total',money(total)],
+     ['Outstanding decisions',String(pending(run,early).length)],
+     ['Payout release',released?'Released or processing':'Not released'],
+    ];
+    if(step>=4)facts.push(['Run reference',run.reference||'Not yet assigned']);
+    if(step>=5)facts.push(['Recorded demo Wise balance',money(run.wiseBalance||0)]);
+    return <div className="faivoDemoReviewFacts">{facts.map(([label,value])=><div key={label}><span>{label}</span><strong>{value}</strong></div>)}
+     <details className="faivoDemoReviewDrivers"><summary>View current saved driver results ({items.length})</summary><div className="tableWrap proTable"><table><thead><tr><th>Driver</th><th>Amount</th><th>Decision</th><th>Wise</th><th>Autocab</th></tr></thead><tbody>{items.map(x=><tr key={x.id}><td>{x.callsign} · {x.driverName}</td><td>{money(early?x.netAmount:x.amount)}</td><td>{x.status||'—'}</td><td>{x.wiseStatus||'—'}</td><td>{x.autocabStatus||'—'}</td></tr>)}</tbody></table></div></details>
+    </div>;
+   };
   // STEP110B_DEMO_OVERVIEW
    const approvedItems=approved(run,early);
    const pendingItems=pending(run,early);
@@ -200,7 +262,10 @@ function DemoLab({demo,loadDemo,resetDemo,action,demoEmail,setDemoEmail,demoMobi
      />
     </div>
 
-    <WizardSteps steps={steps} currentIndex={idx}/>
+    {/* FAIVOPAY_STEP274_DEMO_CARD */}
+    <PaymentWizardHeader title={title} description="Isolated training only — no real payments or Autocab writes." mode="demo" steps={steps} currentIndex={idx} status={String(run.status||run.stage).replaceAll('_',' ')} renderReview={reviewDetails} toolbar={demoCanCancel?<button type="button" className="dangerOutline" onClick={()=>action(`${base}/cancel`, `Cancel this ${early?'early payout':'Monday'} DEMO run? This affects only the selected simulated run.`, {reason:'Cancelled by operator during demo'})}><X/>Cancel Run</button>:<span className="faivoDemoRunLock" role="status">{run.stage==='cancelled'?'Run cancelled — actions locked':closedDemo?'Run locked — cancellation unavailable':'Cancellation unavailable at this stage'}</span>}>
+
+      {run.stage==='cancelled'&&<div className="operatorWarning blue"><Info/><div><b>Demo run cancelled</b><span>This simulated run is closed. Reset Demo Lab to begin another demonstration.</span></div></div>}
 
    <div className="wizardStageBody">
     {!early&&run.stage==='rentsheets'&&<div className="demoActionStage">
@@ -274,6 +339,7 @@ function DemoLab({demo,loadDemo,resetDemo,action,demoEmail,setDemoEmail,demoMobi
 
     {run.stage==='complete'&&<div className="demoComplete"><CheckCircle2/><div><b>Run reconciled and locked</b><span>{approved(run,early).length} successful payments · {money(paymentTotal(run,early))} · all matching Autocab adjustments confirmed.</span></div></div>}
    </div>
+   </PaymentWizardHeader>
   </section>
  };
 
@@ -582,7 +648,16 @@ function DemoLab({demo,loadDemo,resetDemo,action,demoEmail,setDemoEmail,demoMobi
   </section>;
  };
 
- return <><section className="demoWarning"><ShieldCheck/><div><b>DEMO MODE — NO REAL MONEY OR AUTOCAB CHANGES</b><span>This is the planned live operator workflow. Demo balances, Wise details and payment results are made-up.</span></div><button className="secondary" onClick={resetDemo}>Reset demo data</button></section><section className="officePageIntro"><div><span>OPERATOR TRAINING</span><h2>FaivoPay Payment Process Demo Lab</h2><p>Every operator follows the same gated process. FaivoPay will block the next step until the previous control has been completed.</p></div></section>{!demo?<section className="emptyState"><PlayCircle/><h3>Load training scenario</h3><p>Load isolated made-up drivers and balances.</p><button className="primary" onClick={loadDemo}>Load Demo Lab</button></section>:<div className="demoV22Stack"><PaymentPlanCard plan={demo.paymentPlan}/><RunCard kind="monday" run={demo.monday}/><RunCard kind="early" run={demo.early} early/><section className="panel demoComms"><div className="panelHead"><div><span className="sectionKicker">COMMUNICATION TEST</span><h3>Send clearly marked demo messages</h3><p>These are the only Demo Lab actions that can leave FaivoPay. Use your own test address or mobile number.</p></div></div><div className="demoCommsGrid"><label>Test email address<input type="email" value={demoEmail} onChange={e=>setDemoEmail(e.target.value)} placeholder="your@email.co.uk"/><button className="secondary" onClick={sendEmail}><Mail/>Send demo email</button></label><label>Test mobile number<input value={demoMobile} onChange={e=>setDemoMobile(e.target.value)} placeholder="07..."/><button className="secondary" onClick={sendSms}><Smartphone/>Send demo SMS</button></label></div></section></div>}</>;
+ return <><section className="demoWarning"><ShieldCheck/><div><b>DEMO MODE — NO REAL MONEY OR AUTOCAB CHANGES</b><span>This is the planned live operator workflow. Demo balances, Wise details and payment results are made-up.</span></div><button className="secondary" onClick={resetDemo}>Reset demo data</button></section><section className="officePageIntro"><div><span>OPERATOR TRAINING</span><h2>FaivoPay Payment Process Demo Lab</h2><p>Every operator follows the same gated process. FaivoPay will block the next step until the previous control has been completed.</p></div></section>{!demo?<section className="emptyState"><PlayCircle/><h3>Load training scenario</h3><p>Load isolated made-up drivers and balances.</p><button className="primary" onClick={loadDemo}>Load Demo Lab</button></section>:<div className="demoV22Stack">
+      <nav className="faivoDemoTabs" aria-label="Demo Lab workflows">
+       {[['monday','Monday payment run'],['early','Early payouts'],['plans','Payment plans & messages']].map(([key,label])=>
+        <button key={key} type="button" className={demoTab===key?'primary':'secondary'} aria-current={demoTab===key?'page':undefined} onClick={()=>setDemoTab(key)}>{label}</button>
+       )}
+      </nav>
+      {demoTab==='plans'&&<PaymentPlanCard plan={demo.paymentPlan}/>}
+      {demoTab==='monday'&&<RunCard kind="monday" run={demo.monday}/>}
+      {demoTab==='early'&&<RunCard kind="early" run={demo.early} early/>}
+      {demoTab==='plans'&&<section className="panel demoComms"><div className="panelHead"><div><span className="sectionKicker">COMMUNICATION TEST</span><h3>Send clearly marked demo messages</h3><p>These are the only Demo Lab actions that can leave FaivoPay. Use your own test address or mobile number.</p></div></div><div className="demoCommsGrid"><label>Test email address<input type="email" value={demoEmail} onChange={e=>setDemoEmail(e.target.value)} placeholder="your@email.co.uk"/><button className="secondary" onClick={sendEmail}><Mail/>Send demo email</button></label><label>Test mobile number<input value={demoMobile} onChange={e=>setDemoMobile(e.target.value)} placeholder="07..."/><button className="secondary" onClick={sendSms}><Smartphone/>Send demo SMS</button></label></div></section>}</div>}</>;
 }
 
 function LiveTestLab({
@@ -617,6 +692,9 @@ function LiveTestLab({
 }){
  const[search,setSearch]=useState('');
  const[selectedDriverId,setSelectedDriverId]=useState('');
+  // FAIVO_LIVE_TEST_STEP279: navigation changes visibility only, never performs an external operation.
+  const [testView,setTestView]=useState(0);
+  const testStages=['Test drivers','Live snapshot','Simulations','Activity history'];
 
  const candidates=liveTest?.candidates||[];
  const allowList=liveTest?.allowList||[];
@@ -671,6 +749,8 @@ function LiveTestLab({
  const filteredCandidates=useMemo(()=>{
   const term=String(search||'').trim().toLowerCase();
 
+  if(term.length<2)return [];
+
   return candidates
    .filter(x=>!x.allowListed)
    .filter(x=>{
@@ -681,7 +761,7 @@ function LiveTestLab({
      x.driverId
     ].some(v=>String(v||'').toLowerCase().includes(term));
    })
-   .slice(0,80);
+   .slice(0,12);
  },[candidates,search]);
 
  const selectedCandidate=candidates.find(
@@ -718,7 +798,7 @@ function LiveTestLab({
    </Pill>
   </section>
 
-  <section className="officePageIntro liveTestIntro">
+   <section className="officePageIntro liveTestIntro">
    <div>
     <span>CONTROLLED LIVE-DATA TESTING</span>
     <h2>Live Data Test Lab</h2>
@@ -758,8 +838,14 @@ function LiveTestLab({
     </section>
 
    :<div className="liveTestStack">
+      <section className="panel faivoLiveTestWizard">
+       <div className="panelHead"><div><span className="sectionKicker">CONTROLLED LIVE TEST WORKFLOW</span><h3>{testStages[testView]}</h3><p>Navigate between test views. Previous/Next never performs an Autocab request or financial transaction.</p></div><Pill tone={armedLiveTestDriver?'bad':'good'}>{armedLiveTestDriver?'LIVE WRITE GATE ARMED':'Read-only navigation'}</Pill></div>
+       <WizardSteps steps={testStages} currentIndex={testView}/>
+       <div className="faivoLiveTestStage">
 
-     <section className="liveTestSummaryGrid">
+
+     {testView===0&&<div className="faivoLiveTestView">
+      <section className="liveTestSummaryGrid">
       <div>
        <span>Company</span>
        <b>{liveTest.company?.name||'—'}</b>
@@ -768,7 +854,7 @@ function LiveTestLab({
 
       <div>
        <span>Mode</span>
-       <b>Simulation</b>
+       <b>{armedLiveTestDriver?'Write gate armed':'Read-only / simulation'}</b>
        <small>Real driver data · no live mutations</small>
       </div>
 
@@ -780,8 +866,8 @@ function LiveTestLab({
 
       <div>
        <span>Live writes</span>
-       <b className="liveTestSafeText">Disabled</b>
-       <small>Server-enforced · Phase 2A read-only</small>
+       <b className={armedLiveTestDriver?'negative':'liveTestSafeText'}>{armedLiveTestDriver?'ARMED':'Disabled'}</b>
+       <small>Server-enforced, restricted to explicitly armed test driver</small>
       </div>
      </section>
 
@@ -1088,7 +1174,10 @@ function LiveTestLab({
       }
      </section>
 
-     {(liveCreditPreview||liveCreditResult)&&
+      </div>}
+
+      {/* Live-write preview and execution panels intentionally remain outside the read-only step navigator. */}
+      {(liveCreditPreview||liveCreditResult)&&
       <section className="panel liveTestCreditPanel">
        <div className="panelHead">
         <div>
@@ -1492,7 +1581,7 @@ function LiveTestLab({
       </section>
      }
 
-     {liveTestSimulation&&
+     {testView===2&&liveTestSimulation&&
       <section className="panel liveTestSimulationPanel">
        <div className="panelHead">
         <div>
@@ -1704,7 +1793,7 @@ function LiveTestLab({
       </section>
      }
 
-     {liveTestWritePreview&&
+     {testView===2&&liveTestWritePreview&&
       <section className="panel liveTestWritePreviewPanel">
        <div className="panelHead liveTestWritePreviewHead">
         <div>
@@ -1894,7 +1983,7 @@ function LiveTestLab({
       </section>
      }
 
-     {liveTestSnapshot&&
+     {testView===1&&liveTestSnapshot&&
       <section className="panel liveTestSnapshotPanel">
        <div className="panelHead">
         <div>
@@ -1998,7 +2087,7 @@ function LiveTestLab({
       </section>
      }
 
-     <section className="panel liveTestHistoryPanel">
+     {testView===3&&<section className="panel liveTestHistoryPanel">
       <div className="panelHead">
        <div>
         <span className="sectionKicker">IMMUTABLE TEST HISTORY</span>
@@ -2183,17 +2272,27 @@ function LiveTestLab({
         </div>
       }
 
-     </section>
+      </section>}
 
-     <section className="liveTestPhaseNotice">
+      <div className="faivoLiveTestNavigator">
+       <span>View {testView+1} of {testStages.length} · {testStages[testView]}</span>
+       <div className="faivoWizardNavigatorActions">
+        <button type="button" className="secondary" disabled={testView===0} onClick={()=>setTestView(v=>Math.max(0,v-1))}>← Previous Step</button>
+        <button type="button" className="secondary" disabled={testView===testStages.length-1} onClick={()=>setTestView(v=>Math.min(testStages.length-1,v+1))}>Next Step →</button>
+       </div>
+      </div>
+      </div>
+      </section>
+      <section className="liveTestPhaseNotice">
       <Info/>
       <div>
        <b>Phase 2A boundary</b>
        <span>
-        Live Test Lab may now make an explicit read-only Autocab
-        driver-account query for an enabled allow-listed driver.
-        It cannot make Autocab adjustments, change the driver cache,
-        release payouts, contact payment providers or send messages.
+        Snapshots, simulations and write previews are read-only.
+        Separately armed, explicitly confirmed £1 credit/reversal tests can
+        change the designated live Autocab driver's balance. These controls
+        are NOT payment-wizard navigation and must only be used under an
+        authorised controlled test. No bank payout is initiated here.
        </span>
       </div>
      </section>
@@ -3274,7 +3373,70 @@ function AdminApp(){
    }
   }
 
- async function createMonday(){if(!confirm('Confirm Autocab Rent Sheets are complete. FaivoPay will sync Autocab and create a draft using each driver’s Previous Balance.'))return;try{const j=await api('/api/admin/monday-runs',{method:'POST'});await Promise.all([loadMonday(),loadSett(),loadOutstanding(),loadFees(),loadOverview()]);alert(`Draft created. ${j.items.filter(x=>x.action==='payout').length} positive balances require approval and ${j.items.filter(x=>x.action==='payment_request').length} driver(s) owe above the collection threshold.`)}catch(e){alert(e.message)}}
+
+// STEP262_CANCEL_MONDAY_UI
+async function cancelMondaySettlement(){
+ if(!activeMonday)return;
+
+ if(!['draft','approved'].includes(activeMonday.status)
+    ||activeMonday.payoutRunId){
+  alert('This settlement cannot be cancelled at its current stage.');
+  return;
+ }
+
+ const reason=prompt(
+  'Cancel Monday settlement '+activeMonday.runDate+'?\n\n'+
+  'Enter a reason (at least 5 characters):'
+ );
+
+ if(reason===null)return;
+
+ if(reason.trim().length<5){
+  alert('A cancellation reason of at least 5 characters is required.');
+  return;
+ }
+
+ if(!confirm(
+  'FINAL CONFIRMATION\n\n'+
+  'Cancel settlement '+activeMonday.id+'?\n\n'+
+  'This will cancel its unexecuted financial records only if '+
+  'the server confirms cancellation is safe.\n\n'+
+  'No payouts or payment requests will be deleted.'
+ ))return;
+
+ try{
+  const result=await api(
+   `/api/admin/monday-runs/${activeMonday.id}/cancel`,
+   {
+    method:'POST',
+    body:JSON.stringify({reason:reason.trim()})
+   }
+  );
+
+  if(result.status!=='cancelled'&&!result.alreadyCancelled)
+   throw new Error('Cancellation was not confirmed.');
+
+  setSelectedWeeklyPayouts([]);
+  setMondayComparison(null);
+
+  await Promise.all([
+   loadMonday(),
+   loadSett(),
+   loadOutstanding(),
+   loadFees(),
+   loadOverview()
+  ]);
+
+  alert('Monday settlement cancelled and retained for audit.');
+ }catch(e){
+  alert(
+   'Cancellation was blocked.\n\n'+e.message+
+   '\n\nNo manual database changes should be made.'
+  );
+ }
+}
+
+async function createMonday(){if(!confirm('Confirm Autocab Rent Sheets are complete. FaivoPay will sync Autocab and create a draft using each driver’s Previous Balance.'))return;try{const j=await api('/api/admin/monday-runs',{method:'POST'});await Promise.all([loadMonday(),loadSett(),loadOutstanding(),loadFees(),loadOverview()]);alert(`Draft created. ${j.items.filter(x=>x.action==='payout').length} positive balances require approval and ${j.items.filter(x=>x.action==='payment_request').length} driver(s) owe above the collection threshold.`)}catch(e){alert(e.message)}}
  async function weeklyDecision(item,status){let reason='';if(status==='excluded'){reason=prompt(`Reason for excluding callsign ${item.callsign}:`)||'';if(!reason.trim())return}try{await api(`/api/admin/monday-runs/${activeMonday.id}/payouts/${item.payoutId}`,{method:'PATCH',body:JSON.stringify({status,reason})});setSelectedWeeklyPayouts(x=>x.filter(id=>id!==item.payoutId));await Promise.all([loadMonday(),loadSett()])}catch(e){alert(e.message)}}
 
  // STEP80_OVERRIDE_UI
@@ -3457,7 +3619,38 @@ The payout will return to Excluded.`
   }
  }
 
- async function createWeeklyBatch(){if(!activeMonday||!weeklyApproved.length)return;if(!confirm(`Create the Wise payment batch for ${weeklyApproved.length} approved drivers totalling ${money(weeklyApprovedTotal)}? Excluded and pending drivers will not be included.`))return;try{const j=await api(`/api/admin/monday-runs/${activeMonday.id}/create-payout-run`,{method:'POST',body:JSON.stringify({provider:'wise'})});await Promise.all([loadMonday(),loadSett(),loadOverview()]);alert(`Payment batch created: ${j.run.itemCount} drivers · ${money(j.run.totalAmount)}.`)}catch(e){alert(e.message)}}
+ // STEP246B_MONDAY_VERIFICATION
+async function verifyMondayFinancials(){
+ if(!activeMonday || activeMonday.status!=='draft')return;
+
+ if(!confirm(
+  'Verify this Monday settlement against fresh Autocab balances, '+
+  'financial rules and payment plans? No money will be sent.'
+ ))return;
+
+ try{
+  const result=await api(
+   `/api/admin/monday-runs/${activeMonday.id}/verify-financials`,
+   {method:'POST',body:'{}'}
+  );
+
+  if(result.status!=='passed')
+   throw new Error('Financial verification did not pass.');
+
+  alert(
+   'Financial verification passed.\n\n'+
+   'Valid until: '+
+   new Date(result.expiresAt).toLocaleString('en-GB')+
+   '\n\nYou can now review and approve payouts.'
+  );
+
+  await Promise.all([loadMonday(),loadSett()]);
+ }catch(e){
+  alert('Financial verification blocked: '+e.message);
+ }
+}
+
+async function createWeeklyBatch(){if(!activeMonday||!weeklyApproved.length)return;if(!confirm(`Create the Wise payment batch for ${weeklyApproved.length} approved drivers totalling ${money(weeklyApprovedTotal)}? Excluded and pending drivers will not be included.`))return;try{const j=await api(`/api/admin/monday-runs/${activeMonday.id}/create-payout-run`,{method:'POST',body:JSON.stringify({provider:'wise'})});await Promise.all([loadMonday(),loadSett(),loadOverview()]);alert(`Payment batch created: ${j.run.itemCount} drivers · ${money(j.run.totalAmount)}.`)}catch(e){alert(e.message)}}
  async function sendWiseSandbox(r){if(!confirm(`Submit ${r.itemCount} payouts (${money(r.totalAmount)}) to Wise Sandbox? No real money will move.`))return;try{const j=await api(`/api/admin/payout-runs/${r.id}/wise-sandbox`,{method:'POST'});alert(j.message);await loadSett()}catch(e){alert(e.message)}}
  async function confirmFundingSent(r){if(!confirm(`Confirm the funding transfer for ${money(r.totalAmount)} has been sent to the payout account?\n\nThis does NOT mark the money as cleared.`))return;try{await api(`/api/admin/payout-runs/${r.id}/funding-sent`,{method:'POST'});await loadSett()}catch(e){alert(e.message)}}
  async function confirmFundsCleared(r){if(!confirm(`Confirm cleared funds of at least ${money(r.totalAmount)} are available for this run?\n\nUntil Wise API balance monitoring is connected, this is a manual control and must be checked against the provider account.`))return;try{await api(`/api/admin/payout-runs/${r.id}/funds-cleared`,{method:'POST'});await loadSett()}catch(e){alert(e.message)}}
@@ -7279,16 +7472,21 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
       <h2>Monday payment run</h2>
       <p>Complete the settlement in order from Rent Sheets through to reconciliation.</p>
      </div>
-     {canMoney&&!activeMonday&&<button className="primary" onClick={createMonday}><PlayCircle/>Start Monday run</button>}
+     {canMoney&&activeMonday&&
+      ['draft','approved'].includes(activeMonday.status)&&
+      !activeMonday.payoutRunId&&
+      <button
+       className="dangerOutline"
+       onClick={cancelMondaySettlement}
+      >
+       <X/>Cancel Monday run
+      </button>}
+
     </section>
 
-    <section className="panel wizardOverview">
-     <div className="panelHead">
-      <div><span className="sectionKicker">MONDAY PAYMENT WIZARD</span><h3>Guided weekly settlement</h3><p>Only the current working stage is shown below.</p></div>
-      <Pill tone={activeMonday?'warn':'neutral'}>{activeMonday?'In progress':'Not started'}</Pill>
-     </div>
-     <WizardSteps steps={mondayWizardSteps} currentIndex={mondayWizardIndex}/>
-    </section>
+    {/* FAIVOPAY_STEP278_LIVE_CARDS monday */}
+     <div className="faivoLiveUnifiedWizard">
+     <PaymentWizardHeader title="Monday payment run" description="Follow the verified settlement stages in order." steps={mondayWizardSteps} currentIndex={mondayWizardIndex} status={activeMonday?String(activeMonday.status).replaceAll('_',' '):'Not started'}/>
 
     {!activeMonday
      ?<section className="liveWorkflowCard wizardStageCard">
@@ -7297,10 +7495,111 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
        {canMoney&&<div className="runCardActions"><button className="primary" onClick={createMonday}><PlayCircle/>Confirm & start Monday run</button></div>}
       </section>
      :<>
-      <section className="panel wizardFinancePanel">
+      {/* FAIVOPAY_WIZARD_PHASE2_COMPACT_20261010 */}
+       <div className="faivoCompactTotals" aria-label="Monday settlement totals">
+        <div><span>Autocab IN</span><strong>{money(mondayClarityOverview.autocabIn.amount)}</strong><small>{mondayClarityOverview.autocabIn.count} drivers</small></div>
+        <div><span>Autocab OUT</span><strong>{money(mondayClarityOverview.autocabOut.amount)}</strong><small>{mondayClarityOverview.autocabOut.count} drivers</small></div>
+        <div><span>FaivoPay IN</span><strong>{money(mondayClarityOverview.faivopayIn.amount)}</strong><small>{mondayClarityOverview.faivopayIn.count} drivers</small></div>
+        <div><span>FaivoPay OUT</span><strong>{money(mondayClarityOverview.faivopayOut.amount)}</strong><small>{mondayClarityOverview.faivopayOut.count} drivers</small></div>
+       </div>
+       <details className="faivoFinanceDisclosure">
+        <summary>View financial breakdown, fees, exceptions and payment readiness</summary>
+       <section className="panel wizardFinancePanel">
        <div className="panelHead"><div><span className="sectionKicker">{activeMonday.runDate||'MONDAY RUN'}</span><h3>Settlement summary</h3><p>{activeMonday.id}</p></div><Pill tone="warn">{String(activeMonday.status||'active').replaceAll('_',' ')}</Pill></div>
 
         <div className="mondayClarityOverview">
+         {/* STEP248_MONDAY_PAYMENT_OVERVIEW */}
+         <div className="mondayClarityHeading">
+          <h4>Monday payment position</h4>
+          <small>Calculated amounts — no payments sent</small>
+         </div>
+
+         <div className="mondayClarityGrid">
+          {[
+           [
+            'Awaiting approval',
+            weeklyPending,
+            'Not yet authorised'
+           ],
+           [
+            'Approved payouts',
+            weeklyApproved,
+            'Approved, not paid'
+           ],
+           [
+            'Excluded payouts',
+            weeklyExcluded,
+            'Not included in payment batch'
+           ]
+          ].map(([label,rows,description])=>
+           <div className="mondayClarityCard" key={label}>
+            <span>{label}</span>
+            <strong>{money(rows.reduce(
+             (total,x)=>total+Number(x.amount||0),0
+            ))}</strong>
+            <small>{rows.length} drivers · {description}</small>
+           </div>
+          )}
+          <div className="mondayClarityCard">
+           <span>Payment batch</span>
+           <strong>{
+            activeWeeklyPayoutRun
+             ?money(activeWeeklyPayoutRun.totalAmount||0)
+             :money(0)
+           }</strong>
+           <small>{
+            activeWeeklyPayoutRun
+             ?`${activeWeeklyPayoutRun.itemCount||0} drivers · ${activeWeeklyPayoutRun.status}`
+             :'Not yet created'
+           }</small>
+          </div>
+         </div>
+
+         {(mondayPlanAllocations.length>0 ||
+           weeklyApproved.some(x=>bankFor(x.driverId).ready!==true))&&
+          <div className="operatorWarning">
+           <AlertTriangle/>
+           <div>
+            <b>Payment readiness requires attention</b>
+            <span>
+             {mondayPlanAllocations.length>0
+              ?`${pendingPlanAllocations.length} pending payment-plan deductions; ${applyingPlanAllocations.length} applying or uncertain. Unresolved deductions prevent payment batching. `
+              :''}
+             {weeklyApproved.filter(
+              x=>bankFor(x.driverId).ready!==true
+             ).length} approved drivers have bank details not marked ready.
+             Approved does not mean paid or released.
+            </span>
+           </div>
+          </div>
+         }
+
+         <details className="mondayClarityDetails">
+          <summary>Preview the remaining Monday payment stages</summary>
+          <div className="mondayFinanceSummary">
+           <div>
+            <span>Review driver payouts</span>
+            <b>{weeklyItems.length} drivers</b>
+            <small>Approve or exclude each eligible payout after verification</small>
+           </div>
+           <div>
+            <span>Create payment run</span>
+            <b>{money(weeklyApprovedTotal)}</b>
+            <small>Approved value only; batching remains subject to all safety checks</small>
+           </div>
+           <div>
+            <span>Funding</span>
+            <b>Not confirmed</b>
+            <small>Funding must be confirmed separately</small>
+           </div>
+           <div>
+            <span>Release and reconcile</span>
+            <b>Not started</b>
+            <small>Wise remains configured as before; no transfers are triggered here</small>
+           </div>
+          </div>
+         </details>
+
 
          <div className="mondayClarityHeading">
           <h4>Autocab — actual balances</h4>
@@ -7457,13 +7756,13 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
        </div>
         </details>
        </section>
-
-      {activeMondayCancelledBatch&&<div className="operatorWarning blue"><AlertTriangle/><div><b>Previous payment batch cancelled safely</b><span>The batch was cancelled before release. This Monday settlement remains open so the approved drivers can be reviewed and placed into a corrected payment run.</span></div></div>}
+       </details>
+       {activeMondayCancelledBatch&&<div className="operatorWarning blue"><AlertTriangle/><div><b>Previous payment batch cancelled safely</b><span>The batch was cancelled before release. This Monday settlement remains open so the approved drivers can be reviewed and placed into a corrected payment run.</span></div></div>}
 
       {mondayWizardIndex===2&&<section className="panel wizardStageCard">
        <div className="panelHead"><div><span className="sectionKicker">STEP 3</span><h3>Payment-plan deductions</h3><p>Apply amounts reserved from positive Monday balances before driver payouts.</p></div><div className="rowActions"><button className="secondary" onClick={()=>downloadOfficeCsv('monday-plan-deductions',null,{runId:activeMonday.id})}><FileClock/>Export CSV</button><div className="compactStatus"><Pill tone={pendingPlanAllocations.length?'warn':'good'}>{pendingPlanAllocations.length} pending</Pill>{applyingPlanAllocations.length>0&&<Pill tone="warn">{applyingPlanAllocations.length} applying</Pill>}{failedPlanAllocations.length>0&&<Pill tone="bad">{failedPlanAllocations.length} review</Pill>}<Pill tone="good">{appliedPlanAllocations.length} applied</Pill></div></div></div>
        {mondayPlanAllocations.length?<><div className="mondayFinanceOther"><div><span>Total deductions</span><b>{money(mondayPlanAllocationTotal)}</b></div><div><span>Applied</span><b>{money(mondayPlanAllocationAppliedTotal)}</b></div><div><span>Remaining</span><b>{money(Math.max(0,mondayPlanAllocationTotal-mondayPlanAllocationAppliedTotal))}</b></div></div>
-       <div className="tableWrap proTable"><table><thead><tr><th>Driver</th><th>Instalment</th><th>Monday deduction</th><th>Status</th><th>Details</th><th>Action</th></tr></thead><tbody>{mondayPlanAllocations.map(x=>{const driver=drivers.find(d=>String(d.driverId)===String(x.driverId));return <tr key={x.id}><td><div className="driverCell"><span className="callsign">{x.callsign}</span><div><b>{driver?.fullName||`Driver ${x.driverId}`}</b><small>Payment plan</small></div></div></td><td>{money(x.scheduledAmount)}</td><td><b>{money(x.allocatedAmount)}</b></td><td><Pill tone={x.status==='applied'?'good':x.error?'bad':'warn'}>{x.status}</Pill></td><td>{x.error?<small className="reasonText">{x.error}</small>:x.status==='applied'?<small className="reasonText">Applied to payment plan</small>:x.status==='applying'?<small className="reasonText">Processing or manual review required</small>:<small className="reasonText">Awaiting application</small>}</td><td><div className="compactActions">{canMoney&&!activeMonday.payoutRunId&&x.status==='pending'&&<button className="mini success" disabled={Boolean(planAllocationBusy)} onClick={()=>applyMondayPlanAllocation(x)}>{planAllocationBusy===x.id?'Applying…':'Apply deduction'}</button>}{x.status==='applied'&&<span className="tinyNote">Complete</span>}{x.status==='applying'&&<span className="tinyNote">Review</span>}</div></td></tr>})}</tbody></table></div></>:<div className="emptyInline good"><CheckCircle2/>No payment-plan deductions are required.</div>}
+       <div className="tableWrap proTable"><table><thead><tr><th>Driver</th><th>Instalment</th><th>Monday deduction</th><th>Status</th><th>Details</th><th>Action</th></tr></thead><tbody>{mondayPlanAllocations.map(x=>{const driver=drivers.find(d=>String(d.driverId)===String(x.driverId));return <tr key={x.id}><td><div className="driverCell"><span className="callsign">{x.callsign}</span><div><b>{driver?.fullName||`Driver ${x.driverId}`}</b><small>Payment plan</small></div></div></td><td>{money(x.scheduledAmount)}</td><td><b>{money(x.allocatedAmount)}</b></td><td><Pill tone={x.status==='applied'?'good':x.error?'bad':'warn'}>{x.status}</Pill></td><td>{x.error?<small className="reasonText">{x.error}</small>:x.status==='applied'?<small className="reasonText">Applied to payment plan</small>:x.status==='applying'?<small className="reasonText">Processing or manual review required</small>:<small className="reasonText">Awaiting application</small>}</td><td><div className="compactActions">{canMoney&&!activeMonday.payoutRunId&&x.status==='pending'&&<span className="tinyNote">Deduction locked — review required</span>}{x.status==='applied'&&<span className="tinyNote">Complete</span>}{x.status==='applying'&&<span className="tinyNote">Review</span>}</div></td></tr>})}</tbody></table></div></>:<div className="emptyInline good"><CheckCircle2/>No payment-plan deductions are required.</div>}
       </section>}
 
       {[3,4].includes(mondayWizardIndex)&&<>
@@ -7486,9 +7785,14 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
               :'Compare Latest Autocab Balances'}
             </button>}
            {canMoney&&activeMonday.status==='draft'&&
-           <button className="primary" onClick={approveAllWeekly}>
+           <>
+ <button className="secondary" onClick={verifyMondayFinancials}>
+  <ShieldCheck/>Verify Financials
+ </button>
+ <button className="primary" onClick={approveAllWeekly}>
             <ShieldCheck/>Review & Approve Settlement
-           </button>}
+           </button>
+</>}
           {selectedWeeklyPayouts.length>0&&!activeMonday.payoutRunId&&canMoney&&<button className="dangerAction" onClick={excludeSelectedWeekly}>Exclude selected ({selectedWeeklyPayouts.length})</button>}
           {weeklyApproved.length>0&&!activeMonday.payoutRunId&&canMoney&&<button className="primary" onClick={createWeeklyBatch}><Send/>Create payment run</button>}
          </div>
@@ -7632,10 +7936,13 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
       {mondayWizardIndex>=5&&activeWeeklyPayoutRun&&<section className="wizardActiveRun"><LiveRunCard r={activeWeeklyPayoutRun} showSteps={false}/></section>}
      </>}
 
-    <section className="panel">
+    </div>
+     <details className="faivoHistoryDisclosure"><summary>Weekly payment-run history (expand)</summary>
+<section className="panel">
      <div className="panelHead"><div><h3>Weekly payment-run history</h3><p>Completed and cancelled runs remain here for audit.</p></div></div>
      <div className="runCards liveRunStack">{sett.payoutRuns.filter(r=>r.runType==='weekly'&&String(r.id)!==String(activeWeeklyPayoutRun?.id||'')).slice(0,12).map(r=><LiveRunCard key={r.id} r={r}/>)}</div>
     </section>
+</details>
    </>}
     {view==='early'&&<>
      <section className="officePageIntro">
@@ -7643,10 +7950,9 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
       <button className="secondary" onClick={sendEarlySummary}><Mail/>Send office summary now</button>
      </section>
 
-     <section className="panel wizardOverview">
-      <div className="panelHead"><div><span className="sectionKicker">EARLY PAYOUT WIZARD</span><h3>Guided daily payout run</h3><p>The same payment-run controls and cancellation boundary are used as Monday.</p></div><Pill tone={activeEarlyPayoutRun?'warn':'neutral'}>{activeEarlyPayoutRun?'In progress':'Review'}</Pill></div>
-      <WizardSteps steps={earlyWizardSteps} currentIndex={earlyWizardIndex}/>
-     </section>
+     {/* FAIVOPAY_STEP278_LIVE_CARDS early */}
+     <div className="faivoLiveUnifiedWizard">
+     <PaymentWizardHeader title="Early payouts" description="Review, approve, fund and reconcile payments." steps={earlyWizardSteps} currentIndex={earlyWizardIndex} status={activeEarlyPayoutRun?String(activeEarlyPayoutRun.status).replaceAll('_',' '):'Review'}/>
 
      {!activeEarlyPayoutRun
       ?<>
@@ -7722,10 +8028,13 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
       </>
       :<section className="wizardActiveRun"><LiveRunCard r={activeEarlyPayoutRun} showSteps={false}/></section>}
 
-     <section className="panel">
+     </div>
+     <details className="faivoHistoryDisclosure"><summary>Early payout payment-run history (expand)</summary>
+<section className="panel">
       <div className="panelHead"><div><h3>Early payout payment-run history</h3><p>Completed and cancelled runs remain here for audit.</p></div></div>
       <div className="runCards liveRunStack">{sett.payoutRuns.filter(r=>r.runType==='early'&&String(r.id)!==String(activeEarlyPayoutRun?.id||'')).slice(0,12).map(r=><LiveRunCard key={r.id} r={r}/>)}</div>
      </section>
+</details>
     </>}
     {view==='outstanding'&&<>
 
