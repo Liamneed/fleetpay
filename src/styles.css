@@ -13854,3 +13854,122 @@ body {
 .financePaymentsPage.payment-state-card .financeCustomerPaymentSection{
   order:3;
 }
+
+
+/* Monday financial clarity overview */
+.mondayClarityOverview {
+ display:grid;
+ gap:16px;
+}
+.mondayClarityHeading {
+ display:flex;
+ justify-content:space-between;
+ flex-wrap:wrap;
+ gap:8px;
+ align-items:baseline;
+}
+.mondayClarityHeading h4 {
+ margin:0;
+ font-size:15px;
+}
+.mondayClarityHeading small,
+.mondayClarityCard small,
+.mondayClarityNote {
+ opacity:.7;
+}
+.mondayClarityGrid {
+ display:grid;
+ grid-template-columns:repeat(2,minmax(0,1fr));
+ gap:12px;
+}
+.mondayClarityCard {
+ display:flex;
+ flex-direction:column;
+ gap:7px;
+ padding:18px;
+ border:1px solid rgba(128,128,128,.2);
+ border-radius:12px;
+ min-width:0;
+}
+.mondayClarityCard span {
+ font-weight:600;
+ font-size:13px;
+}
+.mondayClarityCard strong {
+ font-size:clamp(21px,2vw,29px);
+ font-variant-numeric:tabular-nums;
+}
+.mondayClarityTableWrap {
+ overflow-x:auto;
+ border:1px solid rgba(128,128,128,.2);
+ border-radius:12px;
+}
+.mondayClarityTable {
+ width:100%;
+ border-collapse:collapse;
+ font-variant-numeric:tabular-nums;
+}
+.mondayClarityTable th,
+.mondayClarityTable td {
+ padding:12px;
+ text-align:left;
+ border-bottom:1px solid rgba(128,128,128,.15);
+}
+.mondayClarityTable th:nth-child(n+2),
+.mondayClarityTable td:nth-child(n+2) {
+ text-align:right;
+}
+.mondayClarityTable tr:last-child td {
+ border-bottom:0;
+}
+.mondayClarityNote {
+ margin:0;
+ font-size:12px;
+ line-height:1.6;
+}
+.mondayClarityDetails {
+ margin-top:16px;
+}
+.mondayClarityDetails summary {
+ cursor:pointer;
+ padding:12px 0;
+ font-weight:600;
+}
+.mondayClarityDetails .mondayFinanceSummary {
+ margin-top:12px;
+}
+@media(max-width:580px) {
+ .mondayClarityGrid {
+  grid-template-columns:1fr;
+ }
+}
+
+
+/* Monday expandable driver sections */
+.mondayDriverDetailsV1 {
+ border:1px solid rgba(128,128,128,.2);
+ border-radius:12px;
+ overflow:hidden;
+}
+.mondayDriverDetailsV1 > summary {
+ display:flex;
+ justify-content:space-between;
+ align-items:center;
+ gap:12px;
+ padding:16px;
+ cursor:pointer;
+ font-weight:600;
+}
+.mondayDriverDetailsV1 > summary:hover {
+ background:rgba(128,128,128,.05);
+}
+.mondayDriverDetailsV1 > summary strong {
+ font-variant-numeric:tabular-nums;
+ white-space:nowrap;
+}
+.mondayDriverDetailsV1[open] > summary {
+ border-bottom:1px solid rgba(128,128,128,.2);
+}
+.mondayDriverDetailsV1 .tableWrap {
+ margin:0;
+}

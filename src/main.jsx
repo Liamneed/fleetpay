@@ -2631,6 +2631,55 @@ function AdminApp(){
  const weeklyApproved=weeklyItems.filter(x=>x.approvalStatus==='approved');
  const weeklyExcluded=weeklyItems.filter(x=>x.approvalStatus==='excluded');
 
+  // Read-only settlement overview; no financial side effects.
+  const mondayClarityOverview=(()=>{
+   const items=activeMonday?.items||[];
+
+   const sum=(rows,fn)=>rows.reduce(
+    (total,x)=>total+Math.round(Number(fn(x)||0)*100),0
+   )/100;
+
+   const positive=items.filter(x=>Number(x.previousBalance||0)>0);
+   const negative=items.filter(x=>Number(x.previousBalance||0)<0);
+
+   const belowIncoming=items.filter(
+    x=>x.action==='carry_forward' &&
+    Number(x.previousBalance||0)<0
+   );
+
+   const belowOutgoing=items.filter(
+    x=>x.action==='payout_carry_forward'
+   );
+
+   const payable=weeklyItems.filter(
+    x=>x.approvalStatus!=='excluded'
+   );
+
+   const bankHolds=payable.filter(
+    x=>bankFor(x.driverId).ready!==true
+   );
+
+   const fees=items.filter(x=>Number(x.weeklyFee||0)>0);
+
+   const metric=(rows,fn)=>({
+    count:rows.length,
+    amount:sum(rows,fn)
+   });
+
+   return {
+    autocabIn:metric(negative,x=>Math.abs(x.previousBalance)),
+    autocabOut:metric(positive,x=>x.previousBalance),
+    faivopayIn:metric(weeklyCollections,x=>x.amount),
+    faivopayOut:metric(payable,x=>x.amount),
+    belowIn:metric(belowIncoming,x=>Math.abs(x.previousBalance)),
+    belowOut:metric(belowOutgoing,x=>x.previousBalance),
+    excluded:metric(weeklyExcluded,x=>x.amount),
+    bankHolds:metric(bankHolds,x=>x.amount),
+    fees:metric(fees,x=>x.weeklyFee)
+   };
+  })();
+
+
  /*
   * Proposed Monday outgoing:
   * Includes pending + approved payouts.
@@ -6769,7 +6818,88 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
      :<>
       <section className="panel wizardFinancePanel">
        <div className="panelHead"><div><span className="sectionKicker">{activeMonday.runDate||'MONDAY RUN'}</span><h3>Settlement summary</h3><p>{activeMonday.id}</p></div><Pill tone="warn">{String(activeMonday.status||'active').replaceAll('_',' ')}</Pill></div>
-       <div className="mondayFinanceSummary">
+
+        <div className="mondayClarityOverview">
+
+         <div className="mondayClarityHeading">
+          <h4>Autocab — actual balances</h4>
+          <small>Previous Balance snapshot</small>
+         </div>
+
+         <div className="mondayClarityGrid">
+          {[
+           ['Autocab IN',mondayClarityOverview.autocabIn],
+           ['Autocab OUT',mondayClarityOverview.autocabOut]
+          ].map(([label,data])=>
+           <div className="mondayClarityCard" key={label}>
+            <span>{label}</span>
+            <strong>{money(data.amount)}</strong>
+            <small>{data.count} drivers</small>
+           </div>
+          )}
+         </div>
+
+         <div className="mondayClarityHeading">
+          <h4>FaivoPay — proposed payments</h4>
+          <small>After current settlement rules</small>
+         </div>
+
+         <div className="mondayClarityGrid">
+          {[
+           ['FaivoPay IN',mondayClarityOverview.faivopayIn],
+           ['FaivoPay OUT',mondayClarityOverview.faivopayOut]
+          ].map(([label,data])=>
+           <div className="mondayClarityCard" key={label}>
+            <span>{label}</span>
+            <strong>{money(data.amount)}</strong>
+            <small>{data.count} drivers</small>
+           </div>
+          )}
+         </div>
+
+         <div className="mondayClarityHeading">
+          <h4>Exceptions and retained balances</h4>
+          <small>Driver count and financial value</small>
+         </div>
+
+         <div className="mondayClarityTableWrap">
+          <table className="mondayClarityTable">
+           <thead>
+            <tr>
+             <th>Category</th>
+             <th>Drivers</th>
+             <th>Value</th>
+            </tr>
+           </thead>
+           <tbody>
+            {[
+             ['Below threshold — IN',mondayClarityOverview.belowIn],
+             ['Below threshold — OUT',mondayClarityOverview.belowOut],
+             ['Excluded from payouts',mondayClarityOverview.excluded],
+             ['Bank account not ready',mondayClarityOverview.bankHolds],
+             ['Weekly fees calculated',mondayClarityOverview.fees]
+            ].map(([label,data])=>
+             <tr key={label}>
+              <td>{label}</td>
+              <td>{data.count}</td>
+              <td>{money(data.amount)}</td>
+             </tr>
+            )}
+           </tbody>
+          </table>
+         </div>
+
+         <p className="mondayClarityNote">
+          Based on the saved Autocab Previous Balance snapshot.
+          Exclusions and bank holds may overlap.
+          Proposed payments are not confirmed payments.
+          Weekly fees shown are calculated, not necessarily collected.
+         </p>
+        </div>
+
+        <details className="mondayClarityDetails">
+         <summary>View full financial breakdown</summary>
+<div className="mondayFinanceSummary">
         <div>
          <span>Proposed gross outgoing</span>
          <b>{money(weeklyProposedBeforeFees)}</b>
@@ -6844,7 +6974,8 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
          <small>Cleared incoming less approved outgoing</small>
         </div>
        </div>
-      </section>
+        </details>
+       </section>
 
       {activeMondayCancelledBatch&&<div className="operatorWarning blue"><AlertTriangle/><div><b>Previous payment batch cancelled safely</b><span>The batch was cancelled before release. This Monday settlement remains open so the approved drivers can be reviewed and placed into a corrected payment run.</span></div></div>}
 
@@ -6869,14 +7000,24 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
 
         {mondayWizardIndex===4&&<div className="operatorWarning green"><CheckCircle2/><div><b>Ready to create payment run</b><span>{weeklyApproved.length} approved drivers totalling {money(weeklyApprovedTotal)}. Creating the run locks these payouts before funding.</span></div></div>}
 
-        {weeklyItems.length?<div className="tableWrap proTable"><table><thead><tr><th className="selectCol"><input type="checkbox" aria-label="Select all payouts" disabled={Boolean(activeMonday.payoutRunId)} checked={weeklyItems.length>0&&weeklyItems.every(x=>selectedWeeklyPayouts.includes(x.payoutId))} onChange={toggleAllWeeklyPayouts}/></th><th>Driver</th><th>Previous balance</th><th>Weekly fee</th><th>Payout</th><th>Payout account</th><th>Decision</th><th>Actions</th></tr></thead><tbody>{weeklyItems.map(x=><tr key={x.payoutId} className={selectedWeeklyPayouts.includes(x.payoutId)?'selectedPayoutRow':''}><td className="selectCol"><input type="checkbox" aria-label={`Select callsign ${x.callsign}`} disabled={Boolean(activeMonday.payoutRunId)} checked={selectedWeeklyPayouts.includes(x.payoutId)} onChange={()=>toggleWeeklyPayout(x.payoutId)}/></td><td><div className="driverCell"><span className="callsign">{x.callsign}</span><div><b>{x.driverName}</b><small>Driver {x.driverId}</small></div></div></td><td>{money(x.previousBalance)}</td><td>{x.weeklyFeeWaivedInactive?<div><b>{money(0)}</b><small className="reasonText">Fee waived · no work recorded</small></div>:money(x.weeklyFee)}</td><td><b>{money(x.amount)}</b></td><td><Pill tone={bankTone(bankFor(x.driverId))}>{bankFor(x.driverId).label}</Pill></td><td><Pill tone={x.approvalStatus==='approved'?'good':x.approvalStatus==='excluded'?'bad':'warn'}>{x.approvalStatus||'pending'}</Pill>{x.exclusionReason&&<small className="reasonText">{x.exclusionReason}</small>}</td><td><div className="compactActions">{canMoney&&!activeMonday.payoutRunId&&<><button className="mini success" onClick={()=>weeklyDecision(x,'approved')}>Approve</button><button className="mini danger" onClick={()=>weeklyDecision(x,'excluded')}>Exclude</button></>}</div></td></tr>)}</tbody></table></div>:<div className="emptyInline">No payouts are above the minimum payout threshold.</div>}
+        {weeklyItems.length?<details className="mondayDriverDetailsV1">
+         <summary>
+          <span>View payout drivers ({weeklyItems.length})</span>
+          <strong>{money(weeklyItems.reduce((a,x)=>a+Number(x.amount||0),0))}</strong>
+         </summary>
+         <div className="tableWrap proTable"><table><thead><tr><th className="selectCol"><input type="checkbox" aria-label="Select all payouts" disabled={Boolean(activeMonday.payoutRunId)} checked={weeklyItems.length>0&&weeklyItems.every(x=>selectedWeeklyPayouts.includes(x.payoutId))} onChange={toggleAllWeeklyPayouts}/></th><th>Driver</th><th>Previous balance</th><th>Weekly fee</th><th>Payout</th><th>Payout account</th><th>Decision</th><th>Actions</th></tr></thead><tbody>{weeklyItems.map(x=><tr key={x.payoutId} className={selectedWeeklyPayouts.includes(x.payoutId)?'selectedPayoutRow':''}><td className="selectCol"><input type="checkbox" aria-label={`Select callsign ${x.callsign}`} disabled={Boolean(activeMonday.payoutRunId)} checked={selectedWeeklyPayouts.includes(x.payoutId)} onChange={()=>toggleWeeklyPayout(x.payoutId)}/></td><td><div className="driverCell"><span className="callsign">{x.callsign}</span><div><b>{x.driverName}</b><small>Driver {x.driverId}</small></div></div></td><td>{money(x.previousBalance)}</td><td>{x.weeklyFeeWaivedInactive?<div><b>{money(0)}</b><small className="reasonText">Fee waived · no work recorded</small></div>:money(x.weeklyFee)}</td><td><b>{money(x.amount)}</b></td><td><Pill tone={bankTone(bankFor(x.driverId))}>{bankFor(x.driverId).label}</Pill></td><td><Pill tone={x.approvalStatus==='approved'?'good':x.approvalStatus==='excluded'?'bad':'warn'}>{x.approvalStatus||'pending'}</Pill>{x.exclusionReason&&<small className="reasonText">{x.exclusionReason}</small>}</td><td><div className="compactActions">{canMoney&&!activeMonday.payoutRunId&&<><button className="mini success" onClick={()=>weeklyDecision(x,'approved')}>Approve</button><button className="mini danger" onClick={()=>weeklyDecision(x,'excluded')}>Exclude</button></>}</div></td></tr>)}</tbody></table></div></details>:<div className="emptyInline">No payouts are above the minimum payout threshold.</div>}
 
         {weeklyPayoutCarryForward.length>0&&<div className="carryNote"><Info/> {weeklyPayoutCarryForward.length} positive balance{weeklyPayoutCarryForward.length===1?' is':'s are'} below the minimum payout threshold and will remain on the driver account.</div>}
        </section>
 
        <section className="panel wizardSecondaryPanel">
         <div className="panelHead"><div><h3>Drivers owing</h3><p>Collection requests created from negative Previous Balances.</p></div><div className="rowActions"><button className="secondary" onClick={()=>downloadOfficeCsv('monday-drivers-owing',null,{runId:activeMonday.id})}><FileClock/>Export CSV</button><button className="secondary" onClick={()=>go('outstanding')}>Open Outstanding</button></div></div>
-        {weeklyCollections.length?<div className="tableWrap proTable"><table><thead><tr><th>Driver</th><th>Previous balance</th><th>Weekly fee</th><th>Amount due</th><th>Due</th><th>Communication</th><th>Status</th></tr></thead><tbody>{weeklyCollections.map(x=>{const req=outstanding.find(o=>o.id===x.requestId);return <tr key={x.requestId||x.driverId}><td><div className="driverCell"><span className="callsign">{x.callsign}</span><b>{x.driverName}</b></div></td><td className="negative">{money(x.previousBalance)}</td><td>{x.weeklyFeeWaivedInactive?<div><b>{money(0)}</b><small className="reasonText">Fee waived · no work recorded</small></div>:money(x.weeklyFee)}</td><td><b className="negative">{money(x.amount)}</b></td><td>{req?.dueAt?dt(req.dueAt):'—'}</td><td><div className="compactStatus"><Pill tone={req?.emailSentAt?'good':'warn'}>Email {req?.emailSentAt?'sent':'pending'}</Pill><Pill tone={req?.smsSentAt?'good':'warn'}>SMS {req?.smsSentAt?'sent':'pending'}</Pill></div></td><td><Pill tone={req?.overdue?'bad':statusTone(req?.status||'open')}>{req?.overdue?'overdue':req?.status||'open'}</Pill></td></tr>})}</tbody></table></div>:<div className="emptyInline good"><CheckCircle2/>No drivers are above the outstanding-payment threshold.</div>}
+        {weeklyCollections.length?<details className="mondayDriverDetailsV1">
+         <summary>
+          <span>View drivers owing ({weeklyCollections.length})</span>
+          <strong>{money(weeklyCollections.reduce((a,x)=>a+Number(x.amount||0),0))}</strong>
+         </summary>
+         <div className="tableWrap proTable"><table><thead><tr><th>Driver</th><th>Previous balance</th><th>Weekly fee</th><th>Amount due</th><th>Due</th><th>Communication</th><th>Status</th></tr></thead><tbody>{weeklyCollections.map(x=>{const req=outstanding.find(o=>o.id===x.requestId);return <tr key={x.requestId||x.driverId}><td><div className="driverCell"><span className="callsign">{x.callsign}</span><b>{x.driverName}</b></div></td><td className="negative">{money(x.previousBalance)}</td><td>{x.weeklyFeeWaivedInactive?<div><b>{money(0)}</b><small className="reasonText">Fee waived · no work recorded</small></div>:money(x.weeklyFee)}</td><td><b className="negative">{money(x.amount)}</b></td><td>{req?.dueAt?dt(req.dueAt):'—'}</td><td><div className="compactStatus"><Pill tone={req?.emailSentAt?'good':'warn'}>Email {req?.emailSentAt?'sent':'pending'}</Pill><Pill tone={req?.smsSentAt?'good':'warn'}>SMS {req?.smsSentAt?'sent':'pending'}</Pill></div></td><td><Pill tone={req?.overdue?'bad':statusTone(req?.status||'open')}>{req?.overdue?'overdue':req?.status||'open'}</Pill></td></tr>})}</tbody></table></div></details>:<div className="emptyInline good"><CheckCircle2/>No drivers are above the outstanding-payment threshold.</div>}
         {weeklyCarryForward.length>0&&<div className="carryNote"><Info/> {weeklyCarryForward.length} small negative balance{weeklyCarryForward.length===1?' is':'s are'} below the threshold and will be carried forward.</div>}
        </section>
       </>}
