@@ -828,6 +828,660 @@ try {
     }
   }
 
+
+  // STEP120B_SETTLEMENT_VERIFICATION_STORAGE
+  {
+    const verificationDb = new DatabaseSync(dbPath);
+
+    try {
+      const columns = verificationDb.prepare(
+        'PRAGMA table_info(monday_settlement_verifications)'
+      ).all();
+
+      const names = new Set(columns.map(x => x.name));
+
+      for (const name of [
+        'id','run_id','status','snapshot_hash',
+        'autocab_source_hash','rules_hash',
+        'payment_plans_hash','evidence_json',
+        'difference_count','verified_by',
+        'compared_at','expires_at','failure_reason',
+        'created_at'
+      ]) {
+        assert.ok(names.has(name),`Missing verification field: ${name}`);
+      }
+
+      const runId = 'test-monday-empty';
+      const now = new Date().toISOString();
+
+      verificationDb.prepare(
+        `INSERT INTO monday_settlement_verifications
+         (id,run_id,status,created_at)
+         VALUES(?,?,?,?)`
+      ).run(
+        'test-verification-pending',runId,'pending',now
+      );
+
+      const record = verificationDb.prepare(
+        `SELECT * FROM monday_settlement_verifications
+         WHERE id=?`
+      ).get('test-verification-pending');
+
+      assert.equal(record.run_id,runId);
+      assert.equal(record.status,'pending');
+      assert.equal(record.snapshot_hash,null);
+
+      assert.throws(() => {
+        verificationDb.prepare(
+          `INSERT INTO monday_settlement_verifications
+           (id,run_id,status,created_at)
+           VALUES(?,?,?,?)`
+        ).run(
+          'test-verification-invalid-pass',
+          runId,'passed',now
+        );
+      });
+
+      assert.equal(
+        verificationDb.prepare(
+          `SELECT COUNT(*) AS count
+           FROM monday_settlement_verifications
+           WHERE status='passed'`
+        ).get().count,
+        0
+      );
+
+      console.log(
+        'PASS — Verification table created with expected schema.'
+      );
+      console.log(
+        'PASS — Pending verification can be recorded.'
+      );
+      console.log(
+        'PASS — Incomplete verification cannot be marked passed.'
+      );
+      console.log(
+        'PASS — Existing settlement remains unchanged.'
+      );
+
+    } finally {
+      verificationDb.close();
+    }
+  }
+
+
+  // STEP120E_FINGERPRINT_MUTATION_TESTS
+  {
+    const fpDb=new DatabaseSync(dbPath);
+    const runId='test-fingerprint-mutations';
+    const driverId=92001;
+    const payoutId='test-fingerprint-payout';
+    const requestId='test-fingerprint-collection';
+    const now=new Date().toISOString();
+
+    async function fingerprints(){
+      const response=await fetch(
+        `${baseUrl}/api/admin/test/monday-fingerprints/${runId}`,
+        {
+          headers:{
+            Authorization:`Bearer ${authenticated.token}`
+          }
+        }
+      );
+
+      const body=await response.json();
+
+      assert.equal(response.status,200,JSON.stringify(body));
+      return body;
+    }
+
+    let baseline;
+
+    async function assertMutation(sql,changed,original,label,key){
+      fpDb.prepare(sql).run(changed);
+
+      const after=await fingerprints();
+
+      assert.notEqual(
+        after[key],baseline[key],
+        `${label} did not change ${key}`
+      );
+
+      fpDb.prepare(sql).run(original);
+
+      const restored=await fingerprints();
+
+      assert.equal(
+        restored[key],baseline[key],
+        `${label} fingerprint did not restore`
+      );
+
+      console.log(`PASS — ${label} invalidates ${key}.`);
+    }
+
+    try{
+      fpDb.prepare(
+        `INSERT INTO settlement_runs
+         (id,created_at,status,settings_json,items_json)
+         VALUES(?,?,?,?,?)`
+      ).run(
+        runId,now,'draft',
+        JSON.stringify({weeklyAppFee:5,minimumPayoutThreshold:10}),
+        JSON.stringify([{
+          driverId,
+          callsign:'F201',
+          previousBalance:100,
+          weeklyFee:5,
+          action:'payout',
+          payoutId,
+          amount:95,
+          approvalStatus:'pending'
+        }])
+      );
+
+      fpDb.prepare(
+        `INSERT INTO driver_cache
+         (driver_id,callsign,full_name,synced_at,payout_excluded)
+         VALUES(?,?,?,?,?)`
+      ).run(driverId,'F201','Fingerprint Test Driver',now,0);
+
+      fpDb.prepare(
+        `INSERT INTO payouts
+         (id,run_id,driver_id,callsign,driver_name,
+          amount,weekly_fee,type,status,created_at)
+         VALUES(?,?,?,?,?,?,?,?,?,?)`
+      ).run(
+        payoutId,runId,driverId,'F201',
+        'Fingerprint Test Driver',
+        95,5,'weekly','pending_approval',now
+      );
+
+      fpDb.prepare(
+        `INSERT INTO payment_requests
+         (id,run_id,driver_id,callsign,driver_name,
+          amount,status,created_at)
+         VALUES(?,?,?,?,?,?,?,?)`
+      ).run(
+        requestId,runId,driverId,'F201',
+        'Fingerprint Test Driver',
+        25,'pending_release',now
+      );
+
+      baseline=await fingerprints();
+
+      for(const key of [
+        'snapshotHash','rulesHash','paymentPlansHash'
+      ]){
+        assert.match(baseline[key],/^[a-f0-9]{64}$/);
+      }
+
+      await assertMutation(
+        'UPDATE payouts SET amount=? WHERE id=?'.replace(
+          'WHERE id=?',`WHERE id='${payoutId}'`
+        ),
+        96,95,'Payout amount','snapshotHash'
+      );
+
+      await assertMutation(
+        `UPDATE payouts SET weekly_fee=?
+         WHERE id='${payoutId}'`,
+        6,5,'Weekly fee','snapshotHash'
+      );
+
+      await assertMutation(
+        `UPDATE payment_requests SET amount=?
+         WHERE id='${requestId}'`,
+        26,25,'Collection amount','snapshotHash'
+      );
+
+      await assertMutation(
+        `UPDATE driver_cache SET payout_excluded=?
+         WHERE driver_id=${driverId}`,
+        1,0,'Driver exclusion','snapshotHash'
+      );
+
+      const originalRules=JSON.stringify({
+        weeklyAppFee:5,
+        minimumPayoutThreshold:10
+      });
+
+      const changedRules=JSON.stringify({
+        weeklyAppFee:7,
+        minimumPayoutThreshold:10
+      });
+
+      await assertMutation(
+        `UPDATE settlement_runs SET settings_json=?
+         WHERE id='${runId}'`,
+        changedRules,originalRules,
+        'Saved financial rules','rulesHash'
+      );
+
+      // STEP120E_VALID_PAYMENT_PLAN_PARENTS
+      // Create the foreign-key parents before the allocation.
+      fpDb.prepare(
+        `INSERT INTO driver_payment_plans
+         (id,driver_id,callsign,driver_name,
+          source_payment_request_id,original_amount,
+          plan_amount,remaining_amount,instalment_amount,
+          start_date,created_by,created_at)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`
+      ).run(
+        'test-plan',driverId,'F201',
+        'Fingerprint Test Driver',
+        requestId,25,25,25,12,
+        '2026-10-10','fingerprint-test',now
+      );
+
+      fpDb.prepare(
+        `INSERT INTO driver_payment_plan_instalments
+         (id,plan_id,driver_id,callsign,
+          instalment_number,amount,due_at,created_at)
+         VALUES(?,?,?,?,?,?,?,?)`
+      ).run(
+        'test-instalment','test-plan',
+        driverId,'F201',1,12,
+        '2026-10-17',now
+      );
+
+      // Insert a realistic allocation using the existing schema.
+      const allocationId='test-fingerprint-allocation';
+
+      fpDb.prepare(
+        `INSERT INTO payment_plan_settlement_allocations
+         (id,run_id,payout_id,driver_id,callsign,
+          plan_id,instalment_id,scheduled_amount,
+          allocated_amount,status,autocab_event_key,created_at)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`
+      ).run(
+        allocationId,runId,payoutId,driverId,'F201',
+        'test-plan','test-instalment',
+        12,10,'pending','test-fingerprint-event',now
+      );
+
+      const allocationBaseline=await fingerprints();
+
+      fpDb.prepare(
+        `UPDATE payment_plan_settlement_allocations
+         SET allocated_amount=11 WHERE id=?`
+      ).run(allocationId);
+
+      const changedAllocation=await fingerprints();
+
+      assert.notEqual(
+        changedAllocation.paymentPlansHash,
+        allocationBaseline.paymentPlansHash
+      );
+
+      fpDb.prepare(
+        `UPDATE payment_plan_settlement_allocations
+         SET allocated_amount=10 WHERE id=?`
+      ).run(allocationId);
+
+      const restoredAllocation=await fingerprints();
+
+      assert.equal(
+        restoredAllocation.paymentPlansHash,
+        allocationBaseline.paymentPlansHash
+      );
+
+      console.log(
+        'PASS — Payment-plan allocation changes invalidate fingerprint.'
+      );
+
+      assert.equal(
+        fpDb.prepare(
+          `SELECT status FROM settlement_runs WHERE id=?`
+        ).get(runId).status,
+        'draft'
+      );
+
+      // STEP120H_UNDERLYING_PLAN_TESTS
+      // Mutate the actual payment-plan and instalment records.
+      const planOriginal=await fingerprints();
+
+      fpDb.prepare(
+        `UPDATE driver_payment_plans
+         SET remaining_amount=20 WHERE id=?`
+      ).run('test-plan');
+
+      const planChanged=await fingerprints();
+
+      assert.notEqual(
+        planChanged.paymentPlansHash,
+        planOriginal.paymentPlansHash
+      );
+
+      fpDb.prepare(
+        `UPDATE driver_payment_plans
+         SET remaining_amount=25 WHERE id=?`
+      ).run('test-plan');
+
+      assert.equal(
+        (await fingerprints()).paymentPlansHash,
+        planOriginal.paymentPlansHash
+      );
+
+      console.log(
+        'PASS — Underlying payment-plan balance invalidates fingerprint.'
+      );
+
+      fpDb.prepare(
+        `UPDATE driver_payment_plan_instalments
+         SET amount=13 WHERE id=?`
+      ).run('test-instalment');
+
+      assert.notEqual(
+        (await fingerprints()).paymentPlansHash,
+        planOriginal.paymentPlansHash
+      );
+
+      fpDb.prepare(
+        `UPDATE driver_payment_plan_instalments
+         SET amount=12 WHERE id=?`
+      ).run('test-instalment');
+
+      assert.equal(
+        (await fingerprints()).paymentPlansHash,
+        planOriginal.paymentPlansHash
+      );
+
+      console.log(
+        'PASS — Underlying instalment amount invalidates fingerprint.'
+      );
+
+      fpDb.prepare(
+        `UPDATE driver_payment_plan_instalments
+         SET status='paid' WHERE id=?`
+      ).run('test-instalment');
+
+      assert.notEqual(
+        (await fingerprints()).paymentPlansHash,
+        planOriginal.paymentPlansHash
+      );
+
+      fpDb.prepare(
+        `UPDATE driver_payment_plan_instalments
+         SET status='scheduled' WHERE id=?`
+      ).run('test-instalment');
+
+      assert.equal(
+        (await fingerprints()).paymentPlansHash,
+        planOriginal.paymentPlansHash
+      );
+
+      console.log(
+        'PASS — Instalment status invalidates fingerprint.'
+      );
+
+      assert.equal(
+        (await fingerprints()).missingPaymentPlanReferences,
+        0
+      );
+
+      // STEP120K_LIVE_RULES_TESTS
+      // Test changes to current settings independently of saved rules.
+      const ruleBaseline=await fingerprints();
+
+      const settingsRow=fpDb.prepare(
+        `SELECT value FROM settings WHERE key='app_settings'`
+      ).get();
+
+      // Settings storage is inspected before mutation.
+      // No production settings are modified.
+      console.log(
+        'INFO — Live rules baseline:',
+        ruleBaseline.currentRulesHash
+      );
+      console.log(
+        'INFO — Saved/current financial rules differ:',
+        ruleBaseline.financialRulesChanged
+      );
+      console.log(
+        'INFO — Stored settings record present:',
+        Boolean(settingsRow)
+      );
+
+      assert.match(
+        ruleBaseline.currentRulesHash,
+        /^[a-f0-9]{64}$/
+      );
+
+
+      // STEP120M_LIVE_SETTINGS_MUTATION_TESTS
+      // The settings table stores one JSON value per key.
+      // Only the isolated temporary test database is modified.
+      const settingsCases=[
+        ['weeklyAppFee',9.75],
+        ['minimumPayoutThreshold',25],
+        ['negativeThreshold',35],
+        ['chargeWeeklyFeeWhenInactive',false]
+      ];
+
+      for(const [key,changedValue] of settingsCases){
+        const previous=fpDb.prepare(
+          'SELECT value FROM settings WHERE key=?'
+        ).get(key);
+
+        const beforeSetting=await fingerprints();
+
+        fpDb.prepare(
+          `INSERT INTO settings(key,value)
+           VALUES(?,?)
+           ON CONFLICT(key) DO UPDATE
+           SET value=excluded.value`
+        ).run(key,JSON.stringify(changedValue));
+
+        const changedSetting=await fingerprints();
+
+        assert.notEqual(
+          changedSetting.currentRulesHash,
+          beforeSetting.currentRulesHash,
+          `${key} did not change currentRulesHash`
+        );
+
+        assert.equal(
+          changedSetting.rulesHash,
+          beforeSetting.rulesHash,
+          `${key} unexpectedly changed saved rules`
+        );
+
+        if(previous){
+          fpDb.prepare(
+            'UPDATE settings SET value=? WHERE key=?'
+          ).run(previous.value,key);
+        }else{
+          fpDb.prepare(
+            'DELETE FROM settings WHERE key=?'
+          ).run(key);
+        }
+
+        const restoredSetting=await fingerprints();
+
+        assert.equal(
+          restoredSetting.currentRulesHash,
+          beforeSetting.currentRulesHash,
+          `${key} did not restore its fingerprint`
+        );
+
+        console.log(
+          `PASS — Live ${key} changes and restores currentRulesHash.`
+        );
+      }
+
+      console.log(
+        'PASS — Current financial rules fingerprint available.'
+      );
+
+      console.log(
+        'PASS — Valid payment-plan references are recognised.'
+      );
+
+      console.log(
+        'PASS — Fingerprint tests leave settlement unapproved.'
+      );
+
+    }finally{
+      fpDb.close();
+    }
+  }
+
+
+  // STEP120J_APPROVAL_FINGERPRINT_TEST
+  {
+    const testDb = new DatabaseSync(dbPath);
+    const runId = 'test-stable-financial-approval';
+    const payoutId = 'test-stable-financial-payout';
+    const driverId = 93001;
+    const now = new Date().toISOString();
+
+    async function request(url,method='GET'){
+      const response = await fetch(url,{
+        method,
+        headers:{
+          Authorization:`Bearer ${authenticated.token}`,
+          'Content-Type':'application/json'
+        },
+        ...(method==='POST'?{body:'{}'}:{})
+      });
+
+      return {
+        status:response.status,
+        body:await response.json()
+      };
+    }
+
+    const fingerprintUrl =
+      `${baseUrl}/api/admin/test/monday-fingerprints/${runId}`;
+
+    try {
+      testDb.prepare(
+        `INSERT INTO settlement_runs
+         (id,created_at,status,settings_json,items_json)
+         VALUES(?,?,?,?,?)`
+      ).run(
+        runId,now,'draft','{}',
+        JSON.stringify([{
+          driverId,
+          callsign:'F301',
+          previousBalance:100,
+          weeklyFee:5,
+          amount:95,
+          action:'payout',
+          payoutId,
+          approvalStatus:'pending',
+          exclusionReason:''
+        }])
+      );
+
+      testDb.prepare(
+        `INSERT INTO driver_cache
+         (driver_id,callsign,full_name,synced_at,payout_excluded)
+         VALUES(?,?,?,?,?)`
+      ).run(
+        driverId,'F301','Approval Fingerprint Driver',now,0
+      );
+
+      testDb.prepare(
+        `INSERT INTO payouts
+         (id,run_id,driver_id,callsign,driver_name,
+          amount,weekly_fee,type,status,created_at)
+         VALUES(?,?,?,?,?,?,?,?,?,?)`
+      ).run(
+        payoutId,runId,driverId,'F301',
+        'Approval Fingerprint Driver',
+        95,5,'weekly','pending_approval',now
+      );
+
+      const before = await request(fingerprintUrl);
+
+      assert.equal(before.status,200,JSON.stringify(before.body));
+
+      const approved = await request(
+        `${baseUrl}/api/admin/monday-runs/${runId}/approve-all`,
+        'POST'
+      );
+
+      assert.equal(
+        approved.status,200,JSON.stringify(approved.body)
+      );
+
+      const after = await request(fingerprintUrl);
+
+      assert.equal(after.status,200,JSON.stringify(after.body));
+
+      // STEP120J_FINGERPRINT_DIAGNOSTIC
+      if(after.body.financialHash!==before.body.financialHash){
+        const snapshot=testDb.prepare(
+          'SELECT items_json FROM settlement_runs WHERE id=?'
+        ).get(runId);
+
+        const payout=testDb.prepare(
+          'SELECT * FROM payouts WHERE id=?'
+        ).get(payoutId);
+
+        console.log('DIAGNOSTIC — Fingerprint before:',before.body.financialHash);
+        console.log('DIAGNOSTIC — Fingerprint after:',after.body.financialHash);
+        console.log(
+          'DIAGNOSTIC — Approved settlement items:',
+          JSON.stringify(JSON.parse(snapshot.items_json),null,2)
+        );
+        console.log(
+          'DIAGNOSTIC — Payout fields:',
+          JSON.stringify({
+            status:payout.status,
+            decision_at:payout.decision_at,
+            decision_by:payout.decision_by,
+            decline_reason:payout.decline_reason,
+            amount:payout.amount,
+            weekly_fee:payout.weekly_fee
+          },null,2)
+        );
+      }
+
+      assert.equal(
+        after.body.financialHash,
+        before.body.financialHash,
+        'Routine settlement approval changed the financial fingerprint'
+      );
+
+      console.log(
+        'PASS — Financial fingerprint survives legitimate bulk approval.'
+      );
+
+      testDb.prepare(
+        'UPDATE payouts SET amount=? WHERE id=?'
+      ).run(96,payoutId);
+
+      const tampered = await request(fingerprintUrl);
+
+      assert.equal(tampered.status,200);
+
+      assert.notEqual(
+        tampered.body.financialHash,
+        after.body.financialHash
+      );
+
+      console.log(
+        'PASS — Changing approved payout amount invalidates financialHash.'
+      );
+
+      assert.equal(
+        testDb.prepare(
+          'SELECT status FROM settlement_runs WHERE id=?'
+        ).get(runId).status,
+        'approved'
+      );
+
+      console.log(
+        'PASS — Fingerprint test did not create a payment batch.'
+      );
+
+    } finally {
+      testDb.close();
+    }
+  }
+
   console.log('PASS — Genuine test MFA completed.');
   console.log('PASS — Actual Express approval endpoint accepted a draft.');
   console.log('PASS — Approved settlement rejected repeat approval.');

@@ -700,6 +700,49 @@ for (const sql of [
   'ALTER TABLE posted_driver_dockets ADD COLUMN source TEXT'
 ]) { try { db.exec(sql); } catch {} }
 
+
+// STEP120B_SETTLEMENT_VERIFICATION_STORAGE
+// Append-only verification history by application convention.
+// A record marked 'passed' is NOT payout authorisation.
+// Financial verification and approval gates are not active yet.
+db.exec(`
+ CREATE TABLE IF NOT EXISTS monday_settlement_verifications (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL
+    REFERENCES settlement_runs(id) ON DELETE RESTRICT,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK(status IN ('pending','passed','failed','invalidated')),
+  snapshot_hash TEXT,
+  autocab_source_hash TEXT,
+  rules_hash TEXT,
+  payment_plans_hash TEXT,
+  evidence_json TEXT NOT NULL DEFAULT '{}',
+  difference_count INTEGER NOT NULL DEFAULT 0
+    CHECK(difference_count >= 0),
+  verified_by TEXT,
+  compared_at TEXT,
+  expires_at TEXT,
+  failure_reason TEXT,
+  created_at TEXT NOT NULL,
+  CHECK(
+   status != 'passed' OR (
+    snapshot_hash IS NOT NULL AND
+    autocab_source_hash IS NOT NULL AND
+    rules_hash IS NOT NULL AND
+    payment_plans_hash IS NOT NULL AND
+    verified_by IS NOT NULL AND
+    compared_at IS NOT NULL AND
+    expires_at IS NOT NULL AND
+    difference_count = 0
+   )
+  )
+ );
+
+ CREATE INDEX IF NOT EXISTS
+  idx_monday_verifications_run_created
+ ON monday_settlement_verifications(run_id,created_at DESC);
+`);
+
 // Existing databases created before automated Autocab customer payments
 // required driver_id and callsign. Make those columns nullable once.
 {
@@ -12976,6 +13019,218 @@ app.post(
  }
 );
 
+
+
+// STEP120C_SETTLEMENT_FINGERPRINTS
+// Deterministic fingerprints for Monday financial verification.
+// These functions do not approve settlements or execute payments.
+
+function mondayVerificationHash(value){
+ const stable=value=>{
+  if(Array.isArray(value))return value.map(stable);
+  if(value&&typeof value==='object'){
+   return Object.fromEntries(
+    Object.keys(value).sort().map(k=>[k,stable(value[k])])
+   );
+  }
+  return value;
+ };
+
+ return crypto.createHash('sha256')
+  .update(JSON.stringify(stable(value)))
+  .digest('hex');
+}
+
+function mondayFinancialFingerprints(runId){
+ const run=db.prepare(
+  'SELECT * FROM settlement_runs WHERE id=?'
+ ).get(runId);
+
+ if(!run)throw new Error('Monday settlement not found');
+
+ const items=JSON.parse(run.items_json||'[]');
+ const rules=JSON.parse(run.settings_json||'{}');
+
+ if(!Array.isArray(items)){
+  throw new Error('Invalid Monday settlement snapshot');
+ }
+
+ const payouts=db.prepare(
+  `SELECT id,driver_id,callsign,gross_balance,
+          weekly_fee,carried_charges,gross_amount,
+          net_amount,amount,status,decline_reason,
+          payout_run_id
+   FROM payouts
+   WHERE run_id=? AND type='weekly'
+   ORDER BY id`
+ ).all(runId);
+
+ const collections=db.prepare(
+  `SELECT id,driver_id,callsign,balance,weekly_fee,
+          carried_charges,amount,status
+   FROM payment_requests
+   WHERE run_id=?
+   ORDER BY id`
+ ).all(runId);
+
+ const allocations=db.prepare(
+  `SELECT id,payout_id,driver_id,callsign,
+          plan_id,instalment_id,scheduled_amount,
+          allocated_amount,status
+   FROM payment_plan_settlement_allocations
+   WHERE run_id=?
+   ORDER BY id`
+ ).all(runId);
+
+ const driverIds=[
+  ...new Set(items.map(x=>Number(x.driverId)))
+ ];
+
+ const exclusions=driverIds
+  .map(driverId=>{
+   const driver=cachedDriver(driverId);
+   return {
+    driverId,
+    found:Boolean(driver),
+    callsign:driver?.callsign??null,
+    payoutExcluded:driver?.payoutExcluded??null,
+    exclusionReason:driver?.payoutExclusionReason??null
+   };
+  })
+  .sort((a,b)=>a.driverId-b.driverId);
+
+ const snapshotHash=mondayVerificationHash({
+  runId,
+  items,
+  payouts,
+  collections,
+  exclusions
+ });
+
+ // STEP120I_STABLE_FINANCIAL_HASH
+ // Approval decisions are workflow state, not financial amounts.
+ // Financial verification must survive legitimate bulk approval.
+ const financialItems=items.map(item=>{
+  const {
+   approvalStatus,
+   decisionAt,
+   exclusionReason,
+   oneRunExclusionOverride,
+   ...financial
+  }=item;
+  return {
+   ...financial,
+   exclusionReason,
+   oneRunExclusionOverride
+  };
+ });
+
+ const financialPayouts=payouts.map(payout=>{
+  const {
+   status,
+   payout_run_id,
+   ...financial
+  }=payout;
+  return financial;
+ });
+
+ const financialCollections=collections.map(collection=>{
+  const {status,...financial}=collection;
+  return financial;
+ });
+
+ const financialHash=mondayVerificationHash({
+  runId,
+  items:financialItems,
+  payouts:financialPayouts,
+  collections:financialCollections,
+  exclusions
+ });
+
+ const rulesHash=mondayVerificationHash(rules);
+
+ // STEP120G_COMPLETE_FINANCIAL_INPUTS
+ const relevantRules=value=>({
+  weeklyAppFee:Number(value.weeklyAppFee??0),
+  minimumPayoutThreshold:Number(value.minimumPayoutThreshold??0),
+  negativeThreshold:Number(value.negativeThreshold??0),
+  chargeWeeklyFeeWhenInactive:
+   value.chargeWeeklyFeeWhenInactive!==false
+ });
+
+ const savedFinancialRules=relevantRules(rules);
+ const currentFinancialRules=relevantRules(getSettings());
+
+ const currentRulesHash=mondayVerificationHash(
+  currentFinancialRules
+ );
+
+ const planDetails=allocations.map(allocation=>{
+  const plan=db.prepare(
+   `SELECT id,driver_id,source_payment_request_id,
+           original_amount,plan_amount,paid_amount,
+           remaining_amount,frequency,instalment_amount,
+           status,next_due_at
+    FROM driver_payment_plans WHERE id=?`
+  ).get(allocation.plan_id);
+
+  const instalment=db.prepare(
+   `SELECT id,plan_id,driver_id,instalment_number,
+           amount,paid_amount,due_at,status,
+           payment_request_id
+    FROM driver_payment_plan_instalments WHERE id=?`
+  ).get(allocation.instalment_id);
+
+  return {
+   allocation,
+   plan:plan||null,
+   instalment:instalment||null,
+   missingPlan:!plan,
+   missingInstalment:!instalment
+  };
+ });
+
+ const paymentPlansHash=mondayVerificationHash(
+  planDetails
+ );
+
+ return {
+  snapshotHash,
+  financialHash,
+  rulesHash,
+  currentRulesHash,
+  financialRulesChanged:
+   mondayVerificationHash(savedFinancialRules)!==
+   currentRulesHash,
+  paymentPlansHash,
+  missingPaymentPlanReferences:planDetails.filter(
+   x=>x.missingPlan||x.missingInstalment
+  ).length,
+  driverCount:items.length,
+  payoutCount:payouts.length,
+  collectionCount:collections.length,
+  allocationCount:allocations.length
+ };
+}
+
+
+// STEP120D_FINGERPRINT_TEST_EXPORT
+// Test-only endpoint, disabled outside NODE_ENV=test.
+// The existing test harness binds the application to loopback.
+if(process.env.NODE_ENV==='test'){
+ app.get(
+  '/api/admin/test/monday-fingerprints/:runId',
+  adminAuth,
+  requireStaffRole('administrator'),
+  (req,res)=>{
+   try{
+    res.json(mondayFinancialFingerprints(req.params.runId));
+   }catch(e){
+    res.status(409).json({error:e.message});
+   }
+  }
+ );
+}
 
 // STEP115_MONDAY_BALANCE_COMPARISON
 // Compare refreshed Autocab data with a saved settlement.
