@@ -9,6 +9,7 @@ import { DatabaseSync } from 'node:sqlite';
 import Stripe from 'stripe';
 import webpush from 'web-push';
 import PDFDocument from 'pdfkit';
+import { collectAutocabAccountPages } from './lib/autocab-account-pagination.mjs';
 import { createAutocabAdjustmentService } from './lib/autocab-adjustments.mjs';
 
 dotenv.config();
@@ -3684,7 +3685,33 @@ async function syncPostedDriverDockets(){
  };
 }
 
-async function getDriverAccounts(){return postJson(`${BASE_URL}/accounts/v1/DriversAccounts?pageno=1&pagesize=1000`,{companyId:null,driverId:null})}
+// STEP156_VERIFIED_AUTOCAB_ACCOUNT_PAGINATION
+async function getDriverAccounts(){
+ const result=await collectAutocabAccountPages({
+  pageSize:1000,
+  maxPages:10,
+  fetchPage:({page,pageSize})=>
+   postJson(
+    `${BASE_URL}/accounts/v1/DriversAccounts?pageno=${page}&pagesize=${pageSize}`,
+    {companyId:null,driverId:null}
+   )
+ });
+
+ if(
+  !result.complete ||
+  !result.paginationContractConfirmed ||
+  result.accountCount!==result.totalSummariesCount
+ ){
+  throw new Error(
+   'Autocab driver-account source completeness could not be verified.'
+  );
+ }
+
+ return {
+  totalSummariesCount:result.totalSummariesCount,
+  summaries:result.summaries
+ };
+}
 function mergeDrivers(drivers,accountsResponse){const accounts=accountsResponse?.summaries||[];const byId=new Map(accounts.map(a=>[Number(a.driverId),a]));return (drivers||[]).map(d=>{const a=byId.get(Number(d.id));return {driverId:d.id,callsign:d.callsign,forename:d.forename,surname:d.surname,fullName:d.fullName||`${d.forename||''} ${d.surname||''}`.trim(),mobile:d.mobile||d.telephone||'',email:d.email||'',active:Boolean(d.active),suspended:Boolean(d.suspended),previousBalance:a?.previousBalance??null,currentBalance:a?.currentBalance??null,lastProcessed:a?.lastProcessed??null,lastProcessedBy:a?.lastProcessedBy??null,notes:a?.notes??'',totals:a?{allJobsTotal:a.allJobsTotal??0,cashJobsTotal:a.cashJobsTotal??0,accountJobsTotal:a.accountJobsTotal??0,cardJobsTotal:a.cardJobsTotal??0,driverTransactionsTotal:a.driverTransactionsTotal??0,groupTransactionsTotal:a.groupTransactionsTotal??0,pendingTransactionsTotal:a.pendingTransactionsTotal??0,paidInTotal:a.paidInTotal??0,paidOutTotal:a.paidOutTotal??0,vatAmount:a.vatAmount??0,allJobsCommission:a.allJobsCommission??0}:null}})}
 async function getMergedDrivers(){const [d,a]=await Promise.all([getActiveDrivers(),getDriverAccounts()]);return mergeDrivers(d,a)}
 function cacheRows(){return db.prepare('SELECT * FROM driver_cache ORDER BY CAST(callsign AS INTEGER), callsign').all().map(r=>({driverId:r.driver_id,callsign:r.callsign,forename:r.forename,surname:r.surname,fullName:r.full_name,mobile:r.mobile,email:r.email,active:Boolean(r.active),suspended:Boolean(r.suspended),previousBalance:r.previous_balance,currentBalance:r.current_balance,lastProcessed:r.last_processed,lastProcessedBy:r.last_processed_by,notes:r.notes,totals:r.totals_json?JSON.parse(r.totals_json):null,syncedAt:r.synced_at,payoutExcluded:Boolean(r.payout_excluded),payoutExclusionReason:r.payout_exclusion_reason||''}))}
