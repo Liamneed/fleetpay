@@ -12679,7 +12679,14 @@ app.post('/api/admin/communications/test-email',adminAuth,requireStaffRole('admi
 
 app.post('/api/admin/manual-payment',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{const callsign=String(req.body.callsign||'').trim(),type=String(req.body.type||'pay_in'),amount=Number(req.body.amount||0),reason=String(req.body.reason||'').trim();if(!callsign||!(amount>0)||!['pay_in','payout'].includes(type))return res.status(400).json({error:'Callsign, payment type and amount are required'});const d=cacheRows().find(x=>String(x.callsign)===callsign);if(!d)return res.status(404).json({error:'Callsign not found in FaivoPay cache'});const settings=getSettings(),finalReason=reason||(type==='pay_in'?settings.manualPayInReasonDefault:settings.manualPayoutReasonDefault),eventKey=`manual:${Date.now()}:${d.driverId}:${crypto.randomBytes(3).toString('hex')}`;const result=await postAutocabAdjustment({driverId:d.driverId,callsign:d.callsign,amount,isCredit:type==='pay_in',description:finalReason,adjustmentReason:type==='pay_in'?'FaivoPay Manual Pay In':'FaivoPay Manual Payout',eventKey});audit(req,'staff',req.auth.email,'manual_autocab_payment','driver',d.callsign,{driverId:d.driverId,callsign:d.callsign,type,amount,reason:finalReason});setTimeout(()=>syncAutocab().catch(()=>{}),500);res.json({ok:true,driver:{driverId:d.driverId,callsign:d.callsign,fullName:d.fullName},type,amount,reason:finalReason,result})}catch(e){res.status(500).json({error:e.message})}});
 
-app.post('/api/admin/monday-runs',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{let settlementTransactionOpen=false;try{
+// FAIVOPAY_STEP289_MONDAY_SYNC_GUARD: single-process protection during awaited Autocab sync.
+// Existing SQLite unique index remains the final duplicate-run safeguard.
+let mondayCreationInProgress=false;
+app.post('/api/admin/monday-runs',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{
+ if(mondayCreationInProgress)return res.status(409).json({error:'A Monday run is already syncing Autocab balances. Wait for it to finish, then refresh Monday Payments.'});
+ mondayCreationInProgress=true;
+ let settlementTransactionOpen=false;
+ try{
  const today=londonWindow().date,existing=db.prepare("SELECT * FROM settlement_runs WHERE run_date=? AND status IN ('draft','approved','batched') ORDER BY created_at DESC LIMIT 1").get(today);if(existing)return res.status(409).json({error:'A Monday draft already exists for today. Open Monday Run to continue it.',runId:existing.id});const settings=getSettings(),sync=await syncAutocab(),drivers=sync.drivers;
 
 // STEP169_MONDAY_FINANCIAL_SOURCE_GATE
@@ -12753,7 +12760,9 @@ if(settlementTransactionOpen){
   return res.status(409).json({error:'A Monday run already exists for today. Open Monday Run to continue it.'})
  }
  res.status(500).json({error:e.message})
-}});
+}finally{
+  mondayCreationInProgress=false;
+ }});
 
 // Cancel an unexecuted Monday settlement without deleting its audit records.
 app.post(

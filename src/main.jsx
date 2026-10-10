@@ -2472,6 +2472,9 @@ function AdminApp(){
   // STEP117A_MONDAY_COMPARE_UI
   const [mondayComparison,setMondayComparison]=useState(null);
   const [mondayComparisonBusy,setMondayComparisonBusy]=useState(false);
+  // FAIVOPAY_STEP289_MONDAY_SYNC_GUARD
+  const [mondayStartBusy,setMondayStartBusy]=useState(false);
+  const mondayStartGuard=useRef(false);
 
  const loadMonday=()=>safeLoad(async()=>{
   const j=await api('/api/admin/monday-runs');
@@ -3436,7 +3439,32 @@ async function cancelMondaySettlement(){
  }
 }
 
-async function createMonday(){if(!confirm('Confirm Autocab Rent Sheets are complete. FaivoPay will sync Autocab and create a draft using each driver’s Previous Balance.'))return;try{const j=await api('/api/admin/monday-runs',{method:'POST'});await Promise.all([loadMonday(),loadSett(),loadOutstanding(),loadFees(),loadOverview()]);alert(`Draft created. ${j.items.filter(x=>x.action==='payout').length} positive balances require approval and ${j.items.filter(x=>x.action==='payment_request').length} driver(s) owe above the collection threshold.`)}catch(e){alert(e.message)}}
+async function createMonday(){
+  if(mondayStartGuard.current)return;
+  if(!confirm('Confirm Autocab Rent Sheets are complete. FaivoPay will sync Autocab and create a draft using each driver’s Previous Balance.'))return;
+  if(mondayStartGuard.current)return;
+  mondayStartGuard.current=true;
+  setMondayStartBusy(true);
+  try{
+   const j=await api('/api/admin/monday-runs',{method:'POST'});
+   await Promise.all([loadMonday(),loadSett(),loadOutstanding(),loadFees(),loadOverview()]);
+   alert(`Draft created. ${j.items.filter(x=>x.action==='payout').length} positive balances require approval and ${j.items.filter(x=>x.action==='payment_request').length} driver(s) owe above the collection threshold.`);
+  }catch(e){
+   // The request may have completed even if the connection timed out. Check first.
+   let existing=null;
+   try{
+    const runs=(await api('/api/admin/monday-runs')).runs||[];
+    existing=runs.find(r=>['draft','approved','batched'].includes(r.status));
+    if(existing)await Promise.all([loadMonday(),loadSett(),loadOutstanding(),loadFees(),loadOverview()]);
+   }catch(refreshError){console.warn('Monday start recovery check failed',refreshError)}
+   alert(existing
+    ?'A Monday run exists ('+existing.id+'). Open it and review the figures before continuing. Original response: '+e.message
+    :'Monday run could not be confirmed: '+e.message+'\n\nDo not retry until you have refreshed and checked existing Monday runs.');
+  }finally{
+   mondayStartGuard.current=false;
+   setMondayStartBusy(false);
+  }
+ }
  async function weeklyDecision(item,status){let reason='';if(status==='excluded'){reason=prompt(`Reason for excluding callsign ${item.callsign}:`)||'';if(!reason.trim())return}try{await api(`/api/admin/monday-runs/${activeMonday.id}/payouts/${item.payoutId}`,{method:'PATCH',body:JSON.stringify({status,reason})});setSelectedWeeklyPayouts(x=>x.filter(id=>id!==item.payoutId));await Promise.all([loadMonday(),loadSett()])}catch(e){alert(e.message)}}
 
  // STEP80_OVERRIDE_UI
@@ -7492,7 +7520,8 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
      ?<section className="liveWorkflowCard wizardStageCard">
        <div className="liveWorkflowHead"><div><span>STEP 1</span><h3>Confirm Rent Sheets & sync balances</h3><p>Run Monday Rent Sheets in Autocab first. Starting the run then captures the fresh Previous Balance for each driver.</p></div><Pill tone="neutral">Ready</Pill></div>
        <div className="operatorWarning"><AlertTriangle/><div><b>Before you continue</b><span>Confirm Autocab Rent Sheets have completed. FaivoPay will immediately create the Monday settlement from the fresh balances.</span></div></div>
-       {canMoney&&<div className="runCardActions"><button className="primary" onClick={createMonday}><PlayCircle/>Confirm & start Monday run</button></div>}
+       {canMoney&&<div className="runCardActions"><button className="primary" onClick={createMonday} disabled={mondayStartBusy} aria-busy={mondayStartBusy}>{mondayStartBusy?'Syncing Autocab balances — please wait…':<><PlayCircle/>Confirm & start Monday run</>}</button></div>}
+        {mondayStartBusy&&<div className="operatorWarning" role="status" aria-live="polite"><div><b>Autocab sync in progress</b><span>Retrieving and validating every driver's Previous Balance. Do not refresh this page or start another run. No payouts are being sent.</span></div></div>}
       </section>
      :<>
       {/* FAIVOPAY_WIZARD_PHASE2_COMPACT_20261010 */}
