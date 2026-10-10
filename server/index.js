@@ -13508,6 +13508,20 @@ app.post(
    const refreshed=await syncAutocab();
    const drivers=refreshed?.drivers;
 
+   // STEP194_VERIFIED_AUTOCAB_COMPARISON
+   // A successful transport response alone is not financial evidence.
+   const financialSource=refreshed?.financialVerification;
+
+   if(
+    financialSource?.valid!==true ||
+    financialSource?.complete!==true ||
+    financialSource?.financialVerificationReady!==true
+   ){
+    throw new Error(
+     'Refreshed Autocab financial source is not fully verified.'
+    );
+   }
+
    if(!Array.isArray(drivers) || !drivers.length){
     throw new Error(
      'Autocab returned no drivers. Balance comparison cannot be trusted.'

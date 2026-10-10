@@ -8,6 +8,15 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 
+import {
+ reconcileMondaySettlement
+} from '../server/lib/monday-settlement-reconciliation.mjs';
+
+import {
+ verifyMondayPlansFromDatabase
+} from '../server/lib/monday-plan-verification.mjs';
+
+
 async function freePort(){
  return new Promise((resolve,reject)=>{
   const server=createServer();
@@ -130,6 +139,55 @@ async function scenario(mode){
    `);
   }
 
+  // STEP217_REAL_API_PLAN_INTEGRATION
+  // Valid mode: install a genuine plan before Monday draft creation.
+  // The parent payment request is required by SQLite foreign keys.
+  if(mode==='valid'){
+   const now=new Date().toISOString();
+
+   db.prepare(`
+    INSERT INTO payment_requests
+     (id,driver_id,callsign,driver_name,
+      amount,status,created_at)
+    VALUES(?,?,?,?,?,?,?)
+   `).run(
+    'step217-source-request',
+    10001,'10001','Test Driver',
+    12,'pending_release',now
+   );
+
+   db.prepare(`
+    INSERT INTO driver_payment_plans
+     (id,driver_id,callsign,driver_name,
+      source_payment_request_id,
+      original_amount,plan_amount,paid_amount,
+      remaining_amount,instalment_amount,
+      start_date,status,created_by,created_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+   `).run(
+    'step217-plan',
+    10001,'10001','Test Driver',
+    'step217-source-request',
+    12,12,0,12,3,
+    '2026-10-01','active',
+    'isolated-test',now
+   );
+
+   db.prepare(`
+    INSERT INTO driver_payment_plan_instalments
+     (id,plan_id,driver_id,callsign,
+      instalment_number,amount,paid_amount,
+      due_at,status,created_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?)
+   `).run(
+    'step217-instalment',
+    'step217-plan',
+    10001,'10001',
+    1,3,0,
+    '2026-10-01','due',now
+   );
+  }
+
   const response=await fetch(base+'/api/admin/monday-runs',{
    method:'POST',
    headers:{
@@ -192,6 +250,226 @@ async function scenario(mode){
 
    assert.equal(run.status,'draft');
    assert.equal(JSON.parse(run.items_json).length,1001);
+
+    // STEP204_SQLITE_RECONCILIATION
+    const saved=db.prepare(`
+     SELECT settings_json,items_json
+     FROM settlement_runs WHERE id=?
+    `).get(result.id);
+
+    assert.ok(saved);
+
+    const financialRecords={
+     runId:result.id,
+     settings:JSON.parse(saved.settings_json),
+     items:JSON.parse(saved.items_json),
+     payouts:db.prepare(
+      'SELECT * FROM payouts WHERE run_id=?'
+     ).all(result.id),
+     paymentRequests:db.prepare(
+      'SELECT * FROM payment_requests WHERE run_id=?'
+     ).all(result.id)
+    };
+
+    // Verify actual Monday API allocation against real SQLite plans.
+    const item=financialRecords.items.find(
+     x=>Number(x.driverId)===10001
+    );
+
+    assert.ok(item,'Driver 10001 missing from Monday draft.');
+    assert.equal(item.previousBalance,10);
+    assert.equal(item.weeklyFee,2.5);
+    assert.equal(item.adjustedBalance,7.5);
+    assert.equal(item.planAllocation,3);
+    assert.equal(item.payoutAvailable,4.5);
+    assert.equal(item.action,'payout');
+    assert.equal(item.amount,4.5);
+    assert.equal(item.planId,'step217-plan');
+    assert.equal(item.planInstalmentId,'step217-instalment');
+
+    const payout=financialRecords.payouts.find(
+     x=>Number(x.driver_id)===10001
+    );
+
+    assert.ok(payout);
+    assert.equal(payout.amount,4.5);
+    assert.equal(payout.run_id,result.id);
+    assert.equal(item.payoutId,payout.id);
+
+    const allocation=db.prepare(`
+     SELECT *
+     FROM payment_plan_settlement_allocations
+     WHERE run_id=? AND driver_id=?
+    `).get(result.id,10001);
+
+    assert.ok(allocation);
+    assert.equal(allocation.allocated_amount,3);
+    assert.equal(allocation.scheduled_amount,3);
+    assert.equal(allocation.plan_id,'step217-plan');
+    assert.equal(
+     allocation.instalment_id,
+     'step217-instalment'
+    );
+    assert.equal(allocation.payout_id,payout.id);
+    assert.equal(allocation.status,'pending');
+    assert.equal(counts.allocations,1);
+
+    const verifyPlans=()=>{
+     return verifyMondayPlansFromDatabase({
+      db,
+      runId:result.id,
+      items:financialRecords.items
+     });
+    };
+
+    let planResult=verifyPlans();
+
+    assert.equal(
+     planResult.valid,
+     true,
+     JSON.stringify(planResult.issues).slice(0,1500)
+    );
+
+    assert.equal(planResult.driverCount,1001);
+    assert.equal(planResult.allocationCount,1);
+
+    // Database corruption must fail closed.
+    db.prepare(`
+     UPDATE payment_plan_settlement_allocations
+     SET allocated_amount=?
+     WHERE id=?
+    `).run(4,allocation.id);
+
+    assert.equal(verifyPlans().valid,false);
+
+    db.prepare(`
+     UPDATE payment_plan_settlement_allocations
+     SET allocated_amount=?
+     WHERE id=?
+    `).run(3,allocation.id);
+
+    db.prepare(`
+     UPDATE driver_payment_plans
+     SET status='paused'
+     WHERE id='step217-plan'
+    `).run();
+
+    assert.equal(verifyPlans().valid,false);
+
+    db.prepare(`
+     UPDATE driver_payment_plans
+     SET status='active'
+     WHERE id='step217-plan'
+    `).run();
+
+    db.prepare(`
+     UPDATE driver_payment_plan_instalments
+     SET amount=4
+     WHERE id='step217-instalment'
+    `).run();
+
+    assert.equal(verifyPlans().valid,false);
+
+    db.prepare(`
+     UPDATE driver_payment_plan_instalments
+     SET amount=3
+     WHERE id='step217-instalment'
+    `).run();
+
+    db.prepare(`
+     DELETE FROM payment_plan_settlement_allocations
+     WHERE id=?
+    `).run(allocation.id);
+
+    assert.equal(verifyPlans().valid,false);
+
+    // Restore the original allocation and verify recovery.
+    db.prepare(`
+     INSERT INTO payment_plan_settlement_allocations
+      (id,run_id,payout_id,driver_id,callsign,
+       plan_id,instalment_id,payment_request_id,
+       scheduled_amount,allocated_amount,status,
+       autocab_event_key,created_at)
+     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(
+     allocation.id,
+     allocation.run_id,
+     allocation.payout_id,
+     allocation.driver_id,
+     allocation.callsign,
+     allocation.plan_id,
+     allocation.instalment_id,
+     allocation.payment_request_id,
+     allocation.scheduled_amount,
+     allocation.allocated_amount,
+     allocation.status,
+     allocation.autocab_event_key,
+     allocation.created_at
+    );
+
+    planResult=verifyPlans();
+
+    assert.equal(
+     planResult.valid,
+     true,
+     JSON.stringify(planResult.issues).slice(0,1500)
+    );
+
+    console.log(
+     'PASS — STEP217: Real Monday API plan deduction '+
+     '£3; payout £4.50; four database corruption checks.'
+    );
+
+    const reconciliation=reconcileMondaySettlement(
+     financialRecords
+    );
+
+    assert.equal(
+     reconciliation.valid,
+     true,
+     JSON.stringify(reconciliation.issues).slice(0,1200)
+    );
+
+    assert.equal(reconciliation.driverCount,1001);
+    assert.equal(reconciliation.payoutCount,counts.payouts);
+    // STEP218_SETTLEMENT_SCOPED_REQUEST_COUNT
+    // Exclude the pre-existing payment-plan source request.
+    assert.equal(
+     reconciliation.paymentRequestCount,
+     financialRecords.paymentRequests.length
+    );
+
+    assert.equal(
+     financialRecords.paymentRequests.length,
+     db.prepare(
+      'SELECT COUNT(*) AS n FROM payment_requests WHERE run_id=?'
+     ).get(result.id).n
+    );
+
+    const altered=structuredClone(financialRecords);
+    assert.ok(altered.payouts.length>0);
+    altered.payouts[0].amount+=10;
+    assert.equal(reconcileMondaySettlement(altered).valid,false);
+
+    const missing=structuredClone(financialRecords);
+    missing.payouts.pop();
+    assert.equal(reconcileMondaySettlement(missing).valid,false);
+
+    const wrongDriver=structuredClone(financialRecords);
+    wrongDriver.payouts[0].driver_id=99999999;
+    assert.equal(reconcileMondaySettlement(wrongDriver).valid,false);
+
+    const unexpected=structuredClone(financialRecords);
+    unexpected.payouts.push({
+     ...unexpected.payouts[0],
+     id:'unexpected-test-payout'
+    });
+    assert.equal(reconcileMondaySettlement(unexpected).valid,false);
+
+    console.log(
+     'PASS — STEP204: Real SQLite reconciliation and four corruption checks.'
+    );
+
   }else{
    assert.notEqual(
     response.status,200,
