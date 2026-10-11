@@ -669,6 +669,19 @@ CREATE TABLE IF NOT EXISTS demo_state (
 );
 `);
 
+
+// FAIVOPAY_VERIFIED_WEEKLY_ACTIVITY_V1
+db.exec(`
+ CREATE TABLE IF NOT EXISTS driver_weekly_activity_verified (
+  driver_id INTEGER NOT NULL,
+  week_start TEXT NOT NULL,
+  evidence_type TEXT NOT NULL,
+  first_detected_at TEXT NOT NULL,
+  PRIMARY KEY(driver_id,week_start)
+ );
+`);
+
+
 for (const sql of [
   'ALTER TABLE payouts ADD COLUMN decline_reason TEXT',
   'ALTER TABLE payouts ADD COLUMN decision_at TEXT',
@@ -3796,6 +3809,28 @@ async function syncAutocab(){
     )
   `);
 
+  const previousDriverSamples=new Map(
+   db.prepare(`
+    SELECT driver_id,totals_json,synced_at
+    FROM driver_cache
+   `).all().map(row=>{
+    let totals=null;
+    try{
+     totals=JSON.parse(row.totals_json||'null');
+    }catch{}
+
+    const date=String(row.synced_at||'').slice(0,10);
+
+    return [
+     String(row.driver_id),
+     {
+      allJobsTotal:totals?.allJobsTotal,
+      weekStart:date?mondayWeekStart(date):null
+     }
+    ];
+   })
+  );
+
   for(const d of drivers){
    st.run(
     d.driverId,d.callsign,d.forename,d.surname,d.fullName,
@@ -3804,16 +3839,29 @@ async function syncAutocab(){
     d.lastProcessedBy,d.notes,JSON.stringify(d.totals||null),now
    );
 
-   const jobs=Number(d.totals?.allJobsTotal||0);
+   const rawJobs=d.totals?.allJobsTotal;
+   const jobs=rawJobs==null?NaN:Number(rawJobs);
+   const previousSample=previousDriverSamples.get(String(d.driverId));
+   const oldJobs=previousSample?.allJobsTotal==null
+    ?NaN
+    :Number(previousSample.allJobsTotal);
 
-   if(jobs>0){
-    activity.run(
+   if(
+    previousSample &&
+    previousSample.weekStart===weekStart &&
+    Number.isFinite(jobs) &&
+    Number.isFinite(oldJobs) &&
+    jobs>oldJobs
+   ){
+    db.prepare(`
+     INSERT OR IGNORE INTO driver_weekly_activity_verified
+      (driver_id,week_start,evidence_type,first_detected_at)
+     VALUES(?,?,?,?)
+    `).run(
      d.driverId,
      weekStart,
-     1,
-     now,
-     now,
-     jobs
+     'autocab_job_total_increase',
+     now
     );
    }
   }
@@ -9549,10 +9597,10 @@ function liveTestMondaySimulation(driverId,liveAccount){
  const settledWeekStart=previousMondayWeekStart(runDate);
 
  const activityRow=db.prepare(`
-  SELECT worked
-  FROM driver_weekly_activity
-  WHERE driver_id=?
-    AND week_start=?
+  SELECT 1 AS worked
+   FROM driver_weekly_activity_verified
+   WHERE driver_id=?
+     AND week_start=?
  `).get(
   numericDriverId,
   settledWeekStart
@@ -12725,7 +12773,7 @@ const insP=db.prepare('INSERT INTO payouts(id,run_id,driver_id,callsign,driver_n
 db.exec('BEGIN IMMEDIATE');
 settlementTransactionOpen=true;
 
-for(const d of drivers){if(d.previousBalance==null)continue;const activityRow=db.prepare('SELECT worked FROM driver_weekly_activity WHERE driver_id=? AND week_start=?').get(d.driverId,settledWeekStart),workedThisWeek=Boolean(activityRow?.worked),configuredWeeklyFee=Number(settings.weeklyAppFee||0),chargeInactive=settings.chargeWeeklyFeeWhenInactive!==false,potentialFee=chargeInactive||workedThisWeek?configuredWeeklyFee:0,weeklyFeeWaivedInactive=!chargeInactive&&!workedThisWeek&&configuredWeeklyFee>0,carried=0,base=Number(d.previousBalance||0),crossesPositiveThreshold=base>0.00001&&base+0.00001>=Number(settings.minimumPayoutThreshold||0),crossesNegativeThreshold=base<-0.00001&&Math.abs(base)+0.00001>=Number(settings.negativeThreshold||0),fee=crossesPositiveThreshold||crossesNegativeThreshold?potentialFee:0,adjusted=Number((base-fee).toFixed(2)),planSettlement=crossesPositiveThreshold&&adjusted>0.00001?paymentPlanSettlementCandidate(d.driverId,adjusted):null,planAllocation=Number(planSettlement?.allocatedAmount||0),payoutAvailable=Number(Math.max(0,adjusted-planAllocation).toFixed(2));let action='none',amount=0,payoutId=null,requestId=null,approvalStatus=null;if(base>0.00001){const payoutThreshold=Number(settings.minimumPayoutThreshold||0);if(base+0.00001<payoutThreshold){action='no_action';amount=0;}else if(payoutAvailable<=0.00001){action='plan_allocation';amount=0;}else{action='payout';amount=payoutAvailable;payoutId=id('payout');const cached=cachedDriver(d.driverId),persistentlyExcluded=Boolean(cached?.payoutExcluded),persistentReason=cached?.payoutExclusionReason||'';approvalStatus=persistentlyExcluded?'excluded':'pending';insP.run(payoutId,runId,d.driverId,d.callsign,d.fullName,base,fee,carried,adjusted,payoutAvailable,payoutAvailable,'weekly',persistentlyExcluded?'declined':'pending_approval',createdAt);if(persistentlyExcluded)db.prepare('UPDATE payouts SET decline_reason=?,decision_at=?,decision_by=? WHERE id=?').run(persistentReason,new Date().toISOString(),'persistent_driver_setting',payoutId);}}else if(base<-0.00001){const rawOwing=Math.abs(base);const owing=Number((rawOwing+fee).toFixed(2));amount=rawOwing;if(rawOwing>=Number(settings.negativeThreshold||0)){amount=owing;action='payment_request';requestId=id('request');insR.run(requestId,runId,d.driverId,d.callsign,d.fullName,base,fee,carried,owing,'pending_release',createdAt,due.dueAt);}else{action='no_action';amount=0;}}else{action='no_action';amount=0;}/* Weekly fees are calculated in the Monday draft but are not posted
+for(const d of drivers){if(d.previousBalance==null)continue;const activityRow=db.prepare('SELECT 1 AS worked FROM driver_weekly_activity_verified WHERE driver_id=? AND week_start=?').get(d.driverId,settledWeekStart),workedThisWeek=Boolean(activityRow?.worked),configuredWeeklyFee=Number(settings.weeklyAppFee||0),chargeInactive=settings.chargeWeeklyFeeWhenInactive!==false,potentialFee=chargeInactive||workedThisWeek?configuredWeeklyFee:0,weeklyFeeWaivedInactive=!chargeInactive&&!workedThisWeek&&configuredWeeklyFee>0,carried=0,base=Number(d.previousBalance||0),crossesPositiveThreshold=base>0.00001&&base+0.00001>=Number(settings.minimumPayoutThreshold||0),crossesNegativeThreshold=base<-0.00001&&Math.abs(base)+0.00001>=Number(settings.negativeThreshold||0),fee=crossesPositiveThreshold||crossesNegativeThreshold?potentialFee:0,adjusted=Number((base-fee).toFixed(2)),planSettlement=crossesPositiveThreshold&&adjusted>0.00001?paymentPlanSettlementCandidate(d.driverId,adjusted):null,planAllocation=Number(planSettlement?.allocatedAmount||0),payoutAvailable=Number(Math.max(0,adjusted-planAllocation).toFixed(2));let action='none',amount=0,payoutId=null,requestId=null,approvalStatus=null;if(base>0.00001){const payoutThreshold=Number(settings.minimumPayoutThreshold||0);if(base+0.00001<payoutThreshold){action='no_action';amount=0;}else if(payoutAvailable<=0.00001){action='plan_allocation';amount=0;}else{action='payout';amount=payoutAvailable;payoutId=id('payout');const cached=cachedDriver(d.driverId),persistentlyExcluded=Boolean(cached?.payoutExcluded),persistentReason=cached?.payoutExclusionReason||'';approvalStatus=persistentlyExcluded?'excluded':'pending';insP.run(payoutId,runId,d.driverId,d.callsign,d.fullName,base,fee,carried,adjusted,payoutAvailable,payoutAvailable,'weekly',persistentlyExcluded?'declined':'pending_approval',createdAt);if(persistentlyExcluded)db.prepare('UPDATE payouts SET decline_reason=?,decision_at=?,decision_by=? WHERE id=?').run(persistentReason,new Date().toISOString(),'persistent_driver_setting',payoutId);}}else if(base<-0.00001){const rawOwing=Math.abs(base);const owing=Number((rawOwing+fee).toFixed(2));amount=rawOwing;if(rawOwing>=Number(settings.negativeThreshold||0)){amount=owing;action='payment_request';requestId=id('request');insR.run(requestId,runId,d.driverId,d.callsign,d.fullName,base,fee,carried,owing,'pending_release',createdAt,due.dueAt);}else{action='no_action';amount=0;}}else{action='no_action';amount=0;}/* Weekly fees are calculated in the Monday draft but are not posted
 to either ledger until financial finalisation is confirmed. */items.push({driverId:d.driverId,callsign:d.callsign,driverName:d.fullName,currentBalance:d.currentBalance,previousBalance:base,weeklyFee:fee,configuredWeeklyFee,workedThisWeek,weeklyFeeWaivedInactive,settledWeekStart,carriedCharges:carried,adjustedBalance:adjusted,planAllocation,payoutAvailable,planId:planSettlement?.plan?.id||null,planInstalmentId:planSettlement?.instalment?.id||null,planInstalmentScheduledAmount:Number(planSettlement?.scheduledAmount||0),planInstalmentPaidAmount:Number(planSettlement?.alreadyPaidAmount||0),planInstalmentRemaining:Number(planSettlement?.instalmentRemaining||0),planRemainingAmount:Number(planSettlement?.planRemaining||0),action,amount,payoutId,requestId,approvalStatus,persistentPayoutExclusion:Boolean(cachedDriver(d.driverId)?.payoutExcluded),exclusionReason:approvalStatus==='excluded'?(cachedDriver(d.driverId)?.payoutExclusionReason||'Persistent payout exclusion'):''});if(planSettlement&&planAllocation>0.00001){allocationRows.push({id:id('planalloc'),runId,payoutId,driverId:d.driverId,callsign:d.callsign,planId:planSettlement.plan.id,instalmentId:planSettlement.instalment.id,paymentRequestId:planSettlement.paymentRequestId||null,scheduledAmount:Number(planSettlement.scheduledAmount||0),allocatedAmount:planAllocation,autocabEventKey:`plan:${planSettlement.plan.id}:monday:${runId}:${planSettlement.instalment.id}`,createdAt})}}
  db.prepare('INSERT INTO settlement_runs(id,created_at,status,settings_json,items_json,run_date,created_by) VALUES(?,?,?,?,?,?,?)').run(runId,createdAt,'draft',JSON.stringify(settings),JSON.stringify(items),today,req.auth.email);const insA=db.prepare(`INSERT INTO payment_plan_settlement_allocations(id,run_id,payout_id,driver_id,callsign,plan_id,instalment_id,payment_request_id,scheduled_amount,allocated_amount,status,autocab_event_key,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`);for(const a of allocationRows){insA.run(a.id,a.runId,a.payoutId,a.driverId,a.callsign,a.planId,a.instalmentId,a.paymentRequestId,a.scheduledAmount,a.allocatedAmount,'pending',a.autocabEventKey,a.createdAt)}// STEP183_PENDING_SOURCE_VERIFICATION
 // Source evidence is recorded but does not authorise a payout.
@@ -22655,8 +22703,8 @@ function adminBankAccountInfo(driverId){
  const changedRecently=changed&&(Date.now()-new Date(row.updated_at).getTime())<(7*24*60*60*1000);
  const providerVerified=Boolean(row.provider_recipient_id)&&String(row.status||'').toLowerCase()==='verified';
  return {
-  configured:true,ready:providerVerified&&!changedRecently,status:providerVerified&&!changedRecently?'verified':changedRecently?'recently_changed':'saved',
-  label:providerVerified&&!changedRecently?'Provider verified':changedRecently?'Changed recently — review required':'Saved — provider verification required',
+  configured:true,ready:providerVerified,status:providerVerified?'verified':'saved',
+  label:providerVerified?'Ready for payout':changedRecently?'Bank saved — provider setup pending (recent change)':'Bank saved — provider setup pending',
   accountHolder,sortCodeMasked:`••-••-${row.sort_code_last2}`,accountNumberMasked:`••••${row.account_number_last4}`,
   changedRecently,providerVerified,createdAt:row.created_at,updatedAt:row.updated_at
  };

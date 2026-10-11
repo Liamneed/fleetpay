@@ -14068,3 +14068,74 @@ body {
 .faivoDemoReviewDrivers .tableWrap{background:#fff;border:1px solid #e2e8f0;border-radius:10px}
 .faivoDemoRunLock{display:inline-block;font-weight:750;font-size:12px;color:#475569;padding:9px 12px;border:1px solid #cbd5e1;background:#f1f5f9;border-radius:9px}
 @media(max-width:720px){.faivoDemoReviewFacts{grid-template-columns:repeat(2,minmax(0,1fr))}.demoV22Stack .demoRunV22 .faivopaySharedWizardHeader>.wizardStageBody,.demoV22Stack .demoRunV22 .faivopaySharedWizardHeader>.faivoReviewMessage{min-height:260px}}
+
+
+/* FaivoPay Autocab synchronisation overlay */
+.faivoAutocabSyncOverlay {
+ position: fixed;
+ inset: 0;
+ z-index: 99999;
+ display: flex;
+ align-items: center;
+ justify-content: center;
+ padding: 20px;
+ background: rgba(9, 20, 39, .38);
+ backdrop-filter: blur(7px);
+ -webkit-backdrop-filter: blur(7px);
+ pointer-events: auto;
+}
+
+.faivoAutocabSyncCard {
+ width: min(100%, 410px);
+ padding: 38px 28px;
+ border-radius: 22px;
+ background: #fff;
+ text-align: center;
+ box-shadow: 0 25px 75px rgba(0,0,0,.24);
+}
+
+.faivoAutocabSyncIcon {
+ width: 74px;
+ height: 74px;
+ margin: 0 auto 22px;
+ border-radius: 50%;
+ display: flex;
+ align-items: center;
+ justify-content: center;
+ background: #edf5ff;
+ color: #1767d5;
+}
+
+.faivoAutocabSyncIcon svg {
+ width: 37px;
+ height: 37px;
+ animation: faivoAutocabRotate 1.4s linear infinite;
+}
+
+.faivoAutocabSyncCard h2 {
+ margin: 0 0 10px;
+ font-size: 23px;
+ color: #132238;
+}
+
+.faivoAutocabSyncCard p {
+ margin: 0 0 18px;
+ font-size: 14px;
+ line-height: 1.6;
+ color: #57677e;
+}
+
+.faivoAutocabSyncCard small {
+ color: #8390a1;
+ font-size: 12px;
+}
+
+@keyframes faivoAutocabRotate {
+ to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+ .faivoAutocabSyncIcon svg {
+  animation: none;
+ }
+}
