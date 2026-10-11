@@ -9509,13 +9509,13 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
       <b>Settlement, payout and fee rules</b>
      </div>
 
-     <section className="panel settingsCardV2 settlementRulesCard"><div className="settingsHead"><CalendarDays/><div><h3>Settlement & payout rules</h3><p>Controls used for Monday and early payout processing.</p></div></div><div className="formGrid2"><label>Outstanding threshold<div className="moneyField"><span>£</span><input type="number" step="0.01" value={settings.negativeThreshold??0} onChange={e=>setSettings({...settings,negativeThreshold:e.target.value})}/></div><small>Amounts below this threshold remain in Autocab; FaivoPay creates no collection request.</small></label><label>Minimum payout threshold<div className="moneyField"><span>£</span><input type="number" min="0" step="0.01" value={settings.minimumPayoutThreshold??0} onChange={e=>setSettings({...settings,minimumPayoutThreshold:e.target.value})}/></div><small>Positive balances below this remain on the driver account until a future settlement.</small></label><label>Weekly FaivoPay fee<div className="moneyField"><span>£</span><input type="number" step="0.01" value={settings.weeklyAppFee??0} onChange={e=>setSettings({...settings,weeklyAppFee:e.target.value})}/></div></label><label className="toggleRow"><span className="toggleCopy"><b>Charge weekly fee when no work is recorded</b><small>When off, fees are waived where work is not detected. Activity evidence must be checked before live settlement because missing evidence does not prove inactivity.</small></span><span className="toggleSwitch"><input type="checkbox" checked={settings.chargeWeeklyFeeWhenInactive!==false} onChange={e=>setSettings({...settings,chargeWeeklyFeeWhenInactive:e.target.checked})}/><span className="toggleSlider"/></span></label><label>Early payout fee<div className="moneyField"><span>£</span><input type="number" step="0.01" value={settings.earlyPayoutFee??0} onChange={e=>setSettings({...settings,earlyPayoutFee:e.target.value})}/></div></label><label>Early payout cutoff<input type="time" value={settings.earlyPayoutCutoffTime||'11:00'} onChange={e=>setSettings({...settings,earlyPayoutCutoffTime:e.target.value})}/></label><label>Outstanding payment deadline<input type="time" value={settings.outstandingDueTime||'17:00'} onChange={e=>setSettings({...settings,outstandingDueTime:e.target.value})}/></label><label>Autocab sync interval<input type="number" min="2" max="60" value={settings.syncMinutes||10} onChange={e=>setSettings({...settings,syncMinutes:e.target.value})}/><small>Minutes between automatic syncs.</small></label></div><div className="formGrid1"><label>Weekly payout Autocab description<input value={settings.weeklyPayoutReasonTemplate||''} onChange={e=>setSettings({...settings,weeklyPayoutReasonTemplate:e.target.value})}/><small>Available: {'{date}'} {'{time}'} {'{callsign}'} {'{amount}'}</small></label><label>Early payout Autocab description<input value={settings.earlyPayoutReasonTemplate||''} onChange={e=>setSettings({...settings,earlyPayoutReasonTemplate:e.target.value})}/></label><div className="formGrid2"><label>Manual pay-in default reason<input value={settings.manualPayInReasonDefault||''} onChange={e=>setSettings({...settings,manualPayInReasonDefault:e.target.value})}/></label><label>Manual payout default reason<input value={settings.manualPayoutReasonDefault||''} onChange={e=>setSettings({...settings,manualPayoutReasonDefault:e.target.value})}/></label></div></div></section>
+     <section className="panel settingsCardV2 settlementRulesCard"><div className="settingsHead"><CalendarDays/><div><h3>Settlement & payout rules</h3><p>Controls used for Monday and early payout processing.</p></div></div><div className="formGrid2"><label>Outstanding threshold<div className="moneyField"><span>£</span><input type="number" step="0.01" value={settings.negativeThreshold??0} onChange={e=>setSettings({...settings,negativeThreshold:e.target.value})}/></div><small>Amounts below this threshold remain in Autocab; FaivoPay creates no collection request.</small></label><label>Minimum payout threshold<div className="moneyField"><span>£</span><input type="number" min="0" step="0.01" value={settings.minimumPayoutThreshold??0} onChange={e=>setSettings({...settings,minimumPayoutThreshold:e.target.value})}/></div><small>Positive balances below this remain on the driver account until a future settlement.</small></label><label>Weekly FaivoPay fee<div className="moneyField"><span>£</span><input type="number" step="0.01" value={settings.weeklyAppFee??0} onChange={e=>setSettings({...settings,weeklyAppFee:e.target.value})}/></div></label><label className="toggleRow"><span className="toggleCopy"><b>Charge weekly fee when no work is recorded</b><small>When off, fees are waived where work is not detected. Activity evidence must be checked before live settlement because missing evidence does not prove inactivity.</small></span><span className="toggleSwitch"><input type="checkbox" checked={settings.chargeWeeklyFeeWhenInactive!==false} onChange={e=>setSettings({...settings,chargeWeeklyFeeWhenInactive:e.target.checked})}/><span className="toggleSlider"/></span></label><label className="toggleRow"><span className="toggleCopy"><b>Enable early payouts</b><small>Off: drivers see Coming soon and cannot submit payout requests.</small></span><span className="toggleSwitch"><input type="checkbox" checked={settings.earlyPayoutsEnabled===true} onChange={e=>setSettings({...settings,earlyPayoutsEnabled:e.target.checked})}/><span className="toggleSlider"/></span></label><label>Early payout fee<div className="moneyField"><span>£</span><input type="number" step="0.01" value={settings.earlyPayoutFee??0} onChange={e=>setSettings({...settings,earlyPayoutFee:e.target.value})}/></div></label><label>Early payout cutoff<input type="time" value={settings.earlyPayoutCutoffTime||'11:00'} onChange={e=>setSettings({...settings,earlyPayoutCutoffTime:e.target.value})}/></label><label className="toggleRow"><span className="toggleCopy"><b>Enable PAY IN through FaivoPay</b><small>Off: drivers see outstanding balances but must use their existing LynkPay link. Stripe checkout is blocked.</small></span><span className="toggleSwitch"><input type="checkbox" checked={settings.payInEnabled===true} onChange={e=>setSettings({...settings,payInEnabled:e.target.checked})}/><span className="toggleSlider"/></span></label><label>Outstanding payment deadline<input type="time" value={settings.outstandingDueTime||'17:00'} onChange={e=>setSettings({...settings,outstandingDueTime:e.target.value})}/></label><label>Autocab sync interval<input type="number" min="2" max="60" value={settings.syncMinutes||10} onChange={e=>setSettings({...settings,syncMinutes:e.target.value})}/><small>Minutes between automatic syncs.</small></label></div><div className="formGrid1"><label>Weekly payout Autocab description<input value={settings.weeklyPayoutReasonTemplate||''} onChange={e=>setSettings({...settings,weeklyPayoutReasonTemplate:e.target.value})}/><small>Available: {'{date}'} {'{time}'} {'{callsign}'} {'{amount}'}</small></label><label>Early payout Autocab description<input value={settings.earlyPayoutReasonTemplate||''} onChange={e=>setSettings({...settings,earlyPayoutReasonTemplate:e.target.value})}/></label><div className="formGrid2"><label>Manual pay-in default reason<input value={settings.manualPayInReasonDefault||''} onChange={e=>setSettings({...settings,manualPayInReasonDefault:e.target.value})}/></label><label>Manual payout default reason<input value={settings.manualPayoutReasonDefault||''} onChange={e=>setSettings({...settings,manualPayoutReasonDefault:e.target.value})}/></label></div></div></section>
      <div className="settingsSectionLabel">
       <span>CUSTOMER PAYMENTS</span>
       <b>Card-payment fees and revenue split</b>
      </div>
 
-     <section className="panel settingsCardV2 feePricingCard"><div className="settingsHead"><BadgePoundSterling/><div><h3>Fee pricing & split</h3><p>Define the gross fee and how each fee is split between FaivoPay and the taxi company.</p></div></div><div className="formGrid2"><label>Customer payment fee type<select value={settings.customerPaymentFeeType||'fixed'} onChange={e=>setSettings({...settings,customerPaymentFeeType:e.target.value})}><option value="fixed">Fixed amount</option><option value="percentage">Percentage</option></select></label><label>Customer payment fee<div className="moneyField"><span>{settings.customerPaymentFeeType==='percentage'?'%':'£'}</span><input type="number" min="0" step="0.01" value={settings.customerPaymentFeeValue??0} onChange={e=>setSettings({...settings,customerPaymentFeeValue:e.target.value})}/></div></label><label>FaivoPay share – customer fees<div className="moneyField"><span>%</span><input type="number" min="0" max="100" value={settings.customerFeeFleetPayPercent??100} onChange={e=>setSettings({...settings,customerFeeFleetPayPercent:e.target.value})}/></div><small>Taxi company receives the remaining percentage.</small></label><label>FaivoPay share – early payout fee<div className="moneyField"><span>%</span><input type="number" min="0" max="100" value={settings.earlyPayoutFeeFleetPayPercent??100} onChange={e=>setSettings({...settings,earlyPayoutFeeFleetPayPercent:e.target.value})}/></div></label><label>FaivoPay share – weekly fee<div className="moneyField"><span>%</span><input type="number" min="0" max="100" value={settings.weeklyFeeFleetPayPercent??100} onChange={e=>setSettings({...settings,weeklyFeeFleetPayPercent:e.target.value})}/></div></label></div></section>
+     <section className="panel settingsCardV2 feePricingCard"><div className="settingsHead"><BadgePoundSterling/><div><h3>Fee pricing & split</h3><p>Define the gross fee and how each fee is split between FaivoPay and the taxi company.</p></div></div><div className="formGrid2"><label className="toggleRow"><span className="toggleCopy"><b>Enable customer payments</b><small>Off: customer payment creation and live checkout are disabled for drivers.</small></span><span className="toggleSwitch"><input type="checkbox" checked={settings.customerPaymentsEnabled===true} onChange={e=>setSettings({...settings,customerPaymentsEnabled:e.target.checked})}/><span className="toggleSlider"/></span></label><label>Customer payment fee type<select value={settings.customerPaymentFeeType||'fixed'} onChange={e=>setSettings({...settings,customerPaymentFeeType:e.target.value})}><option value="fixed">Fixed amount</option><option value="percentage">Percentage</option></select></label><label>Customer payment fee<div className="moneyField"><span>{settings.customerPaymentFeeType==='percentage'?'%':'£'}</span><input type="number" min="0" step="0.01" value={settings.customerPaymentFeeValue??0} onChange={e=>setSettings({...settings,customerPaymentFeeValue:e.target.value})}/></div></label><label>FaivoPay share – customer fees<div className="moneyField"><span>%</span><input type="number" min="0" max="100" value={settings.customerFeeFleetPayPercent??100} onChange={e=>setSettings({...settings,customerFeeFleetPayPercent:e.target.value})}/></div><small>Taxi company receives the remaining percentage.</small></label><label>FaivoPay share – early payout fee<div className="moneyField"><span>%</span><input type="number" min="0" max="100" value={settings.earlyPayoutFeeFleetPayPercent??100} onChange={e=>setSettings({...settings,earlyPayoutFeeFleetPayPercent:e.target.value})}/></div></label><label>FaivoPay share – weekly fee<div className="moneyField"><span>%</span><input type="number" min="0" max="100" value={settings.weeklyFeeFleetPayPercent??100} onChange={e=>setSettings({...settings,weeklyFeeFleetPayPercent:e.target.value})}/></div></label></div></section>
      <div className="settingsSectionLabel">
       <span>WEEKLY INVOICING</span>
       <b>FaivoPay service-fee billing</b>
@@ -11265,8 +11265,8 @@ function DriverApp(){
  async function finishReset(e){e.preventDefault();setErr('');try{await call('/api/driver/forgot-password/complete',{method:'POST',body:JSON.stringify({challengeId:challenge,code:f.code,password:f.password})});setMode('login');setStep(1);setErr('Password reset. You can now sign in.')}catch(x){setErr(x.message)}}
  async function payout(){setErr('');setNotice('');try{const j=await api('/api/driver/early-payout',{method:'POST',body:JSON.stringify({amount:Number(amt)})});setAmt('');setNotice(`Payout request received. ${j.message}`);await load()}catch(x){setErr(x.message)}}
  async function enablePush(){setErr('');try{if(!('serviceWorker'in navigator)||!('PushManager'in window))throw new Error('Push notifications are not supported on this device/browser.');const cfg=await api('/api/driver/push-config');if(!cfg.enabled)throw new Error('Push notifications are not configured on the FaivoPay server.');const reg=await navigator.serviceWorker.register('/fleetpay-sw.js');const perm=await Notification.requestPermission();if(perm!=='granted')throw new Error('Notification permission was not granted.');let sub=await reg.pushManager.getSubscription();if(!sub){const padded=cfg.publicKey.replace(/-/g,'+').replace(/_/g,'/').padEnd(Math.ceil(cfg.publicKey.length/4)*4,'=');const bytes=Uint8Array.from(atob(padded),c=>c.charCodeAt(0));sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:bytes})}await api('/api/driver/push-subscription',{method:'POST',body:JSON.stringify({subscription:sub})});setPushReady(true);setNotice('Push notifications are enabled.');await api('/api/driver/push-test',{method:'POST'})}catch(e){setErr(e.message)}}
- async function payRequest(request){setErr('');setPaymentBusy(true);try{const j=await api(`/api/driver/payment-requests/${request.id}/checkout`,{method:'POST'});window.location.assign(j.paymentUrl)}catch(e){setErr(e.message);setPaymentBusy(false)}}
- async function createExtraPlanPayment(plan,maxExtra){setErr('');setNotice('');if(currentExtraPlanPayment)return payRequest(currentExtraPlanPayment);const raw=prompt(`How much extra would you like to pay?\n\nMaximum extra payment: ${money(maxExtra)}\nYour current instalment remains due separately.`,'');if(raw===null)return;const amount=Number(raw);if(!Number.isFinite(amount)||amount<=0){setErr('Enter a valid extra payment amount.');return}if(amount>maxExtra+0.00001){setErr(`Extra payment cannot exceed ${money(maxExtra)}.`);return}setPaymentBusy(true);try{const j=await api(`/api/driver/payment-plans/${plan.id}/extra-payment`,{method:'POST',body:JSON.stringify({amount})});await payRequest(j.paymentRequest)}catch(e){setErr(e.message);setPaymentBusy(false)}}
+ async function payRequest(request){if(!payInEnabled){setErr('FaivoPay PAY IN is coming soon. Please use your existing LynkPay link.');return;}setErr('');setPaymentBusy(true);try{const j=await api(`/api/driver/payment-requests/${request.id}/checkout`,{method:'POST'});window.location.assign(j.paymentUrl)}catch(e){setErr(e.message);setPaymentBusy(false)}}
+ async function createExtraPlanPayment(plan,maxExtra){if(!payInEnabled){setErr('Please use your existing LynkPay link.');return;}setErr('');setNotice('');if(currentExtraPlanPayment)return payRequest(currentExtraPlanPayment);const raw=prompt(`How much extra would you like to pay?\n\nMaximum extra payment: ${money(maxExtra)}\nYour current instalment remains due separately.`,'');if(raw===null)return;const amount=Number(raw);if(!Number.isFinite(amount)||amount<=0){setErr('Enter a valid extra payment amount.');return}if(amount>maxExtra+0.00001){setErr(`Extra payment cannot exceed ${money(maxExtra)}.`);return}setPaymentBusy(true);try{const j=await api(`/api/driver/payment-plans/${plan.id}/extra-payment`,{method:'POST',body:JSON.stringify({amount})});await payRequest(j.paymentRequest)}catch(e){setErr(e.message);setPaymentBusy(false)}}
 
 
  async function testLivePaymentPreview({silent=false}={}){
@@ -11303,6 +11303,8 @@ function DriverApp(){
 
    setLivePaymentPreview(j);
    if(j?.ok===false){
+    setLastLivePreview(null);
+    setLastLivePaid(null);
     setCustomerPayment(current=>
      current && String(current.bookingId||'')===nextBookingId
       ?null:current
@@ -11319,9 +11321,10 @@ function DriverApp(){
 
    setLivePaymentPreview({
     ok:false,
-    error:message,
-    previousBookingId:previousBookingId||null
+    error:message
    });
+   setLastLivePreview(null);
+   setLastLivePaid(null);
 
    /*
     * If the current booking is no longer eligible, never leave
@@ -11420,7 +11423,7 @@ function DriverApp(){
 
  function logout(){
   localStorage.removeItem('fleetpay_driver');
-  setToken('');setMe(null);setErr('');setNotice('');setAmt('');setMode('login');setStep(1);setChallenge('');setDev('');setPushReady(false);setPushAvailable(false);setPaymentBusy(false);setCustomerPayment(null);setCustomerFare('');setCustomerBooking('');setLiveFareEdit({bookingId:'',value:''});setDriverTab('home');setBankEditing(false);setBankBusy(false);setBankForm({accountHolder:'',sortCode:'',accountNumber:'',password:''});
+  setToken('');setMe(null);setLivePaymentPreview(null);setLastLivePreview(null);setLastLivePaid(null);setErr('');setNotice('');setAmt('');setMode('login');setStep(1);setChallenge('');setDev('');setPushReady(false);setPushAvailable(false);setPaymentBusy(false);setCustomerPayment(null);setCustomerFare('');setCustomerBooking('');setLiveFareEdit({bookingId:'',value:''});setDriverTab('home');setBankEditing(false);setBankBusy(false);setBankForm({accountHolder:'',sortCode:'',accountNumber:'',password:''});
   setF({callsign:'',email:'',mobileLast4:'',code:'',password:''});
  }
 
@@ -11596,12 +11599,8 @@ function DriverApp(){
  const paidCustomerPayments=customerPayments.filter(x=>x.status==='paid');
  const openCustomerPayments=customerPayments.filter(x=>x.status==='open');
 
- const livePaymentBookingId=
-  livePaymentPreview?.bookingId ||
-  livePaymentPreview?.previousBookingId ||
-  customerPayment?.bookingId ||
-  lastLivePaid?.payment?.bookingId ||
-  null;
+ // An earlier payment or booking is not evidence of a current job.
+ const livePaymentBookingId=livePaymentPreview?.bookingId||null;
 
  const matchingLivePayment=
   livePaymentBookingId
@@ -11627,6 +11626,8 @@ function DriverApp(){
  );
 
  const livePaymentPaid=Boolean(
+  livePaymentPreview?.ok===true &&
+  livePaymentBookingId &&
   matchingLivePayment?.status==='paid'
  );
 
@@ -11700,7 +11701,10 @@ function DriverApp(){
   weeklyPaymentRequests.find(thisWeekRecord)||null;
 
  const mondayPreviousBalance=Number(d.previousBalance||0);
- const liveCurrentBalance=Number(d.currentBalance||0);
+  const liveCurrentBalance=Number(d.currentBalance||0);
+  const customerPaymentsEnabled=me.settings?.customerPaymentsEnabled===true;
+  const earlyPayoutsEnabled=me.settings?.earlyPayoutsEnabled===true;
+  const payInEnabled=me.settings?.payInEnabled===true;
 
  const mondayPlanAllocation=latestWeeklyPayout
   ?planSettlementAllocations
@@ -11798,7 +11802,7 @@ function DriverApp(){
   ['account',UserCheck,'Account']
  ];
 
- const PaymentDueCard=({hero=false})=>standardPaymentRequests.length>0?<section className={`driverCard paymentDueCard ${hero?'mondayDueHero':''}`}><div className="paymentDueHeader"><div><span className="eyebrow">{hero?'MONDAY SETTLEMENT':'PAYMENT DUE'}</span><h2>{money(totalDue)}</h2></div><Pill tone="warn">Outstanding</Pill></div>{hero?<><h3>Weekly payment requires attention</h3><p>Your Monday settlement is ready to pay. Please complete payment by <b>{dueWhen}</b> to avoid suspension.</p><div className="dueHeroMeta"><div><span>Amount due</span><b>{money(totalDue)}</b></div><div><span>Deadline</span><b>{dueWhen}</b></div></div></>:<p>Securely settle your FaivoPay balance.</p>}{standardPaymentRequests.map((r,i)=><div className="dueRequestRow" key={r.id}><div><b>{money(r.amount)}</b><span>{r.dueAt?`Due ${new Intl.DateTimeFormat('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}).format(new Date(r.dueAt))}`:dt(r.createdAt)}{standardPaymentRequests.length>1?` · Request ${i+1}`:''}</span></div><button className={`mini ${hero?'heroPayButton':'goodBtn'}`} disabled={paymentBusy||!me.stripeConfigured} onClick={()=>payRequest(r)}>{paymentBusy?'Opening…':'Pay now'}</button></div>)}{hero&&<button className="dueDetailsButton" type="button" onClick={()=>changeTab('pay')}>View payment details <ChevronRight/></button>}</section>:null;
+ const PaymentDueCard=({hero=false})=>standardPaymentRequests.length>0?<section className={`driverCard paymentDueCard ${hero?'mondayDueHero':''}`}><div className="paymentDueHeader"><div><span className="eyebrow">{hero?'MONDAY SETTLEMENT':'PAYMENT DUE'}</span><h2>{money(totalDue)}</h2></div><Pill tone="warn">Outstanding</Pill></div>{hero?<><h3>Weekly payment requires attention</h3><p>Your Monday settlement is ready to pay. Please complete payment by <b>{dueWhen}</b> to avoid suspension.</p><div className="dueHeroMeta"><div><span>Amount due</span><b>{money(totalDue)}</b></div><div><span>Deadline</span><b>{dueWhen}</b></div></div></>:<p>Securely settle your FaivoPay balance.</p>}{standardPaymentRequests.map((r,i)=><div className="dueRequestRow" key={r.id}><div><b>{money(r.amount)}</b><span>{r.dueAt?`Due ${new Intl.DateTimeFormat('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}).format(new Date(r.dueAt))}`:dt(r.createdAt)}{standardPaymentRequests.length>1?` · Request ${i+1}`:''}</span></div><button className={`mini ${hero?'heroPayButton':'goodBtn'}`} disabled={!payInEnabled||paymentBusy||!me.stripeConfigured} onClick={()=>payRequest(r)}>{!payInEnabled?'Coming soon':paymentBusy?'Opening…':'Pay now'}</button></div>)}{hero&&<button className="dueDetailsButton" type="button" onClick={()=>changeTab('pay')}>View payment details <ChevronRight/></button>}</section>:null;
 
 
  const PaymentPlanCard=({compact=false}={})=>{
@@ -11872,10 +11876,10 @@ function DriverApp(){
 
       <button
        className="mini goodBtn"
-       disabled={paymentBusy||!me.stripeConfigured}
+       disabled={!payInEnabled||paymentBusy||!me.stripeConfigured}
        onClick={()=>payRequest(currentPlanPayment)}
       >
-       {paymentBusy?'Opening…':'Pay instalment'}
+       {!payInEnabled?'Coming soon':paymentBusy?'Opening…':'Pay instalment'}
       </button>
      </div>
     }
@@ -11995,11 +11999,13 @@ function DriverApp(){
 
      <button
       className="primary full actionButton"
-      disabled={paymentBusy||!me.stripeConfigured}
+      disabled={!payInEnabled||paymentBusy||!me.stripeConfigured}
       onClick={()=>payRequest(currentPlanPayment)}
      >
       <CreditCard/>
-      {paymentBusy
+      {!payInEnabled
+       ?'Coming soon'
+       :paymentBusy
        ?'Opening secure payment…'
        :`Pay ${money(nextAmount)} instalment`}
      </button>
@@ -12007,7 +12013,7 @@ function DriverApp(){
    }
 
    {['active','defaulted'].includes(plan.status)&&maxExtraPayment>0&&
-    <div className="driverPlanNotice"><Banknote/><div><b>Pay extra off your plan</b><span>An extra payment reduces future principal. Your current {money(currentInstalmentRemaining)} instalment stays due separately.</span></div><button className="mini goodBtn" disabled={paymentBusy||!me.stripeConfigured} onClick={()=>createExtraPlanPayment(plan,maxExtraPayment)}>{currentExtraPlanPayment?'Continue extra payment':'Make extra payment'}</button></div>
+    <div className="driverPlanNotice"><Banknote/><div><b>Pay extra off your plan</b><span>An extra payment reduces future principal. Your current {money(currentInstalmentRemaining)} instalment stays due separately.</span></div><button className="mini goodBtn" disabled={!payInEnabled||paymentBusy||!me.stripeConfigured} onClick={()=>createExtraPlanPayment(plan,maxExtraPayment)}>{!payInEnabled?'Coming soon':currentExtraPlanPayment?'Continue extra payment':'Make extra payment'}</button></div>
    }
 
    {!currentPlanPayment&&plan.status==='active'&&remaining>0&&
@@ -12078,7 +12084,7 @@ function DriverApp(){
    String(customerPayment.bookingId||'')===String(livePaymentPreview.bookingId||'')) &&
  <div className="activePaymentSheet"><div className="activePaymentTop"><div><span>PAYMENT READY</span><strong>{money(customerPayment.totalAmount)}</strong>{customerPayment.bookingId&&<small>Booking {customerPayment.bookingId}</small>}</div><Pill tone="warn">Awaiting</Pill></div><div className="qrPanel"><QRCodeSVG value={customerPayment.paymentUrl} size={210} level="M" includeMargin/><b>Scan to pay</b><span>Secure Stripe checkout</span></div><div className="paymentActions"><button className="primary" type="button" onClick={()=>window.open(customerPayment.paymentUrl,'_blank')}>Open payment link</button><button className="outline" type="button" onClick={()=>sharePayment(customerPayment)}>Share link</button></div><button className="textBtn paymentCancel" type="button" onClick={()=>setCustomerPayment(null)}>Hide payment</button></div>}{!me.stripeConfigured&&<small className="paymentUnavailable">Customer card payments are not configured.</small>}</section>;
 
- const EarlyPayoutCard=()=> <section className="driverCard"><div className="cardTop"><div><span className="eyebrow">EARLY PAYOUT</span><h2>Request payout</h2></div><div className="iconBubble"><ArrowUpRight/></div></div><div className="availableRow"><span>Available now</span><strong>{money(me.availableForEarlyPayout)}</strong></div>{!bankAccount.configured&&<div className="bankRequiredNotice"><Banknote/><div><b>Bank account required</b><span>Add your payout bank account before requesting money.</span></div><button type="button" className="mini" onClick={()=>changeTab('account')}>Add account</button></div>}{me.reservedForEarlyPayout>0&&<div className="reservedLine"><span>Already reserved</span><b>{money(me.reservedForEarlyPayout)}</b></div>}{me.earlyPayoutAllowed&&<div className={`cutoffNotice ${me.earlyPayoutTiming?.afterCutoff?'afterCutoff':''}`}><Clock3/><span>{me.earlyPayoutWindowMessage}</span></div>}{bankAccount.configured&&me.earlyPayoutAllowed&&me.availableForEarlyPayout>me.settings.earlyPayoutFee?<><div className="moneyInput modernMoneyInput"><span>£</span><input type="number" inputMode="decimal" step="0.01" placeholder="0.00" value={amt} onChange={e=>setAmt(e.target.value)}/></div>{amt&&Number(amt)>0&&<div className="compactPreview"><span>You receive</span><b>{money(Math.max(0,Number(amt)-me.settings.earlyPayoutFee))}</b><small>Includes {money(me.settings.earlyPayoutFee)} fee</small></div>}<button className="primary full actionButton" onClick={payout}>Request payout</button></>:!me.earlyPayoutAllowed?<div className="closed"><Clock3/><span>{me.earlyPayoutWindowMessage}</span></div>:null}</section>;
+ const EarlyPayoutCard=()=>!earlyPayoutsEnabled?<section className="driverCard"><div className="cardTop"><div><span className="eyebrow">EARLY PAYOUT</span><h2>Coming soon</h2></div><div className="iconBubble"><Banknote/></div></div><p>Early payout requests are temporarily unavailable during the driver trial.</p><small>Your Autocab balance remains available on Home.</small></section>:<section className="driverCard"><div className="cardTop"><div><span className="eyebrow">EARLY PAYOUT</span><h2>Request payout</h2></div><div className="iconBubble"><ArrowUpRight/></div></div><div className="availableRow"><span>Available now</span><strong>{money(me.availableForEarlyPayout)}</strong></div>{!bankAccount.configured&&<div className="bankRequiredNotice"><Banknote/><div><b>Bank account required</b><span>Add your payout bank account before requesting money.</span></div><button type="button" className="mini" onClick={()=>changeTab('account')}>Add account</button></div>}{me.reservedForEarlyPayout>0&&<div className="reservedLine"><span>Already reserved</span><b>{money(me.reservedForEarlyPayout)}</b></div>}{me.earlyPayoutAllowed&&<div className={`cutoffNotice ${me.earlyPayoutTiming?.afterCutoff?'afterCutoff':''}`}><Clock3/><span>{me.earlyPayoutWindowMessage}</span></div>}{bankAccount.configured&&me.earlyPayoutAllowed&&me.availableForEarlyPayout>me.settings.earlyPayoutFee?<><div className="moneyInput modernMoneyInput"><span>£</span><input type="number" inputMode="decimal" step="0.01" placeholder="0.00" value={amt} onChange={e=>setAmt(e.target.value)}/></div>{amt&&Number(amt)>0&&<div className="compactPreview"><span>You receive</span><b>{money(Math.max(0,Number(amt)-me.settings.earlyPayoutFee))}</b><small>Includes {money(me.settings.earlyPayoutFee)} fee</small></div>}<button className="primary full actionButton" onClick={payout}>Request payout</button></>:!me.earlyPayoutAllowed?<div className="closed"><Clock3/><span>{me.earlyPayoutWindowMessage}</span></div>:null}</section>;
 
  const routeLine=(preview)=>{
   const pickup=String(preview?.pickup||'').trim();
@@ -12086,18 +12092,8 @@ function DriverApp(){
   return {pickup,destination};
  };
 
- const bookingSnapshot=
-  livePaymentPreview?.ok
-   ?livePaymentPreview
-   :(
-     lastLivePreview &&
-     livePaymentBookingId &&
-     String(lastLivePreview.bookingId||'')===String(livePaymentBookingId)
-      ?lastLivePreview
-      :livePaymentPreview?.bookingId
-      ?livePaymentPreview
-      :lastLivePreview
-    );
+ // Show only the result of the most recent live booking verification.
+ const bookingSnapshot=livePaymentPreview?.bookingId?livePaymentPreview:null;
  const bookingRoute=routeLine(bookingSnapshot);
  const noActiveBooking=Boolean(
   livePaymentPreview &&
@@ -12153,13 +12149,7 @@ function DriverApp(){
      </span>
 
      <strong>
-      {money(
-       Math.abs(
-        isMonday
-         ?mondayPreviousBalance
-         :liveCurrentBalance
-       )
-      )}
+      {(isMonday?mondayPreviousBalance:liveCurrentBalance)>0?'+':(isMonday?mondayPreviousBalance:liveCurrentBalance)<0?'−':''}{money(Math.abs(isMonday?mondayPreviousBalance:liveCurrentBalance))}
      </strong>
 
      <p>
@@ -12262,9 +12252,11 @@ function DriverApp(){
      onClick={()=>changeTab('pay')}
     >
      <span>
-      <b>Available for early payout</b>
+       <b>{earlyPayoutsEnabled?'Available for early payout':'Early payouts — Coming soon'}</b>
       <small>
-       {me.earlyPayoutAllowed
+        {!earlyPayoutsEnabled
+         ?'Requests temporarily disabled — your Autocab balance remains visible'
+         :me.earlyPayoutAllowed
         ?'Request funds before the weekly settlement'
         :me.earlyPayoutBlockedReason||
          me.earlyPayoutWindowMessage||
@@ -12273,7 +12265,7 @@ function DriverApp(){
       </small>
      </span>
 
-     <strong>{money(me.availableForEarlyPayout||0)}</strong>
+      <strong>{earlyPayoutsEnabled?money(me.availableForEarlyPayout||0):'Soon'}</strong>
      <ChevronRight/>
     </button>
    }
@@ -12292,7 +12284,20 @@ function DriverApp(){
 
   {activePaymentPlan&&PaymentPlanCard({compact:true})}
 
-  {(()=>{
+  {!customerPaymentsEnabled ? (
+   <button
+    className="mockJobStatus job-clear clear"
+    type="button"
+    onClick={()=>changeTab('pay')}
+   >
+    <span className="mockJobStatusDot"><i/></span>
+    <span className="mockJobStatusCopy">
+     <b>Customer payments — Coming soon</b>
+     <small>Temporarily unavailable during the driver trial</small>
+    </span>
+    <ChevronRight/>
+   </button>
+  ) : (()=>{
    const jobState=
     livePaymentPaid
      ?'paid'
@@ -12309,8 +12314,7 @@ function DriverApp(){
    const active=jobState!=='clear';
 
    const payment=
-    matchingLivePayment||
-    lastLivePaid?.payment||
+    (active?matchingLivePayment:null)||
     null;
 
    const fare=Number(
@@ -12338,10 +12342,7 @@ function DriverApp(){
      ?'Card · Payment already arranged'
      :'No active customer payment';
 
-   const bookingId=
-    bookingSnapshot?.bookingId||
-    livePaymentPreviousBookingId||
-    null;
+   const bookingId=active?(bookingSnapshot?.bookingId||null):null;
 
    return <button
     className={`mockJobStatus job-${jobState} ${active?'live':'clear'}`}
@@ -12512,12 +12513,13 @@ function DriverApp(){
    <div className="financePaymentsIntro compact">
     <span>YOUR MONEY</span>
     <h2>Payments</h2>
-    <p>Manage amounts due, payment plans and early payouts.</p>
+    <p>Manage amounts due and payment plans. Trial features are marked Coming soon.</p>
    </div>
 
-   <button
-    type="button"
-    className={`financeBookingStatus state-${state}`}
+    {!customerPaymentsEnabled&&<section className="driverCard"><b>Customer payments — Coming soon</b><p>Payment links and customer checkout are disabled during the driver trial.</p></section>}
+    {customerPaymentsEnabled&&<button
+     type="button"
+     className={`financeBookingStatus state-${state}`}
     onClick={()=>state==='empty'?testLivePaymentPreview():null}
    >
     <span className={`financeBookingDot ${state}`}/>
@@ -12533,8 +12535,16 @@ function DriverApp(){
     }
 
     {state==='empty'&&<RefreshCw/>}
-   </button>
+   </button>}
 
+   {!payInEnabled&&(standardPaymentRequests.length>0||activePaymentPlan)&&
+    <section className="driverCard">
+     <span className="eyebrow">PAY IN</span>
+     <h2>Coming soon</h2>
+     <p>FaivoPay card payments are not yet available. Please pay any outstanding balance using your existing LynkPay link.</p>
+     <small>Your balance, payment requests and payment plan remain visible.</small>
+    </section>
+   }
    {(standardPaymentRequests.length>0||activePaymentPlan)&&
     <section className="financePaymentsPriority">
      {standardPaymentRequests.length>0&&PaymentDueCard({hero:true})}
@@ -12548,7 +12558,7 @@ function DriverApp(){
     </div>
    }
 
-   {(state==='account'||state==='card')&&
+   {customerPaymentsEnabled&&(state==='account'||state==='card')&&
     <section className="financeCustomerPaymentSection">
      <div className="financeSectionHeading">
       <div>
@@ -12588,7 +12598,7 @@ function DriverApp(){
     </section>
    }
 
-   {(state==='cash'||state==='ready'||state==='paid')&&
+   {customerPaymentsEnabled&&(state==='cash'||state==='ready'||state==='paid')&&
     <section className="financeCustomerPaymentSection">
      <div className="financeSectionHeading">
       <div>
@@ -13234,7 +13244,7 @@ function DriverApp(){
 
   <nav className="driverBottomNav mockBottomNav" aria-label="Driver navigation">
    {navItems.map(([key,Icon,label])=><button key={key} className={driverTab===key?'active':''} onClick={()=>changeTab(key)}>
-    <span className="mockNavIcon"><Icon/>{key==='pay'&&livePaymentAvailable&&<i className="livePayPulse" aria-label="Customer payment available"/>}{key==='pay'&&!livePaymentAvailable&&paymentRequests.length>0&&<i className="mockNavCount">{paymentRequests.length}</i>}{key==='activity'&&accountWorkNewCount>0&&<i className="mockNavCount" aria-label={`${accountWorkNewCount} new account work ${accountWorkNewCount===1?'docket':'dockets'}`}>{accountWorkNewCount>99?'99+':accountWorkNewCount}</i>}</span>
+    <span className="mockNavIcon"><Icon/>{key==='pay'&&customerPaymentsEnabled&&livePaymentAvailable&&<i className="livePayPulse" aria-label="Customer payment available"/>}{key==='pay'&&!livePaymentAvailable&&paymentRequests.length>0&&<i className="mockNavCount">{paymentRequests.length}</i>}{key==='activity'&&accountWorkNewCount>0&&<i className="mockNavCount" aria-label={`${accountWorkNewCount} new account work ${accountWorkNewCount===1?'docket':'dockets'}`}>{accountWorkNewCount>99?'99+':accountWorkNewCount}</i>}</span>
     <span>{label}</span>
    </button>)}
   </nav>

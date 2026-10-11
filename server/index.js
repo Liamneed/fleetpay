@@ -939,6 +939,9 @@ WHERE run_date IS NOT NULL
 `);
 
 const defaultSettings = {
+ customerPaymentsEnabled:false,
+ earlyPayoutsEnabled:false,
+ payInEnabled:false,
  negativeThreshold: 20,
  minimumPayoutThreshold: 0,
  chargeWeeklyFeeWhenInactive: true,
@@ -6801,6 +6804,7 @@ app.get('/api/public/customer-payments/:id',(req,res)=>{
 });
 app.post('/api/public/customer-payments/:id/checkout',async(req,res)=>{
  try{
+  if(getSettings().customerPaymentsEnabled!==true)return res.status(403).json({error:'Customer payments are coming soon.'});
   if(!getStripeClient())return res.status(400).json({error:'Card payments are not currently available.'});
   const row=db.prepare('SELECT * FROM customer_payments WHERE id=?').get(req.params.id);
   if(!row)return res.status(404).json({error:'Payment link not found'});
@@ -6937,6 +6941,7 @@ app.get('/api/admin/customer-payments',adminAuth,(req,res)=>{
 });
 app.post('/api/admin/customer-payments',adminAuth,requireStaffRole('administrator','finance','office'),(req,res)=>{
  try{
+  if(getSettings().customerPaymentsEnabled!==true)return res.status(403).json({error:'Customer payments are coming soon.'});
   const fareAmount=Number(req.body.fareAmount||0);
   if(!Number.isFinite(fareAmount)||fareAmount<=0)return res.status(400).json({error:'Enter a valid journey fare.'});
   const bookingId=String(req.body.bookingId||'').trim();
@@ -8035,7 +8040,7 @@ app.patch('/api/admin/drivers/:driverId/payout-exclusion',adminAuth,requireStaff
 });
 app.post('/api/admin/sync',adminAuth,requireStaffRole('administrator','finance','office'),async(req,res)=>{try{const out=await syncAutocab();audit(req,'admin',req.auth.email,'autocab_sync','driver_cache','all',{count:out.drivers.length});res.json({ok:true,count:out.drivers.length,syncedAt:out.syncedAt})}catch(e){res.status(500).json({error:e.message})}});
 app.get('/api/settings',adminAuth,(req,res)=>res.json(getSettings()));
-app.put('/api/settings',adminAuth,requireStaffRole('administrator'),(req,res)=>{const cur=getSettings(),s=req.body||{};let cutoff=String(s.earlyPayoutCutoffTime??cur.earlyPayoutCutoffTime??`${String(cur.earlyPayoutCutoffHour??11).padStart(2,'0')}:00`);if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(cutoff))cutoff='11:00';const next={negativeThreshold:Math.max(0,Number(s.negativeThreshold??cur.negativeThreshold)),minimumPayoutThreshold:Math.max(0,Number(s.minimumPayoutThreshold??cur.minimumPayoutThreshold??0)),chargeWeeklyFeeWhenInactive:Boolean(s.chargeWeeklyFeeWhenInactive??cur.chargeWeeklyFeeWhenInactive??true),weeklyAppFee:Math.max(0,Number(s.weeklyAppFee??cur.weeklyAppFee)),earlyPayoutFee:Math.max(0,Number(s.earlyPayoutFee??cur.earlyPayoutFee)),customerPaymentFeeType:['fixed','percentage'].includes(String(s.customerPaymentFeeType||cur.customerPaymentFeeType))?String(s.customerPaymentFeeType||cur.customerPaymentFeeType):'fixed',customerPaymentFeeValue:Math.max(0,Number(s.customerPaymentFeeValue??cur.customerPaymentFeeValue)),earlyPayoutCutoffTime:cutoff,earlyPayoutCutoffHour:Number(cutoff.split(':')[0]),syncMinutes:Math.min(60,Math.max(2,Number(s.syncMinutes??cur.syncMinutes))),requireAdminApproval:Boolean(s.requireAdminApproval),companyName:String(s.companyName||cur.companyName),productName:'FaivoPay'};setSettings(next);audit(req,'admin',req.auth.email,'settings_updated','settings','global',next);res.json(next)});
+app.put('/api/settings',adminAuth,requireStaffRole('administrator'),(req,res)=>{const cur=getSettings(),s=req.body||{};let cutoff=String(s.earlyPayoutCutoffTime??cur.earlyPayoutCutoffTime??`${String(cur.earlyPayoutCutoffHour??11).padStart(2,'0')}:00`);if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(cutoff))cutoff='11:00';const next={customerPaymentsEnabled:s.customerPaymentsEnabled===undefined?cur.customerPaymentsEnabled===true:s.customerPaymentsEnabled===true,earlyPayoutsEnabled:s.earlyPayoutsEnabled===undefined?cur.earlyPayoutsEnabled===true:s.earlyPayoutsEnabled===true,payInEnabled:s.payInEnabled===undefined?cur.payInEnabled===true:s.payInEnabled===true,negativeThreshold:Math.max(0,Number(s.negativeThreshold??cur.negativeThreshold)),minimumPayoutThreshold:Math.max(0,Number(s.minimumPayoutThreshold??cur.minimumPayoutThreshold??0)),chargeWeeklyFeeWhenInactive:Boolean(s.chargeWeeklyFeeWhenInactive??cur.chargeWeeklyFeeWhenInactive??true),weeklyAppFee:Math.max(0,Number(s.weeklyAppFee??cur.weeklyAppFee)),earlyPayoutFee:Math.max(0,Number(s.earlyPayoutFee??cur.earlyPayoutFee)),customerPaymentFeeType:['fixed','percentage'].includes(String(s.customerPaymentFeeType||cur.customerPaymentFeeType))?String(s.customerPaymentFeeType||cur.customerPaymentFeeType):'fixed',customerPaymentFeeValue:Math.max(0,Number(s.customerPaymentFeeValue??cur.customerPaymentFeeValue)),earlyPayoutCutoffTime:cutoff,earlyPayoutCutoffHour:Number(cutoff.split(':')[0]),syncMinutes:Math.min(60,Math.max(2,Number(s.syncMinutes??cur.syncMinutes))),requireAdminApproval:Boolean(s.requireAdminApproval??cur.requireAdminApproval),companyName:String(s.companyName||cur.companyName),productName:'FaivoPay'};setSettings(next);audit(req,'admin',req.auth.email,'settings_updated','settings','global',next);res.json(next)});
 
 app.get('/api/admin/users',adminAuth,(req,res)=>{res.json(db.prepare('SELECT id,driver_id as driverId,callsign,email,approved,created_at as createdAt,last_login_at as lastLoginAt FROM driver_users ORDER BY CAST(callsign AS INTEGER), callsign').all().map(x=>({...x,approved:Boolean(x.approved)})))});
 app.patch('/api/admin/users/:id',adminAuth,requireStaffRole('administrator','office'),(req,res)=>{const u=db.prepare('SELECT * FROM driver_users WHERE id=?').get(req.params.id);if(!u)return res.status(404).json({error:'User not found'});const approved='approved'in req.body?(req.body.approved?1:0):u.approved;db.prepare('UPDATE driver_users SET approved=?,updated_at=? WHERE id=?').run(approved,new Date().toISOString(),u.id);audit(req,'admin',req.auth.email,approved?'driver_user_approved':'driver_user_suspended','driver_user',u.id,{driverId:u.driver_id,callsign:u.callsign});res.json({ok:true})});
@@ -12819,7 +12824,7 @@ app.get(
 
 app.put('/api/admin/operations-settings',adminAuth,requireStaffRole('administrator'),(req,res)=>{
  const cur=getSettings(),x=req.body||{},num=(k,min=0,max=Infinity)=>Math.min(max,Math.max(min,Number(x[k]??cur[k]??0))),str=k=>String(x[k]??cur[k]??'');let cutoff=str('earlyPayoutCutoffTime');if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(cutoff))cutoff='11:00';let dueTime=str('outstandingDueTime');if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(dueTime))dueTime='17:00';
- const next={...cur,negativeThreshold:num('negativeThreshold'),minimumPayoutThreshold:num('minimumPayoutThreshold'),chargeWeeklyFeeWhenInactive:Boolean(x.chargeWeeklyFeeWhenInactive??cur.chargeWeeklyFeeWhenInactive??true),weeklyAppFee:num('weeklyAppFee'),earlyPayoutFee:num('earlyPayoutFee'),customerPaymentFeeType:['fixed','percentage'].includes(str('customerPaymentFeeType'))?str('customerPaymentFeeType'):'fixed',customerPaymentFeeValue:num('customerPaymentFeeValue'),earlyPayoutCutoffTime:cutoff,earlyPayoutCutoffHour:Number(cutoff.split(':')[0]),syncMinutes:num('syncMinutes',2,60),weeklyPayoutReasonTemplate:str('weeklyPayoutReasonTemplate'),earlyPayoutReasonTemplate:str('earlyPayoutReasonTemplate'),manualPayInReasonDefault:str('manualPayInReasonDefault'),manualPayoutReasonDefault:str('manualPayoutReasonDefault'),outstandingDueTime:dueTime,outstandingExternalCommunicationsEnabled:Boolean(x.outstandingExternalCommunicationsEnabled??cur.outstandingExternalCommunicationsEnabled??false),outstandingSmsTemplate:str('outstandingSmsTemplate'),outstandingEmailSubject:str('outstandingEmailSubject'),outstandingEmailBody:str('outstandingEmailBody'),customerPaymentSmsTemplate:str('customerPaymentSmsTemplate'),customerPaymentEmailSubject:str('customerPaymentEmailSubject'),smsEndpoint:str('smsEndpoint'),smsMethod:['POST','PUT','PATCH'].includes(str('smsMethod').toUpperCase())?str('smsMethod').toUpperCase():'POST',smsAuthHeader:str('smsAuthHeader'),smsBodyTemplate:str('smsBodyTemplate'),twilioEnabled:Boolean(x.twilioEnabled??cur.twilioEnabled),orionEnabled:Boolean(x.orionEnabled??cur.orionEnabled),paymentSmsProvider:['twilio','orion'].includes(str('paymentSmsProvider').toLowerCase())?str('paymentSmsProvider').toLowerCase():'twilio',generalSmsProvider:['twilio','orion'].includes(str('generalSmsProvider').toLowerCase())?str('generalSmsProvider').toLowerCase():'orion',smsFallbackEnabled:Boolean(x.smsFallbackEnabled??cur.smsFallbackEnabled),twilioLowBalanceAlertsEnabled:Boolean(x.twilioLowBalanceAlertsEnabled??cur.twilioLowBalanceAlertsEnabled),twilioLowBalanceThreshold:num('twilioLowBalanceThreshold',0),twilioLowBalanceEmail:safeEmail(str('twilioLowBalanceEmail')),smtpHost:str('smtpHost'),smtpPort:num('smtpPort',1,65535),smtpSecure:Boolean(x.smtpSecure??cur.smtpSecure),smtpUser:str('smtpUser'),smtpFromName:str('smtpFromName'),smtpFromEmail:str('smtpFromEmail'),officeNotificationEmail:safeEmail(str('officeNotificationEmail')),customerFeeFleetPayPercent:num('customerFeeFleetPayPercent',0,100),earlyPayoutFeeFleetPayPercent:num('earlyPayoutFeeFleetPayPercent',0,100),weeklyFeeFleetPayPercent:num('weeklyFeeFleetPayPercent',0,100),requireAdminApproval:Boolean(x.requireAdminApproval??cur.requireAdminApproval),companyName:str('companyName')||cur.companyName,productName:'FaivoPay'};
+ const next={...cur,customerPaymentsEnabled:x.customerPaymentsEnabled===undefined?cur.customerPaymentsEnabled===true:x.customerPaymentsEnabled===true,earlyPayoutsEnabled:x.earlyPayoutsEnabled===undefined?cur.earlyPayoutsEnabled===true:x.earlyPayoutsEnabled===true,payInEnabled:x.payInEnabled===undefined?cur.payInEnabled===true:x.payInEnabled===true,negativeThreshold:num('negativeThreshold'),minimumPayoutThreshold:num('minimumPayoutThreshold'),chargeWeeklyFeeWhenInactive:Boolean(x.chargeWeeklyFeeWhenInactive??cur.chargeWeeklyFeeWhenInactive??true),weeklyAppFee:num('weeklyAppFee'),earlyPayoutFee:num('earlyPayoutFee'),customerPaymentFeeType:['fixed','percentage'].includes(str('customerPaymentFeeType'))?str('customerPaymentFeeType'):'fixed',customerPaymentFeeValue:num('customerPaymentFeeValue'),earlyPayoutCutoffTime:cutoff,earlyPayoutCutoffHour:Number(cutoff.split(':')[0]),syncMinutes:num('syncMinutes',2,60),weeklyPayoutReasonTemplate:str('weeklyPayoutReasonTemplate'),earlyPayoutReasonTemplate:str('earlyPayoutReasonTemplate'),manualPayInReasonDefault:str('manualPayInReasonDefault'),manualPayoutReasonDefault:str('manualPayoutReasonDefault'),outstandingDueTime:dueTime,outstandingExternalCommunicationsEnabled:Boolean(x.outstandingExternalCommunicationsEnabled??cur.outstandingExternalCommunicationsEnabled??false),outstandingSmsTemplate:str('outstandingSmsTemplate'),outstandingEmailSubject:str('outstandingEmailSubject'),outstandingEmailBody:str('outstandingEmailBody'),customerPaymentSmsTemplate:str('customerPaymentSmsTemplate'),customerPaymentEmailSubject:str('customerPaymentEmailSubject'),smsEndpoint:str('smsEndpoint'),smsMethod:['POST','PUT','PATCH'].includes(str('smsMethod').toUpperCase())?str('smsMethod').toUpperCase():'POST',smsAuthHeader:str('smsAuthHeader'),smsBodyTemplate:str('smsBodyTemplate'),twilioEnabled:Boolean(x.twilioEnabled??cur.twilioEnabled),orionEnabled:Boolean(x.orionEnabled??cur.orionEnabled),paymentSmsProvider:['twilio','orion'].includes(str('paymentSmsProvider').toLowerCase())?str('paymentSmsProvider').toLowerCase():'twilio',generalSmsProvider:['twilio','orion'].includes(str('generalSmsProvider').toLowerCase())?str('generalSmsProvider').toLowerCase():'orion',smsFallbackEnabled:Boolean(x.smsFallbackEnabled??cur.smsFallbackEnabled),twilioLowBalanceAlertsEnabled:Boolean(x.twilioLowBalanceAlertsEnabled??cur.twilioLowBalanceAlertsEnabled),twilioLowBalanceThreshold:num('twilioLowBalanceThreshold',0),twilioLowBalanceEmail:safeEmail(str('twilioLowBalanceEmail')),smtpHost:str('smtpHost'),smtpPort:num('smtpPort',1,65535),smtpSecure:Boolean(x.smtpSecure??cur.smtpSecure),smtpUser:str('smtpUser'),smtpFromName:str('smtpFromName'),smtpFromEmail:str('smtpFromEmail'),officeNotificationEmail:safeEmail(str('officeNotificationEmail')),customerFeeFleetPayPercent:num('customerFeeFleetPayPercent',0,100),earlyPayoutFeeFleetPayPercent:num('earlyPayoutFeeFleetPayPercent',0,100),weeklyFeeFleetPayPercent:num('weeklyFeeFleetPayPercent',0,100),requireAdminApproval:Boolean(x.requireAdminApproval??cur.requireAdminApproval),companyName:str('companyName')||cur.companyName,productName:'FaivoPay'};
  setSettings(next);if(String(x.smsAuthValue||'').trim())setSecureSetting('smsAuthValue',String(x.smsAuthValue));if(String(x.smtpPassword||'').trim())setSecureSetting('smtpPassword',String(x.smtpPassword));audit(req,'staff',req.auth.email,'operations_settings_updated','settings','operations',{...next,smsAuthValue:undefined,smtpPassword:undefined});res.json(officeSettingsPayload())
 });
 app.post('/api/admin/communications/test-sms',adminAuth,requireStaffRole('administrator'),async(req,res)=>{try{const to=String(req.body.to||'').trim();if(!to)return res.status(400).json({error:'Enter a mobile number'});const message=String(req.body.message||'FaivoPay test SMS – communications are configured correctly.');const category=String(req.body.category||'general')==='payment'?'payment':'general';const out=await sendSmsByRoute(to,message,{category,templateKey:'test_sms',entityType:'settings',entityId:'communications'});audit(req,'staff',req.auth.email,'test_sms_sent','settings','communications',{to,category,provider:out.provider||''});res.json({ok:true,out,category,provider:out.provider||''})}catch(e){res.status(500).json({error:e.message})}});
@@ -21629,7 +21634,7 @@ app.post('/api/driver/payment-plans/:id/extra-payment',driverAuth,async(req,res)
  }catch(e){res.status(500).json({error:e.message})}
 });
 
-app.post('/api/driver/payment-requests/:id/checkout',driverAuth,async(req,res)=>{try{if(!getStripeClient())return res.status(400).json({error:'Card payments are not currently available. Please contact the office.'});const item=db.prepare('SELECT * FROM payment_requests WHERE id=? AND driver_id=?').get(req.params.id,req.auth.driverId);if(!item)return res.status(404).json({error:'Payment request not found'});if(item.status!=='open'){
+app.post('/api/driver/payment-requests/:id/checkout',driverAuth,async(req,res)=>{try{if(getSettings().payInEnabled!==true)return res.status(403).json({error:'FaivoPay PAY IN is coming soon. Please use your existing LynkPay link.'});if(!getStripeClient())return res.status(400).json({error:'Card payments are not currently available. Please contact the office.'});const item=db.prepare('SELECT * FROM payment_requests WHERE id=? AND driver_id=?').get(req.params.id,req.auth.driverId);if(!item)return res.status(404).json({error:'Payment request not found'});if(item.status!=='open'){
  return res.status(400).json({
   error:item.status==='paid'
    ?'This payment has already been received'
@@ -21766,6 +21771,7 @@ app.get('/api/driver/live-state',driverAuth,(req,res)=>{
 
 app.get('/api/driver/customer-payment/preview',driverAuth,async(req,res)=>{
  try{
+  if(getSettings().customerPaymentsEnabled!==true)return res.status(403).json({error:'Customer payments are coming soon.'});
   if(!getStripeClient()){
    return res.status(400).json({
     error:'Customer card payments are not currently available.'
@@ -21805,6 +21811,20 @@ app.get('/api/driver/customer-payment/preview',driverAuth,async(req,res)=>{
   if(!freshness.globalFeedFresh){
    return res.status(409).json({
     error:'Live Autocab vehicle updates are temporarily unavailable. Please try again.'
+   });
+  }
+
+  /*
+   * A historical Clear state can retain an obsolete BookingId after logoff.
+   * This guard applies ONLY to a stale Clear record; unchanged non-Clear
+   * journeys may legitimately last longer than 15 minutes.
+   */
+  if(
+   String(live.vehicle_status||'').trim().toLowerCase()==='clear' &&
+   !freshness.driverStateFresh
+  ){
+   return res.status(409).json({
+    error:'No active booking could be confirmed from the last Clear vehicle state.'
    });
   }
 
@@ -21982,6 +22002,7 @@ app.get('/api/driver/customer-payment/preview',driverAuth,async(req,res)=>{
 
 app.post('/api/driver/customer-payment/live',driverAuth,async(req,res)=>{
  try{
+  if(getSettings().customerPaymentsEnabled!==true)return res.status(403).json({error:'Customer payments are coming soon.'});
   if(!getStripeClient()){
    return res.status(400).json({
     error:'Customer card payments are not currently available.'
@@ -22021,6 +22042,20 @@ app.post('/api/driver/customer-payment/live',driverAuth,async(req,res)=>{
   if(!freshness.globalFeedFresh){
    return res.status(409).json({
     error:'Live Autocab vehicle updates are temporarily unavailable. Please try again.'
+   });
+  }
+
+  /*
+   * A historical Clear state can retain an obsolete BookingId after logoff.
+   * This guard applies ONLY to a stale Clear record; unchanged non-Clear
+   * journeys may legitimately last longer than 15 minutes.
+   */
+  if(
+   String(live.vehicle_status||'').trim().toLowerCase()==='clear' &&
+   !freshness.driverStateFresh
+  ){
+   return res.status(409).json({
+    error:'No active booking could be confirmed from the last Clear vehicle state.'
    });
   }
 
@@ -22673,6 +22708,7 @@ app.post('/api/driver/customer-payment/live',driverAuth,async(req,res)=>{
 
 app.post('/api/driver/customer-payment',driverAuth,async(req,res)=>{
   try{
+   if(getSettings().customerPaymentsEnabled!==true)return res.status(403).json({error:'Customer payments are coming soon.'});
     if(!getStripeClient()){
       return res.status(400).json({
         error:'Customer card payments are not currently available.'
@@ -23220,6 +23256,9 @@ app.get('/api/driver/me',driverAuth,(req,res)=>{
       bankAccount:maskedBankAccount(d.driverId),
 
       settings:{
+        customerPaymentsEnabled:settings.customerPaymentsEnabled===true,
+        earlyPayoutsEnabled:settings.earlyPayoutsEnabled===true,
+        payInEnabled:settings.payInEnabled===true,
         weeklyAppFee:settings.weeklyAppFee,
         earlyPayoutFee:settings.earlyPayoutFee,
         earlyPayoutCutoffTime:cutoffParts(settings).label,
@@ -23241,15 +23280,20 @@ app.get('/api/driver/me',driverAuth,(req,res)=>{
       stripeConfigured:Boolean(getStripeClient()),
       reservedForEarlyPayout:reserved,
       earlyPayoutAllowed:
+        settings.earlyPayoutsEnabled===true &&
         !livePaymentPlan &&
         earlyTiming.requestDayAllowed,
       earlyPayoutBlockedReason:
-        livePaymentPlan
+        settings.earlyPayoutsEnabled!==true
+          ?'Early payouts are coming soon.'
+          :livePaymentPlan
           ?'Early payouts are unavailable while you have an active payment plan.'
           :null,
       earlyPayoutTiming:earlyTiming,
       earlyPayoutWindowMessage:
-        livePaymentPlan
+        settings.earlyPayoutsEnabled!==true
+          ?'Early payouts are coming soon.'
+          :livePaymentPlan
           ?'Early payouts are unavailable while you have an active payment plan.'
           :earlyPayoutWindowMessage(settings),
       availableForEarlyPayout:
@@ -23263,7 +23307,7 @@ app.get('/api/driver/me',driverAuth,(req,res)=>{
       error:e.message
     });
   }
-});app.post('/api/driver/early-payout',driverAuth,(req,res)=>{try{const settings=getSettings(),timing=earlyPayoutTiming(settings);if(!timing.requestDayAllowed)return res.status(400).json({error:earlyPayoutWindowMessage(settings)});const d=cachedDriver(req.auth.driverId);if(!d)return res.status(404).json({error:'Driver not found in FaivoPay cache'});const livePlan=db.prepare("SELECT id,status FROM driver_payment_plans WHERE driver_id=? AND status IN ('active','paused','defaulted') ORDER BY created_at DESC LIMIT 1").get(d.driverId);if(livePlan)return res.status(409).json({error:'Early payouts are unavailable while you have an active payment plan.'});const early=db.prepare("SELECT gross_amount,status FROM payouts WHERE driver_id=? AND type='early'").all(d.driverId);const reserved=early.filter(x=>['requested','approved','batched'].includes(x.status)).reduce((s,x)=>s+Number(x.gross_amount||0),0),available=Math.max(0,Number(d.currentBalance||0)-reserved),gross=Number(req.body.amount||0),fee=Number(settings.earlyPayoutFee||0);if(gross<=fee)return res.status(400).json({error:`Requested amount must be greater than the £${fee.toFixed(2)} fee`});if(gross>available+0.00001)return res.status(400).json({error:'Requested amount exceeds your available current balance'});const itemId=id('early'),now=new Date().toISOString();db.prepare('INSERT INTO payouts(id,driver_id,callsign,driver_name,gross_amount,fee,net_amount,amount,type,status,created_at,eligible_run_date,submitted_after_cutoff) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)').run(itemId,d.driverId,d.callsign,d.fullName,gross,fee,gross-fee,gross-fee,'early','requested',now,timing.runDate,timing.afterCutoff?1:0);const timingText=timing.beforeCutoff?'It is eligible for today\'s payment run if approved.':`Today's ${timing.cutoff} cutoff has passed, so it is queued for the ${timing.runLabel} payment run if approved.`;notify(d.driverId,'Payout request received',`Your request for £${(gross-fee).toFixed(2)} after the £${fee.toFixed(2)} fee is awaiting approval. ${timingText}`,'info',itemId);audit(req,'driver',d.driverId,'early_payout_requested','payout',itemId,{gross,fee,net:gross-fee,eligibleRunDate:timing.runDate,submittedAfterCutoff:timing.afterCutoff});res.json({id:itemId,grossAmount:gross,fee,netAmount:gross-fee,status:'requested',createdAt:now,eligibleRunDate:timing.runDate,submittedAfterCutoff:timing.afterCutoff,message:timingText})}catch(e){res.status(500).json({error:e.message})}});
+});app.post('/api/driver/early-payout',driverAuth,(req,res)=>{try{const settings=getSettings();if(settings.earlyPayoutsEnabled!==true)return res.status(403).json({error:'Early payouts are coming soon.'});const timing=earlyPayoutTiming(settings);if(!timing.requestDayAllowed)return res.status(400).json({error:earlyPayoutWindowMessage(settings)});const d=cachedDriver(req.auth.driverId);if(!d)return res.status(404).json({error:'Driver not found in FaivoPay cache'});const livePlan=db.prepare("SELECT id,status FROM driver_payment_plans WHERE driver_id=? AND status IN ('active','paused','defaulted') ORDER BY created_at DESC LIMIT 1").get(d.driverId);if(livePlan)return res.status(409).json({error:'Early payouts are unavailable while you have an active payment plan.'});const early=db.prepare("SELECT gross_amount,status FROM payouts WHERE driver_id=? AND type='early'").all(d.driverId);const reserved=early.filter(x=>['requested','approved','batched'].includes(x.status)).reduce((s,x)=>s+Number(x.gross_amount||0),0),available=Math.max(0,Number(d.currentBalance||0)-reserved),gross=Number(req.body.amount||0),fee=Number(settings.earlyPayoutFee||0);if(gross<=fee)return res.status(400).json({error:`Requested amount must be greater than the £${fee.toFixed(2)} fee`});if(gross>available+0.00001)return res.status(400).json({error:'Requested amount exceeds your available current balance'});const itemId=id('early'),now=new Date().toISOString();db.prepare('INSERT INTO payouts(id,driver_id,callsign,driver_name,gross_amount,fee,net_amount,amount,type,status,created_at,eligible_run_date,submitted_after_cutoff) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)').run(itemId,d.driverId,d.callsign,d.fullName,gross,fee,gross-fee,gross-fee,'early','requested',now,timing.runDate,timing.afterCutoff?1:0);const timingText=timing.beforeCutoff?'It is eligible for today\'s payment run if approved.':`Today's ${timing.cutoff} cutoff has passed, so it is queued for the ${timing.runLabel} payment run if approved.`;notify(d.driverId,'Payout request received',`Your request for £${(gross-fee).toFixed(2)} after the £${fee.toFixed(2)} fee is awaiting approval. ${timingText}`,'info',itemId);audit(req,'driver',d.driverId,'early_payout_requested','payout',itemId,{gross,fee,net:gross-fee,eligibleRunDate:timing.runDate,submittedAfterCutoff:timing.afterCutoff});res.json({id:itemId,grossAmount:gross,fee,netAmount:gross-fee,status:'requested',createdAt:now,eligibleRunDate:timing.runDate,submittedAfterCutoff:timing.afterCutoff,message:timingText})}catch(e){res.status(500).json({error:e.message})}});
 app.post('/api/driver/notifications/read',driverAuth,(req,res)=>{db.prepare('UPDATE driver_notifications SET read_at=? WHERE driver_id=? AND read_at IS NULL').run(new Date().toISOString(),req.auth.driverId);res.json({ok:true})});
 
 app.get('/payment-success',(_req,res)=>{
