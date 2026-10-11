@@ -12134,38 +12134,20 @@ function DriverApp(){
    <div className="financeHeroTop">
     <div>
      <span className="financeEyebrow">
-      {isMonday
-        ? mondayPreviousBalance > 0
-          ? 'PAY OUT · PREVIOUS BALANCE'
-          : mondayPreviousBalance < 0
-          ? 'PAY IN · PREVIOUS BALANCE'
-          : 'PREVIOUS WEEK SETTLED'
-        : liveCurrentBalance > 0
-          ? 'PAY OUT · CURRENT BALANCE'
-          : liveCurrentBalance < 0
-          ? 'PAY IN · CURRENT BALANCE'
-          : 'ACCOUNT SETTLED'
-       }
-     </span>
+       {isMonday?'PREVIOUS WEEK BALANCE':'YOUR CURRENT BALANCE'}
+      </span>
 
      <strong>
-      {(isMonday?mondayPreviousBalance:liveCurrentBalance)>0?'+':(isMonday?mondayPreviousBalance:liveCurrentBalance)<0?'−':''}{money(Math.abs(isMonday?mondayPreviousBalance:liveCurrentBalance))}
-     </strong>
+       {money(Math.abs(isMonday?mondayPreviousBalance:liveCurrentBalance))}
+      </strong>
 
-     <p>
-      {isMonday
-       ?mondayPreviousBalance>0
-        ?'Your completed weekly balance before payout.'
-        :mondayPreviousBalance<0
-        ?'Your completed weekly balance owed to the office.'
-        :'Your previous week is fully settled.'
-       :liveCurrentBalance>0
-        ?'Your running balance currently due to you.'
-        :liveCurrentBalance<0
-        ?'Your running balance currently due to the office.'
-        :'Your live office balance is currently clear.'
-      }
-     </p>
+     <p className="driverBalanceMeaning">
+       {(isMonday?mondayPreviousBalance:liveCurrentBalance)>0
+        ?'Office owes you'
+        :(isMonday?mondayPreviousBalance:liveCurrentBalance)<0
+        ?'You owe the office'
+        :'Balance settled'}
+      </p>
     </div>
 
     <button
@@ -12245,7 +12227,7 @@ function DriverApp(){
     </div>
    }
 
-   {!isMonday&&
+   {!isMonday&&earlyPayoutsEnabled&&
     <button
      type="button"
      className="financeEarlyPayout"
@@ -12284,20 +12266,47 @@ function DriverApp(){
 
   {activePaymentPlan&&PaymentPlanCard({compact:true})}
 
-  {!customerPaymentsEnabled ? (
-   <button
-    className="mockJobStatus job-clear clear"
-    type="button"
-    onClick={()=>changeTab('pay')}
-   >
-    <span className="mockJobStatusDot"><i/></span>
-    <span className="mockJobStatusCopy">
-     <b>Customer payments — Coming soon</b>
-     <small>Temporarily unavailable during the driver trial</small>
-    </span>
-    <ChevronRight/>
-   </button>
-  ) : (()=>{
+   {(!customerPaymentsEnabled||!earlyPayoutsEnabled||!payInEnabled)&&
+    <section className="driverComingSoonFeatures" aria-label="Coming soon">
+     <div className="driverComingSoonHeader">
+      <b>Coming Soon</b>
+      <span>New FaivoPay features</span>
+     </div>
+     {!customerPaymentsEnabled&&
+      <div className="driverComingSoonItem">
+       <CreditCard/>
+       <div>
+        <b>Customer Payments</b>
+        <small>Accept customer card payments</small>
+       </div>
+       <span>Coming soon</span>
+      </div>
+     }
+     {!earlyPayoutsEnabled&&
+      <div className="driverComingSoonItem">
+       <Banknote/>
+       <div>
+        <b>Early Payouts</b>
+        <small>Access eligible earnings early</small>
+       </div>
+       <span>Coming soon</span>
+      </div>
+     }
+     {!payInEnabled&&
+      <div className="driverComingSoonItem">
+       <WalletCards/>
+       <div>
+        <b>Pay In</b>
+        <small>Pay your office balance in the app</small>
+       </div>
+       <span>Coming soon</span>
+      </div>
+     }
+    </section>
+   }
+
+
+  {!customerPaymentsEnabled ? (null) : (()=>{
    const jobState=
     livePaymentPaid
      ?'paid'
@@ -12516,7 +12525,7 @@ function DriverApp(){
     <p>Manage amounts due and payment plans. Trial features are marked Coming soon.</p>
    </div>
 
-    {!customerPaymentsEnabled&&<section className="driverCard"><b>Customer payments — Coming soon</b><p>Payment links and customer checkout are disabled during the driver trial.</p></section>}
+
     {customerPaymentsEnabled&&<button
      type="button"
      className={`financeBookingStatus state-${state}`}
@@ -12552,7 +12561,7 @@ function DriverApp(){
     </section>
    }
 
-   {standardPaymentRequests.length===0&&!activePaymentPlan&&
+   {standardPaymentRequests.length===0&&!activePaymentPlan&&earlyPayoutsEnabled&&
     <div className="mockSecondaryStack financeEarlySection">
      {EarlyPayoutCard()}
     </div>
