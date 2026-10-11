@@ -11302,6 +11302,12 @@ function DriverApp(){
    }
 
    setLivePaymentPreview(j);
+   if(j?.ok===false){
+    setCustomerPayment(current=>
+     current && String(current.bookingId||'')===nextBookingId
+      ?null:current
+    );
+   }
    if(j?.ok){
     setLastLivePreview(j);
     if(lastLivePaid && String(lastLivePaid?.payment?.bookingId||'')!==String(j.bookingId||'')){
@@ -11615,7 +11621,9 @@ function DriverApp(){
  );
 
  const livePaymentReady=Boolean(
-  matchingLivePayment?.status==='open'
+  matchingLivePayment?.status==='open' &&
+  livePaymentPreview?.ok===true &&
+  String(livePaymentPreview?.bookingId||'')===String(matchingLivePayment?.bookingId||'')
  );
 
  const livePaymentPaid=Boolean(
@@ -12130,7 +12138,18 @@ function DriverApp(){
    <div className="financeHeroTop">
     <div>
      <span className="financeEyebrow">
-      {isMonday?'MONDAY · PREVIOUS BALANCE':'CURRENT BALANCE'}
+      {isMonday
+        ? mondayPreviousBalance > 0
+          ? 'PAY OUT · PREVIOUS BALANCE'
+          : mondayPreviousBalance < 0
+          ? 'PAY IN · PREVIOUS BALANCE'
+          : 'PREVIOUS WEEK SETTLED'
+        : liveCurrentBalance > 0
+          ? 'PAY OUT · CURRENT BALANCE'
+          : liveCurrentBalance < 0
+          ? 'PAY IN · CURRENT BALANCE'
+          : 'ACCOUNT SETTLED'
+       }
      </span>
 
      <strong>

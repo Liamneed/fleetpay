@@ -1164,6 +1164,30 @@ app.post('/api/stripe/webhook', express.raw({type:'application/json'}), async (r
           'SELECT * FROM customer_payments WHERE id=?'
         ).get(customerPaymentId);
 
+        if(item && item.status==='cancelled'){
+          // Persist a review exception; never release or credit a cancelled link.
+          const changed=db.prepare(`
+           UPDATE customer_payments
+           SET driver_settlement_status='review',
+               driver_settlement_note=?,
+               stripe_payment_intent_id=COALESCE(stripe_payment_intent_id,?),
+               updated_at=?
+           WHERE id=? AND status='cancelled'
+             AND COALESCE(driver_settlement_status,'')<>'review'
+          `).run(
+           'Stripe payment completed on a cancelled link; manually reconcile payment/refund.',
+           String(session.payment_intent||'')||null,
+           new Date().toISOString(),item.id
+          );
+          if(changed.changes) audit(null,'system','stripe',
+           'cancelled_customer_payment_received','customer_payment',item.id,{
+            bookingId:item.booking_id||null,sessionId:session.id,
+            paymentIntentId:String(session.payment_intent||'')
+           });
+          console.error('[FaivoPay] PAYMENT REVIEW REQUIRED: Stripe completion on cancelled link',{
+           paymentId:item.id,bookingId:item.booking_id,sessionId:session.id
+          });
+        }
         if(item && item.status==='open'){
           const now=new Date().toISOString();
 
@@ -1882,8 +1906,13 @@ app.post(['/api/webhooks/autocab/booking-modified','/modified'],async(req,res)=>
   );
 
   let updated=0;
+  const modifiedPaymentValues=autocabCustomerPaymentValues(b);
+  const modifiedPaymentIsNonCash=modifiedPaymentValues.some(v=>v!=='cash');
+  if(bookingId && modifiedPaymentIsNonCash){
+   updated+=await invalidateUnpaidBookingPayments(bookingId,'payment_method_changed');
+  }
 
-  if(bookingId){
+  if(bookingId && customerPaymentCashEligible(b)){
    let payment=db.prepare(`
     SELECT *
     FROM customer_payments
@@ -2332,6 +2361,47 @@ function applyCustomerJobState(bookingId,b,jobStatus){
  `).get(row.id);
 }
 
+function autocabCustomerPaymentValues(booking){
+ return [
+  booking?.paymentType ?? booking?.PaymentType,
+  booking?.paymentMethod ?? booking?.PaymentMethod
+ ].filter(v=>v!==null && v!==undefined && String(v).trim()!=='')
+  .map(v=>String(v).trim().toLowerCase());
+}
+
+function customerPaymentCashEligible(booking){
+ const values=autocabCustomerPaymentValues(booking);
+ return values.length>0 && values.every(v=>v==='cash');
+}
+
+async function invalidateUnpaidBookingPayments(bookingId,reason){
+ if(!bookingId)return 0;
+ const rows=db.prepare(`
+  SELECT * FROM customer_payments
+  WHERE booking_id=?
+    AND source IN ('autocab_booking_created','driver_live_booking')
+    AND status='open'
+    AND COALESCE(payment_status,'open')<>'paid'
+ `).all(String(bookingId));
+ let count=0;
+ for(const row of rows){
+  const changed=db.prepare(`
+   UPDATE customer_payments
+   SET status='cancelled',payment_status='cancelled',
+       driver_settlement_status='held',updated_at=?
+   WHERE id=? AND status='open'
+     AND COALESCE(payment_status,'open')<>'paid'
+  `).run(new Date().toISOString(),row.id);
+  if(!changed.changes)continue;
+  count+=changed.changes;
+  await expireUnpaidCustomerCheckout(row);
+ }
+ if(count)console.warn('[FaivoPay] Customer payment invalidated',{
+  bookingId,reason,count
+ });
+ return count;
+}
+
 async function expireUnpaidCustomerCheckout(row){
  if(!row || !getStripeClient())return;
 
@@ -2346,14 +2416,24 @@ async function expireUnpaidCustomerCheckout(row){
  try{
   await getStripeClient().checkout.sessions.expire(row.provider_session_id);
  }catch(e){
-  console.warn(
-   '[FaivoPay] Stripe checkout expiry skipped/failed',
-   {
-    paymentId:row.id,
-    bookingId:row.booking_id,
-    error:e.message
-   }
+  // The Stripe-hosted URL might still be payable. Surface for manual review.
+  db.prepare(`
+   UPDATE customer_payments
+   SET driver_settlement_status='review',
+       driver_settlement_note=?,updated_at=?
+   WHERE id=? AND status='cancelled'
+  `).run(
+   `Stripe checkout expiry unconfirmed: ${String(e.message||'unknown error').slice(0,300)}`,
+   new Date().toISOString(),row.id
   );
+  audit(null,'system','stripe','customer_checkout_expiry_failed',
+   'customer_payment',row.id,{
+    bookingId:row.booking_id||null,sessionId:row.provider_session_id,
+    error:String(e.message||'unknown error').slice(0,300)
+   });
+  console.error('[FaivoPay] Stripe checkout expiry FAILED; manual review required',{
+   paymentId:row.id,bookingId:row.booking_id,error:e.message
+  });
  }
 }
 
@@ -2413,26 +2493,11 @@ app.post(['/api/webhooks/autocab/booking-cancelled','/cancelled'],async(req,res)
  try{
   const x=storeAutocabJobEvent(req.body||{},'BookingCancelled');
 
-  const existing=x.bookingId
-   ? db.prepare(`
-      SELECT *
-      FROM customer_payments
-      WHERE booking_id=?
-        AND source='autocab_booking_created'
-      ORDER BY created_at DESC
-      LIMIT 1
-     `).get(x.bookingId)
-   : null;
-
-  const payment=applyCustomerJobState(
-   x.bookingId,
-   x.b,
-   'cancelled'
+  // Preserve paid history, block all unpaid Autocab-linked sources.
+  const invalidated=await invalidateUnpaidBookingPayments(
+   x.bookingId,'booking_cancelled'
   );
-
-  if(existing){
-   await expireUnpaidCustomerCheckout(existing);
-  }
+  applyCustomerJobState(x.bookingId,x.b,'cancelled');
 
   console.log('[FaivoPay] Autocab BookingCancelled received',{
    bookingId:x.bookingId||null
@@ -4135,6 +4200,12 @@ async function createStripePaymentRequest(item){
 
 async function createStripeCustomerPayment(item){
  if(!getStripeClient()) return null;
+ const current=db.prepare('SELECT * FROM customer_payments WHERE id=?').get(item.id);
+ if(!current || current.status!=='open' ||
+    (current.payment_status && current.payment_status!=='open')){
+  throw new Error('This customer payment is no longer available.');
+ }
+ item=current;
 
  if(item.provider_checkout_url && item.provider_session_id){
    return {
@@ -4199,21 +4270,20 @@ async function createStripeCustomerPayment(item){
    line_items:lineItems
  });
 
- db.prepare(`
+ const stored=db.prepare(`
    UPDATE customer_payments
-   SET provider=?,
-       provider_session_id=?,
-       provider_checkout_url=?,
-       updated_at=?
-   WHERE id=?
- `).run(
-   'stripe',
-   session.id,
-   session.url,
-   new Date().toISOString(),
-   item.id
- );
-
+   SET provider=?,provider_session_id=?,provider_checkout_url=?,updated_at=?
+   WHERE id=? AND status='open'
+     AND COALESCE(payment_status,'open')='open'
+     AND provider_session_id IS NULL
+ `).run('stripe',session.id,session.url,new Date().toISOString(),item.id);
+ if(!stored.changes){
+  try{await getStripeClient().checkout.sessions.expire(session.id)}
+  catch(e){console.error('[FaivoPay] Orphan Stripe session expiry FAILED',{
+   paymentId:item.id,sessionId:session.id,error:e.message
+  })}
+  throw new Error('Payment changed while checkout was being created.');
+ }
  return session;
 }
 function serializePayoutRun(r){return {id:r.id,runType:r.run_type,status:r.status,createdAt:r.created_at,createdBy:r.created_by,scheduledFor:r.scheduled_for,totalAmount:r.total_amount,itemCount:r.item_count,provider:r.provider,providerRef:r.provider_ref,notes:r.notes,paidAt:r.paid_at,fundingStatus:r.funding_status||'not_started',fundingRequired:Number(r.funding_required??r.total_amount??0),fundingSentAt:r.funding_sent_at,fundsClearedAt:r.funds_cleared_at,releasedAt:r.released_at,reconciledAt:r.reconciled_at}}
@@ -6734,8 +6804,37 @@ app.post('/api/public/customer-payments/:id/checkout',async(req,res)=>{
   if(!getStripeClient())return res.status(400).json({error:'Card payments are not currently available.'});
   const row=db.prepare('SELECT * FROM customer_payments WHERE id=?').get(req.params.id);
   if(!row)return res.status(404).json({error:'Payment link not found'});
-  if(row.status==='paid')return res.status(400).json({error:'This payment has already been completed.'});
-  if(row.status==='cancelled')return res.status(400).json({error:'This payment link has been cancelled.'});
+  if(row.status==='paid' || row.payment_status==='paid')return res.status(400).json({error:'This payment has already been completed.'});
+  if(row.status!=='open' || (row.payment_status && row.payment_status!=='open'))
+   return res.status(409).json({error:'This payment link is no longer available.'});
+
+  // This is deliberately a booking check, NOT a driver login check:
+  // completed Cash fares remain payable after the driver logs off.
+  if(['autocab_booking_created','driver_live_booking'].includes(row.source)){
+   if(!row.booking_id)return res.status(409).json({error:'Booking verification unavailable.'});
+   let booking;
+   try{
+    booking=await getJson(
+     `${BASE_URL}/booking/v1/booking/${encodeURIComponent(row.booking_id)}`
+    );
+   }catch(e){
+    console.warn('[FaivoPay] Checkout booking verification unavailable',{
+     paymentId:row.id,error:e.message
+    });
+    return res.status(503).json({error:'Unable to verify booking. Please try again.'});
+   }
+   if(!booking || !customerPaymentCashEligible(booking)){
+    await invalidateUnpaidBookingPayments(row.booking_id,'checkout_non_cash');
+    return res.status(409).json({error:'This booking is not eligible for customer payment.'});
+   }
+   const bookingStatus=String(
+    booking.status ?? booking.Status ?? booking.bookingStatus ?? booking.BookingStatus ?? ''
+   ).toLowerCase();
+   if(['cancelled','canceled','no_fare','nofare'].includes(bookingStatus)){
+    await invalidateUnpaidBookingPayments(row.booking_id,'checkout_cancelled');
+    return res.status(409).json({error:'This booking has been cancelled.'});
+   }
+  }
   const session=await createStripeCustomerPayment(row);
   res.json({ok:true,checkoutUrl:session.url});
  }catch(e){res.status(500).json({error:e.message})}
