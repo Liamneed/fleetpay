@@ -28,7 +28,8 @@ test('Builds a GBP25 offline payment preview', () => {
   assert.equal(preview.request.amount, 25);
   assert.equal(preview.request.currency, 'GBP');
   assert.equal(preview.request.sourceAccountId, 'A_TEST_001');
-  assert.equal(preview.request.destinationId, 'B_TEST_001');
+  assert.deepEqual(preview.request.destination, { type: 'BENEFICIARY', id: 'B_TEST_001' });
+  assert.equal(Object.hasOwn(preview.request, 'destinationId'), false);
   assert.equal(preview.request.externalReference, 'synthetic-test-001');
   assert.equal(preview.nonce, 'synthetic-nonce-001');
   assert.equal(preview.previewOnly, true);
