@@ -8104,6 +8104,102 @@ async function findModulrSandboxBankMatch(driverId){
  };
 }
 
+// Read-only Modulr sandbox assessment.
+// This never marks a bank account verified or authorises payments.
+async function assessModulrSandboxReadiness(driverId){
+ const reasons=[];
+
+ if(MODULR_ENV!=='sandbox' || MODULR_ENABLED){
+  reasons.push('sandbox_disabled_or_payment_flag_enabled');
+ }
+
+ const driver=cachedDriver(driverId);
+
+ if(!driver){
+  reasons.push('driver_not_found');
+ }else if(driver.payoutExcluded){
+  reasons.push('driver_payout_excluded');
+ }
+
+ const bank=maskedBankAccount(driverId);
+
+ if(!bank.configured){
+  reasons.push('bank_details_missing');
+ }
+
+ let match=null;
+
+ if(reasons.length===0){
+  try{
+   match=await findModulrSandboxBankMatch(driverId);
+
+   if(!match.matched){
+    reasons.push(match.reason||'beneficiary_not_matched');
+   }else{
+    if(match.status!=='ACTIVE'){
+     reasons.push('beneficiary_not_active');
+    }
+
+    if(match.approvalStatus!=='APPROVED' ||
+       match.approvalRequired!==false){
+     reasons.push('beneficiary_approval_not_confirmed');
+    }
+   }
+  }catch{
+   reasons.push('beneficiary_lookup_unavailable');
+  }
+ }
+
+ return {
+  driverId,
+  callsign:driver?.callsign||null,
+  bankConfigured:bank.configured===true,
+  beneficiaryMatched:match?.matched===true,
+  beneficiaryId:match?.beneficiaryId||null,
+  beneficiaryStatus:match?.status||null,
+  approvalStatus:match?.approvalStatus||null,
+  checksPassed:reasons.length===0,
+  reasons,
+  paymentReady:false,
+  paymentExecutionEnabled:false
+ };
+}
+
+// Read-only sandbox payout-readiness assessment.
+// Never submits a payment or changes financial records.
+app.get(
+ '/api/admin/integrations/modulr/drivers/:driverId/readiness',
+ adminAuth,
+ requireStaffRole('administrator','finance'),
+ async(req,res)=>{
+  if(MODULR_ENV!=='sandbox' || MODULR_ENABLED){
+   return res.status(403).json({
+    error:'Modulr readiness testing requires sandbox mode with payments disabled.'
+   });
+  }
+
+  const driverId=Number(req.params.driverId);
+
+  if(!Number.isSafeInteger(driverId) || driverId<=0){
+   return res.status(400).json({error:'Invalid driver ID.'});
+  }
+
+  try{
+   const result=await assessModulrSandboxReadiness(driverId);
+
+   res.json({
+    ok:true,
+    environment:'sandbox',
+    ...result
+   });
+  }catch{
+   res.status(502).json({
+    error:'Modulr sandbox readiness assessment failed.'
+   });
+  }
+ }
+);
+
 // Modulr sandbox driver-bank matching test.
 // Restricted and read-only. No beneficiary or payment writes.
 app.get(
