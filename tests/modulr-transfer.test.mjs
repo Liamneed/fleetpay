@@ -10,6 +10,8 @@ import {
   canTransitionModulrTransfer
 } from '../server/lib/modulr-transfer-state.mjs';
 
+import { claimValidatedModulrTransfer } from '../server/lib/modulr-validated-claim.mjs';
+
 import {
   transitionModulrTransfer,
   recordModulrTransferSubmission,
@@ -61,6 +63,30 @@ function withSnapshot(callback) {
     assert.ok(intent, 'Prepared synthetic transfer missing');
     assert.equal(intent.amount_minor, 2500);
 
+    // Normalise legacy synthetic bank references in this temporary
+    // SQLite snapshot only. Never modify the original fixture.
+    const payout = db.prepare(
+      'SELECT driver_id FROM payouts WHERE id=?'
+    ).get(intent.payout_id);
+
+    const bank = db.prepare(`
+      SELECT sort_code_last2, account_number_last4
+      FROM driver_bank_accounts WHERE driver_id=?
+    `).get(payout.driver_id);
+
+    assert.ok(bank, 'Synthetic bank record missing');
+
+    db.prepare(`
+      UPDATE payout_transfer_intents
+      SET recipient_sort_code_last2=?,
+          recipient_account_last4=?
+      WHERE id=? AND status='prepared'
+    `).run(
+      bank.sort_code_last2,
+      bank.account_number_last4,
+      intent.id
+    );
+
     return callback(db, intent);
 
   } finally {
@@ -68,6 +94,24 @@ function withSnapshot(callback) {
     source?.close();
     fs.rmSync(directory, { recursive: true, force: true });
   }
+}
+
+// Synthetic fixture only: no provider lookup and no payment execution.
+function claimSynthetic(db, intent) {
+  const payout = db.prepare('SELECT * FROM payouts WHERE id=?')
+    .get(intent.payout_id);
+  const bank = db.prepare('SELECT * FROM driver_bank_accounts WHERE driver_id=?')
+    .get(payout.driver_id);
+  return claimValidatedModulrTransfer(db, intent.id, {
+    matched: true,
+    beneficiaryId: intent.recipient_id,
+    status: 'ACTIVE',
+    approvalStatus: 'APPROVED',
+    approvalRequired: false,
+    bankUpdatedAt: bank.updated_at,
+    bankSortCodeEnc: bank.sort_code_enc,
+    bankAccountNumberEnc: bank.account_number_enc
+  });
 }
 
 test('Only prepared transfers can be submitted', () => {
@@ -88,9 +132,7 @@ test('Only prepared transfers can be submitted', () => {
 
 test('An atomic claim cannot be repeated', () => {
   withSnapshot((db, intent) => {
-    transitionModulrTransfer(
-      db, intent.id, 'prepared', 'submitting'
-    );
+    claimSynthetic(db, intent);
 
     assert.throws(() => {
       transitionModulrTransfer(
@@ -108,9 +150,7 @@ test('An atomic claim cannot be repeated', () => {
 
 test('Provider reference is stored once', () => {
   withSnapshot((db, intent) => {
-    transitionModulrTransfer(
-      db, intent.id, 'prepared', 'submitting'
-    );
+    claimSynthetic(db, intent);
 
     recordModulrTransferSubmission(
       db, intent.id, 'mock_transfer_001'
@@ -134,9 +174,7 @@ test('Provider reference is stored once', () => {
 
 test('Uncertain outcomes cannot automatically retry', () => {
   withSnapshot((db, intent) => {
-    transitionModulrTransfer(
-      db, intent.id, 'prepared', 'submitting'
-    );
+    claimSynthetic(db, intent);
 
     const outcome = classifyModulrSubmission({
       timeout: true
@@ -167,9 +205,7 @@ test('Mock reconciliation does not pay the driver', () => {
       FROM payout_confirmations WHERE payout_id=?
     `).get(intent.payout_id).count;
 
-    transitionModulrTransfer(
-      db, intent.id, 'prepared', 'submitting'
-    );
+    claimSynthetic(db, intent);
 
     recordModulrTransferSubmission(
       db, intent.id, 'mock_transfer_001'
@@ -271,9 +307,7 @@ test('Incorrect provider details fail reconciliation', () => {
 
 test('Generic transitions cannot establish final payment outcomes', () => {
   withSnapshot((db, intent) => {
-    transitionModulrTransfer(
-      db, intent.id, 'prepared', 'submitting'
-    );
+    claimSynthetic(db, intent);
 
     recordModulrTransferSubmission(
       db, intent.id, 'mock_final_guard'
@@ -301,9 +335,7 @@ test('Generic transitions cannot establish final payment outcomes', () => {
 
 test('Mock confirmation never creates a genuine confirmed transfer', () => {
   withSnapshot((db, intent) => {
-    transitionModulrTransfer(
-      db, intent.id, 'prepared', 'submitting'
-    );
+    claimSynthetic(db, intent);
 
     recordModulrTransferSubmission(
       db, intent.id, 'mock_safe_confirmation'

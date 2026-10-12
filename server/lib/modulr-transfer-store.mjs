@@ -6,10 +6,13 @@ import {
 export function transitionModulrTransfer(db, intentId, from, to) {
   assertModulrTransferTransition(from, to);
 
-  if (['confirmed', 'failed'].includes(to)) {
-    throw new Error(
-      'Final payment outcomes require independent provider verification.'
-    );
+  // The generic writer may only cancel an untouched intent or move an
+  // in-flight transfer into an uncertain state. It cannot claim, submit,
+  // confirm, fail or resurrect a transfer without independent evidence.
+  if (!((from === 'prepared' && to === 'cancelled') ||
+        (from === 'submitting' && to === 'unknown') ||
+        (from === 'submitted' && to === 'unknown'))) {
+    throw new Error('This transition requires a dedicated verified workflow.');
   }
 
   db.exec('BEGIN IMMEDIATE');
@@ -165,7 +168,6 @@ export function recordMockModulrReconciliation(db, intentId, validation) {
         AND environment='sandbox'
     `).run(
       now,
-      
       intentId,
       intent.status,
       validation.providerTransferId,
