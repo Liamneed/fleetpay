@@ -2389,6 +2389,7 @@ function AdminApp(){
  const[customerSettlementReview,setCustomerSettlementReview]=useState({decision:'full',amount:'',note:''}),[customerSettlementReviewBusy,setCustomerSettlementReviewBusy]=useState(false);
  const[customerRefundReview,setCustomerRefundReview]=useState({decision:'full',amount:''}),[customerRefundBusy,setCustomerRefundBusy]=useState(false);
  const[driverUsers,setDriverUsers]=useState([]),[staff,setStaff]=useState([]),[securityLogs,setSecurityLogs]=useState([]);
+ const[deletionRequests,setDeletionRequests]=useState([]);
  const[txQ,setTxQ]=useState(''),[txType,setTxType]=useState('all'),[txStatus,setTxStatus]=useState('all'),[txCategory,setTxCategory]=useState('all'),[txDateFrom,setTxDateFrom]=useState(''),[txDateTo,setTxDateTo]=useState('');
  const[q,setQ]=useState(''),[filter,setFilter]=useState('all'),[selected,setSelected]=useState(null),[selectedTx,setSelectedTx]=useState(null);
  const[driverDrawerTab,setDriverDrawerTab]=useState('overview');
@@ -2517,6 +2518,10 @@ function AdminApp(){
  };
  const loadCustomerAdmin=()=>safeLoad(async()=>applyCustomerAdminData(await api('/api/admin/customer-payments')));
  const loadDriverUsers=()=>safeLoad(async()=>setDriverUsers(await api('/api/admin/users')));
+ const loadDeletionRequests=()=>safeLoad(async()=>{
+  const result=await api('/api/admin/account-deletion-requests');
+  setDeletionRequests(result.requests||[]);
+ });
  const loadStaff=()=>safeLoad(async()=>setStaff((await api('/api/admin/staff')).staff||[]));
  const loadSecurity=()=>safeLoad(async()=>setSecurityLogs((await api('/api/admin/security')).logs||[]));
 
@@ -3166,7 +3171,11 @@ function AdminApp(){
 
  const dueEarly=earlySummary?.requests?.filter(x=>['requested','approved','batched'].includes(x.status))||[];
  const recentTx=transactions.slice(0,7);
- function go(k){setView(k);setMobileNav(false);setErr('');if(k==='customerPayments')loadCustomerAdmin();if(k==='monday'){loadMonday();loadSett()}if(k==='early'){loadEarlySummary();loadSett()}if(k==='outstanding'){loadOutstanding();loadPaymentPlans();}if(k==='paymentPlans')loadPaymentPlans();if(k==='fees')loadFees();if(k==='demo')loadDemo();if(k==='liveTest')loadLiveTest();if(k==='drivers')loadDrivers();if(k==='access'){loadStaff();loadDriverUsers()}if(k==='adjustmentReviews')loadAdjustmentReviews();if(k==='security')loadSecurity();if(k==='platform'){loadPlatformCompanies();setPlatformCompany(null)}if(k==='settings'){loadSettings();loadIntegrations()}}
+ function go(k){setView(k);setMobileNav(false);setErr('');if(k==='customerPayments')loadCustomerAdmin();if(k==='monday'){loadMonday();loadSett()}if(k==='early'){loadEarlySummary();loadSett()}if(k==='outstanding'){loadOutstanding();loadPaymentPlans();}if(k==='paymentPlans')loadPaymentPlans();if(k==='fees')loadFees();if(k==='demo')loadDemo();if(k==='liveTest')loadLiveTest();if(k==='drivers')loadDrivers();if(k==='access'){
+  loadStaff();
+  loadDriverUsers();
+  if(isAdmin)loadDeletionRequests();
+ }if(k==='adjustmentReviews')loadAdjustmentReviews();if(k==='security')loadSecurity();if(k==='platform'){loadPlatformCompanies();setPlatformCompany(null)}if(k==='settings'){loadSettings();loadIntegrations()}}
  async function createOfficeCustomerPayment(e){
   e?.preventDefault();setCustomerCreateBusy(true);
   try{
@@ -4571,6 +4580,34 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
    alert(e.message);
   }
  }
+ async function reviewDeletionRequest(request,status){
+  const action=status==='in_review'?'start reviewing':'reject';
+  if(!window.confirm(`Do you want to ${action} the account deletion request for driver ${request.callsign}?`))return;
+
+  const notes=window.prompt(
+   status==='rejected'
+    ? 'Enter the reason for rejecting this request:'
+    : 'Optional review notes:',
+   ''
+  );
+
+  if(notes===null)return;
+  if(status==='rejected'&&!notes.trim()){
+   alert('A reason is required when rejecting a deletion request.');
+   return;
+  }
+
+  try{
+   await api(`/api/admin/account-deletion-requests/${encodeURIComponent(request.id)}`,{
+    method:'PATCH',
+    body:JSON.stringify({status,notes:notes.trim()})
+   });
+   await loadDeletionRequests();
+  }catch(e){
+   alert(e.message);
+  }
+ }
+
  async function setApproval(u,approved){try{await api(`/api/admin/users/${u.id}`,{method:'PATCH',body:JSON.stringify({approved})});await loadDriverUsers()}catch(e){alert(e.message)}}
  const statusTone=s=>['paid','completed','approved','sent','invoiced'].includes(String(s))?'good':['failed','declined','overdue','cancelled','defaulted'].includes(String(s))?'bad':['on_plan','active','paused'].includes(String(s))?'warn':'warn';
 
@@ -9199,7 +9236,68 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
     {view==='demo'&&isPlatformAdmin&&<DemoLab demo={demo} loadDemo={loadDemo} resetDemo={resetDemo} action={demoAction} demoEmail={demoEmail} setDemoEmail={setDemoEmail} demoMobile={demoMobile} setDemoMobile={setDemoMobile} sendEmail={demoSendEmail} sendSms={demoSendSms}/>}
     {view==='liveTest'&&isPlatformAdmin&&<LiveTestLab liveTest={liveTest} liveTestEvents={liveTestEvents} liveTestSnapshot={liveTestSnapshot} liveTestSimulation={liveTestSimulation} loadLiveTest={loadLiveTest} addDriver={addLiveTestDriver} toggleDriver={toggleLiveTestDriver} toggleLiveWrites={toggleLiveTestWrites} snapshotDriver={snapshotLiveTestDriver} snapshotBusyDriver={liveTestSnapshotBusy} simulateMonday={simulateLiveTestMonday} simulationBusyDriver={liveTestSimulationBusy} liveTestWritePreview={liveTestWritePreview} previewAutocabWrite={previewLiveTestAutocabWrite} writePreviewBusyDriver={liveTestWritePreviewBusy} writePreviewBalance={liveTestWritePreviewBalance} setWritePreviewBalance={setLiveTestWritePreviewBalance} liveCreditPreview={liveTestCreditPreview} prepareLiveCredit={prepareLiveTestCredit} executeLiveCredit={executeLiveTestCredit} liveCreditBusy={liveTestCreditBusy} liveCreditResult={liveTestCreditResult} liveReversalPreview={liveTestReversalPreview} prepareLiveReversal={prepareLiveTestReversal} executeLiveReversal={executeLiveTestReversal} liveReversalBusy={liveTestReversalBusy} liveReversalResult={liveTestReversalResult} busy={liveTestBusy}/>}
     {view==='drivers'&&<><section className="officePageIntro"><div><span>AUTOCAB + PAYOUT READINESS</span><h2>Driver accounts</h2><p>Balances and payout-bank readiness in one place. Full bank account numbers are never exposed in the normal office view.</p></div><button className="secondary" onClick={syncNow}><RefreshCw className={loading?'spin':''}/>Sync Autocab</button></section><section className="officeStats three"><Stat icon={Banknote} label="Bank ready" value={meta.bankReady??drivers.filter(d=>d.bankAccount?.ready).length} sub="Payment account ready"/><Stat icon={AlertTriangle} label="Not payout ready" value={meta.bankMissing??drivers.filter(d=>!d.bankAccount?.ready).length} sub="Missing bank details or payment setup"/><Stat icon={Clock3} label="Recently changed" value={meta.bankRecentlyChanged??drivers.filter(d=>d.bankAccount?.changedRecently).length} sub="Changed in the last 7 days"/></section><div className="driverToolbar"><div className="searchBox"><Search/><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search callsign, name, mobile, email or bank ending…"/></div><select value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All drivers</option><option value="bank_ready">Bank ready</option><option value="bank_missing">Not payout ready</option><option value="bank_recent">Recently changed bank</option><option value="payout_excluded">Payout excluded</option><option value="positive">Positive balance</option><option value="negative">Negative balance</option><option value="unmatched">Unmatched</option></select></div><section className="panel driverPanel"><div className="tableWrap proTable"><table><thead><tr><th>Callsign</th><th>Driver</th><th>Previous</th><th>Current</th><th>Payout account</th><th>Payout status</th><th>Last processed</th></tr></thead><tbody>{filtered.map(d=>{const b=d.bankAccount||{};return <tr key={d.driverId} onClick={()=>setSelected(d)}><td><span className="callsign">{d.callsign}</span></td><td><b>{d.fullName}</b><small>{d.email||d.mobile||`Driver ${d.driverId}`}</small></td><td>{money(d.previousBalance)}</td><td><b className={(d.currentBalance??0)<0?'negative':''}>{money(d.currentBalance)}</b></td><td><div className="bankTableCell"><Pill tone={bankTone(b)}>{b.label||'Bank details missing'}</Pill>{b.ready&&<small>{b.accountNumberMasked} · {b.sortCodeMasked}</small>}</div></td><td><div className="bankTableCell"><Pill tone={d.payoutExcluded?'bad':'good'}>{d.payoutExcluded?'Excluded':'Enabled'}</Pill>{d.payoutExcluded&&<small>{d.payoutExclusionReason||'Persistent exclusion'}</small>}</div></td><td>{dt(d.lastProcessed)}</td></tr>})}</tbody></table></div></section></>}
-    {view==='access'&&<><section className="officePageIntro"><div><span>IDENTITY & PERMISSIONS</span><h2>Users & access</h2><p>Office accounts use mandatory authenticator MFA. Roles limit who can move money or change settings.</p></div>{isAdmin&&<button className="primary" onClick={()=>setShowNewStaff(!showNewStaff)}><UserCheck/>Add office user</button>}</section>{isAdmin&&showNewStaff&&<section className="panel"><form className="staffForm" onSubmit={createStaff}><label>Name<input required value={newStaff.name} onChange={e=>setNewStaff({...newStaff,name:e.target.value})}/></label><label>Email<input type="email" required value={newStaff.email} onChange={e=>setNewStaff({...newStaff,email:e.target.value})}/></label><label>Role<select value={newStaff.role} onChange={e=>setNewStaff({...newStaff,role:e.target.value})}><option value="administrator">Administrator</option><option value="finance">Finance</option><option value="office">Office</option><option value="readonly">Read only</option></select></label><label>Temporary password<input type="password" minLength="10" required value={newStaff.password} onChange={e=>setNewStaff({...newStaff,password:e.target.value})}/></label><button className="primary">Create user</button></form></section>}<section className="panel"><div className="panelHead"><div><h3>Office users</h3><p>MFA and role status for each staff account.</p></div><button className="mini" onClick={loadStaff}>Refresh</button></div><div className="tableWrap proTable"><table><thead><tr><th>User</th><th>Role</th><th>Super Admin</th><th>MFA</th><th>Last login</th><th>Status</th><th/></tr></thead><tbody>{staff.map(u=><tr key={u.id}><td><b>{u.name}</b><small>{u.email}</small></td><td><select value={u.role} onChange={e=>updateStaff(u,{role:e.target.value})} disabled={u.id===me?.id||u.platformAdmin}><option value="administrator">Administrator</option><option value="finance">Finance</option><option value="office">Office</option><option value="readonly">Read only</option></select></td><td><div className="bankTableCell"><Pill tone={u.platformAdmin?'good':'neutral'}>{u.platformAdmin?'Super Admin':'Standard'}</Pill>{isPlatformAdmin&&u.role==='administrator'&&u.active&&u.id!==me?.id&&<button className="mini" onClick={()=>updateSuperAdmin(u,!u.platformAdmin)}>{u.platformAdmin?'Revoke':'Grant'}</button>}</div></td><td><Pill tone={u.mfaEnabled?'good':'warn'}>{u.mfaEnabled?'Enabled':'Setup required'}</Pill></td><td>{dt(u.lastLoginAt)}</td><td><Pill tone={u.active?'good':'bad'}>{u.active?'Active':'Disabled'}</Pill></td><td>{u.id!==me?.id&&<button className="mini" disabled={u.platformAdmin} onClick={()=>updateStaff(u,{active:!u.active})}>{u.active?'Disable':'Enable'}</button>}</td></tr>)}</tbody></table></div></section><section className="panel"><div className="panelHead"><div><h3>Driver app accounts</h3><p>Registration remains matched to active Autocab driver details.</p></div><button className="mini" onClick={loadDriverUsers}>Refresh</button></div><div className="tableWrap proTable"><table><thead><tr><th>Callsign</th><th>Email</th><th>Created</th><th>Last login</th><th>Status</th><th/></tr></thead><tbody>{driverUsers.map(u=><tr key={u.id}><td><span className="callsign">{u.callsign}</span></td><td>{u.email}</td><td>{dt(u.createdAt)}</td><td>{dt(u.lastLoginAt)}</td><td><Pill tone={u.approved?'good':'warn'}>{u.approved?'Approved':'Pending'}</Pill></td><td>{canOffice&&<button className="mini" onClick={()=>setApproval(u,!u.approved)}>{u.approved?'Suspend':'Approve'}</button>}</td></tr>)}</tbody></table></div></section></>}
+    {view==='access'&&<><section className="officePageIntro"><div><span>IDENTITY & PERMISSIONS</span><h2>Users & access</h2><p>Office accounts use mandatory authenticator MFA. Roles limit who can move money or change settings.</p></div>{isAdmin&&<button className="primary" onClick={()=>setShowNewStaff(!showNewStaff)}><UserCheck/>Add office user</button>}</section>{isAdmin&&showNewStaff&&<section className="panel"><form className="staffForm" onSubmit={createStaff}><label>Name<input required value={newStaff.name} onChange={e=>setNewStaff({...newStaff,name:e.target.value})}/></label><label>Email<input type="email" required value={newStaff.email} onChange={e=>setNewStaff({...newStaff,email:e.target.value})}/></label><label>Role<select value={newStaff.role} onChange={e=>setNewStaff({...newStaff,role:e.target.value})}><option value="administrator">Administrator</option><option value="finance">Finance</option><option value="office">Office</option><option value="readonly">Read only</option></select></label><label>Temporary password<input type="password" minLength="10" required value={newStaff.password} onChange={e=>setNewStaff({...newStaff,password:e.target.value})}/></label><button className="primary">Create user</button></form></section>}<section className="panel"><div className="panelHead"><div><h3>Office users</h3><p>MFA and role status for each staff account.</p></div><button className="mini" onClick={loadStaff}>Refresh</button></div><div className="tableWrap proTable"><table><thead><tr><th>User</th><th>Role</th><th>Super Admin</th><th>MFA</th><th>Last login</th><th>Status</th><th/></tr></thead><tbody>{staff.map(u=><tr key={u.id}><td><b>{u.name}</b><small>{u.email}</small></td><td><select value={u.role} onChange={e=>updateStaff(u,{role:e.target.value})} disabled={u.id===me?.id||u.platformAdmin}><option value="administrator">Administrator</option><option value="finance">Finance</option><option value="office">Office</option><option value="readonly">Read only</option></select></td><td><div className="bankTableCell"><Pill tone={u.platformAdmin?'good':'neutral'}>{u.platformAdmin?'Super Admin':'Standard'}</Pill>{isPlatformAdmin&&u.role==='administrator'&&u.active&&u.id!==me?.id&&<button className="mini" onClick={()=>updateSuperAdmin(u,!u.platformAdmin)}>{u.platformAdmin?'Revoke':'Grant'}</button>}</div></td><td><Pill tone={u.mfaEnabled?'good':'warn'}>{u.mfaEnabled?'Enabled':'Setup required'}</Pill></td><td>{dt(u.lastLoginAt)}</td><td><Pill tone={u.active?'good':'bad'}>{u.active?'Active':'Disabled'}</Pill></td><td>{u.id!==me?.id&&<button className="mini" disabled={u.platformAdmin} onClick={()=>updateStaff(u,{active:!u.active})}>{u.active?'Disable':'Enable'}</button>}</td></tr>)}</tbody></table></div></section><section className="panel"><div className="panelHead"><div><h3>Driver app accounts</h3><p>Registration remains matched to active Autocab driver details.</p></div><button className="mini" onClick={loadDriverUsers}>Refresh</button></div><div className="tableWrap proTable"><table><thead><tr><th>Callsign</th><th>Email</th><th>Created</th><th>Last login</th><th>Status</th><th/></tr></thead><tbody>{driverUsers.map(u=><tr key={u.id}><td><span className="callsign">{u.callsign}</span></td><td>{u.email}</td><td>{dt(u.createdAt)}</td><td>{dt(u.lastLoginAt)}</td><td><Pill tone={u.approved?'good':'warn'}>{u.approved?'Approved':'Pending'}</Pill></td><td>{canOffice&&<button className="mini" onClick={()=>setApproval(u,!u.approved)}>{u.approved?'Suspend':'Approve'}</button>}</td></tr>)}</tbody></table></div></section>
+{isAdmin&&<section className="panel">
+ <div className="panelHead">
+  <div>
+   <h3>Account deletion requests</h3>
+   <p>Review driver requests. Financial records are not deleted automatically.</p>
+  </div>
+  <button className="mini" onClick={loadDeletionRequests}>Refresh</button>
+ </div>
+ <div className="tableWrap proTable">
+  <table>
+   <thead>
+    <tr>
+     <th>Callsign</th>
+     <th>Email</th>
+     <th>Requested</th>
+     <th>Status</th>
+     <th>Reviewed by</th>
+     <th>Action</th>
+    </tr>
+   </thead>
+   <tbody>
+    {deletionRequests.length===0&&
+     <tr><td colSpan={6}>No account deletion requests recorded.</td></tr>
+    }
+    {deletionRequests.map(r=>
+     <tr key={r.id}>
+      <td><span className="callsign">{r.callsign}</span></td>
+      <td>{r.email}</td>
+      <td>{dt(r.requestedAt)}</td>
+      <td>
+       <Pill tone={r.status==='pending'?'warn':r.status==='rejected'?'bad':'neutral'}>
+        {r.status==='in_review'?'In review':
+         r.status==='pending'?'Pending':
+         r.status==='rejected'?'Rejected':'Completed'}
+       </Pill>
+      </td>
+      <td>
+       {r.reviewedBy||'—'}
+       {r.reviewNotes&&<small>{r.reviewNotes}</small>}
+      </td>
+      <td>
+       {r.status==='pending'&&
+        <button className="mini"
+         onClick={()=>reviewDeletionRequest(r,'in_review')}>
+         Review
+        </button>
+       }
+       {['pending','in_review'].includes(r.status)&&
+        <button className="mini"
+         onClick={()=>reviewDeletionRequest(r,'rejected')}>
+         Reject
+        </button>
+       }
+      </td>
+     </tr>
+    )}
+   </tbody>
+  </table>
+ </div>
+</section>}
+</>}
 
     {view==='platform'&&isPlatformAdmin&&<>
      <section className="officePageIntro">
@@ -9406,10 +9504,26 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
        </div>
 
        <div>
-        <b>Wise</b>
-        <span>{integrations?.wise?.configured?integrations.wise.environment:'Not configured'}</span>
-        <Pill tone={integrations?.wise?.configured?'good':'warn'}>
-         {integrations?.wise?.configured?'Connected':'Setup'}
+ <b>Wise</b>
+         <span>{integrations?.wise?.configured
+          ?integrations.wise.environment
+          :'Not configured'}</span>
+         <Pill tone={integrations?.wise?.configured?'good':'warn'}>
+          {integrations?.wise?.configured?'Configured':'Setup'}
+         </Pill>
+        </div>
+
+       <div>
+         <b>Modulr</b>
+        <span>{integrations?.modulr?.configured
+         ?'Sandbox configured'
+         :'Not configured'}</span>
+        <Pill tone={integrations?.modulr?.configured?'good':'warn'}>
+         {integrations?.modulr?.paymentExecutionReady
+          ?'Ready'
+          :integrations?.modulr?.configured
+           ?'Testing'
+           :'Setup'}
         </Pill>
        </div>
 
@@ -10518,11 +10632,19 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
      <div className={`payoutControlCard ${selected.payoutExcluded?'excluded':''}`}>
       <div>
        <span>PAYOUT ELIGIBILITY</span>
-       <h3>{selected.payoutExcluded?'Excluded from payouts':'Payouts enabled'}</h3>
+       <h3>{
+        selected.payoutExcluded
+         ?'Excluded from payouts'
+         :selected.bankAccount?.ready
+          ?'Eligible for payouts'
+          :'Eligible — bank setup pending'
+       }</h3>
        <p>
         {selected.payoutExcluded
-         ?(selected.payoutExclusionReason||'This driver is permanently excluded from FaivoPay payouts.')
-         :'This driver can be included in eligible FaivoPay payout runs.'}
+         ?(selected.payoutExclusionReason||'This driver is excluded from FaivoPay payouts.')
+         :selected.bankAccount?.ready
+          ?'This driver is eligible for payout runs and their bank account is ready.'
+          :'This driver is allowed to receive payouts, but payment cannot be released until their bank account is ready.'}
        </p>
       </div>
 
@@ -13204,6 +13326,35 @@ function DriverApp(){
   </section>
  </div>;
 
+ async function requestAccountDeletion(){
+  const confirmed=window.confirm(
+   'Request deletion of your FaivoPay account?\\n\\n' +
+   'Your request will be reviewed by an administrator. ' +
+   'Your account will remain active until the request is processed. ' +
+   'Financial records may need to be retained for legal obligations.'
+  );
+
+  if(!confirmed)return;
+
+  setErr('');
+  setNotice('');
+
+  try{
+   const result=await api('/api/driver/account-deletion-request',{
+    method:'POST',
+    body:JSON.stringify({})
+   });
+
+   setNotice(
+    result.alreadyRequested
+     ? 'Your account deletion request is already being reviewed.'
+     : 'Your account deletion request has been received.'
+   );
+  }catch(e){
+   setErr(e.message);
+  }
+ }
+
  const AccountPage=()=> <div className="driverPageView mockAccountPage">
   <section className="mockWhiteCard mockProfileSummary">
    <div className="mockProfileAvatar">{firstName[0]}{(d.surname||'')[0]||''}</div>
@@ -13232,7 +13383,13 @@ function DriverApp(){
 
   <details className="mockAccountDisclosure">
    <summary><span className="mockRoundIcon blue"><Info/></span><span><b>About FaivoPay</b><small>Secure driver and customer payments</small></span><ChevronRight/></summary>
-   <div className="mockDisclosureText"><p>FaivoPay securely manages driver balances, customer card payments, payouts and payment-plan activity.</p><small>Last sync {dt(d.syncedAt)}</small></div>
+   <div className="mockDisclosureText">
+    <p>FaivoPay securely manages driver balances, customer card payments, payouts and payment-plan activity.</p>
+    <p><a href="https://faivopay.app/privacy/" target="_blank" rel="noopener noreferrer">Privacy Policy</a></p>
+    <p><button type="button" className="mini" onClick={requestAccountDeletion}>Request account deletion</button></p>
+    <p><small>Your request will be reviewed. Your account will not be deleted immediately.</small></p>
+    <small>Last sync {dt(d.syncedAt)}</small>
+   </div>
   </details>
 
   <button className="mockLogoutRow" type="button" onClick={logout}><LogOut/><span>Log out</span></button>

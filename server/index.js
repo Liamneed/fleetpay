@@ -54,6 +54,15 @@ const AUTOCAB_FLEETPAY_CUSTOMER_ID = Number(process.env.AUTOCAB_FLEETPAY_CUSTOME
 const AUTOCAB_FLEETPAY_CUSTOMER_NAME = String(process.env.AUTOCAB_FLEETPAY_CUSTOMER_NAME || 'FleetPay UK');
 const AUTOCAB_FLEETPAY_ACCOUNT_CODE = String(process.env.AUTOCAB_FLEETPAY_ACCOUNT_CODE || 'Fleet');
 const AUTOCAB_FLEETPAY_CAPABILITY_ID = Number(process.env.AUTOCAB_FLEETPAY_CAPABILITY_ID || 39);
+// Modulr payout provider — sandbox configuration only.
+// Payment submission remains disabled until separately implemented and tested.
+const MODULR_ENABLED = process.env.MODULR_ENABLED === 'true';
+const MODULR_ENV = String(process.env.MODULR_ENV || 'sandbox').toLowerCase();
+const MODULR_API_KEY = process.env.MODULR_API_KEY || '';
+const MODULR_CUSTOMER_ID = process.env.MODULR_CUSTOMER_ID || '';
+const MODULR_ACCOUNT_ID = process.env.MODULR_ACCOUNT_ID || '';
+const MODULR_BASE_URL = 'https://api-sandbox.modulrfinance.com/api-sandbox-token/';
+
 const WISE_API_TOKEN = process.env.WISE_API_TOKEN || '';
 const WISE_ENV = String(process.env.WISE_ENV || 'sandbox').toLowerCase();
 const WISE_PROFILE_ID = process.env.WISE_PROFILE_ID || '';
@@ -81,6 +90,25 @@ CREATE TABLE IF NOT EXISTS driver_users (
  password_hash TEXT NOT NULL, password_salt TEXT NOT NULL, approved INTEGER NOT NULL DEFAULT 1,
  created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_login_at TEXT
 );
+CREATE TABLE IF NOT EXISTS driver_deletion_requests (
+ id TEXT PRIMARY KEY,
+ driver_id INTEGER NOT NULL,
+ user_id TEXT NOT NULL,
+ callsign TEXT NOT NULL,
+ email TEXT NOT NULL,
+ status TEXT NOT NULL DEFAULT 'pending'
+  CHECK(status IN ('pending','in_review','completed','rejected')),
+ requested_at TEXT NOT NULL,
+ reviewed_at TEXT,
+ reviewed_by TEXT,
+ review_notes TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_driver_deletion_pending
+ ON driver_deletion_requests(user_id)
+ WHERE status IN ('pending','in_review');
+CREATE INDEX IF NOT EXISTS idx_driver_deletion_status
+ ON driver_deletion_requests(status,requested_at);
+
 CREATE TABLE IF NOT EXISTS auth_challenges (
  id TEXT PRIMARY KEY, type TEXT NOT NULL, driver_id INTEGER, callsign TEXT, email TEXT NOT NULL,
  code_hash TEXT NOT NULL, expires_at INTEGER NOT NULL, created_at TEXT NOT NULL
@@ -3329,7 +3357,21 @@ function getTwilioConfig(){
 }
 
 
-function driverAuth(req,res,next){const p=verifyToken(bearer(req));if(!p?.driverId)return res.status(401).json({error:'Authentication required'});req.auth=p;next()}
+function driverAuth(req,res,next){
+ const p=verifyToken(bearer(req));
+ if(!p?.driverId || !p?.userId)
+  return res.status(401).json({error:'Authentication required'});
+
+ const user=db.prepare(
+  'SELECT id,driver_id,approved FROM driver_users WHERE id=? AND driver_id=?'
+ ).get(p.userId,p.driverId);
+
+ if(!user || !user.approved)
+  return res.status(401).json({error:'Driver account is no longer active. Please sign in again or contact support.'});
+
+ req.auth=p;
+ next();
+}
 function audit(req,actorType,actorId,action,entityType=null,entityId=null,details={}){let displayActor=String(actorId||'');if(actorType==='driver'){const d=cachedDriver(Number(actorId));if(d?.callsign)displayActor=d.callsign}db.prepare('INSERT INTO audit_logs(created_at,actor_type,actor_id,action,entity_type,entity_id,details_json,ip) VALUES(?,?,?,?,?,?,?,?)').run(new Date().toISOString(),actorType,displayActor,action,entityType,entityId?String(entityId):null,JSON.stringify(details||{}),req?.ip||'')}
 
 const headers=()=>({'Content-Type':'application/json','Cache-Control':'no-cache','Ocp-Apim-Subscription-Key':getAutocabApiKey()});
@@ -7843,12 +7885,22 @@ app.get('/api/admin/integrations',adminAuth,(req,res)=>{
  res.json({
   stripe:{
    configured:Boolean(stripeKey),
-   testMode:stripeKey.startsWith('sk_test_')
+   testMode:/^(sk|rk)_test_/.test(stripeKey)
   },
   wise:{
    configured:Boolean(WISE_API_TOKEN),
    environment:WISE_ENV,
    profileId:WISE_PROFILE_ID||null
+  },
+  modulr:{
+   configured:Boolean(
+    MODULR_API_KEY &&
+    MODULR_CUSTOMER_ID &&
+    MODULR_ACCOUNT_ID
+   ),
+   enabled:MODULR_ENABLED && MODULR_ENV==='sandbox',
+   environment:MODULR_ENV==='sandbox'?'sandbox':'invalid',
+   paymentExecutionReady:false
   },
   autocab:{
    configured:Boolean(getAutocabApiKey()),
@@ -7860,6 +7912,311 @@ app.get('/api/admin/integrations',adminAuth,(req,res)=>{
   }
  });
 });
+// Modulr sandbox beneficiary discovery.
+// Read-only: never creates beneficiaries or submits payments.
+async function listModulrSandboxBeneficiaries(){
+ if(MODULR_ENV!=='sandbox'){
+  throw new Error('Modulr beneficiary lookup requires sandbox.');
+ }
+
+ if(!MODULR_API_KEY || !MODULR_CUSTOMER_ID){
+  throw new Error('Modulr sandbox credentials are missing.');
+ }
+
+ const records=[];
+ let page=0;
+
+ while(true){
+  if(page>=100){
+   throw new Error('Modulr beneficiary pagination limit reached.');
+  }
+
+  const url=new URL(MODULR_BASE_URL+'beneficiaries');
+  url.searchParams.set('customerId',MODULR_CUSTOMER_ID);
+  url.searchParams.set('size','100');
+  url.searchParams.set('page',String(page));
+
+  const response=await fetch(url,{
+   method:'GET',
+   headers:{
+    Authorization:MODULR_API_KEY,
+    Accept:'application/json'
+   },
+   signal:AbortSignal.timeout(10000)
+  });
+
+  if(!response.ok){
+   throw new Error('Modulr beneficiary lookup failed.');
+  }
+
+  const data=await response.json();
+
+  if(!Array.isArray(data.content)){
+   throw new Error('Unexpected Modulr beneficiary response.');
+  }
+
+  for(const item of data.content){
+   if(item.customerId!==MODULR_CUSTOMER_ID){
+    throw new Error('Modulr beneficiary customer mismatch.');
+   }
+
+   records.push({
+    id:item.id,
+    status:item.status,
+    approvalStatus:item.approvalStatus||null,
+    sortCodeLast2:String(
+     item.destinationIdentifier?.sortCode||''
+    ).slice(-2),
+    accountLast4:String(
+     item.destinationIdentifier?.accountNumber||''
+    ).slice(-4),
+    currency:item.destinationIdentifier?.currency||null
+   });
+  }
+
+  page++;
+
+  if(page>=Number(data.totalPages||1)){
+   break;
+  }
+ }
+
+ return records;
+}
+
+// Match a saved driver bank account to an existing Modulr
+// sandbox beneficiary. Read-only; no status changes or payments.
+async function findModulrSandboxBankMatch(driverId){
+ if(MODULR_ENV!=='sandbox'){
+  throw new Error('Modulr sandbox is required.');
+ }
+
+ if(!MODULR_API_KEY || !MODULR_CUSTOMER_ID){
+  throw new Error('Modulr sandbox credentials are missing.');
+ }
+
+ const row=db.prepare(`
+  SELECT account_holder_enc,sort_code_enc,account_number_enc,
+         updated_at
+  FROM driver_bank_accounts
+  WHERE driver_id=?
+ `).get(driverId);
+
+ if(!row){
+  return {matched:false,reason:'bank_details_missing'};
+ }
+
+ const sortCode=decryptSecret(row.sort_code_enc);
+ const accountNumber=decryptSecret(row.account_number_enc);
+
+ if(!/^\d{6}$/.test(sortCode) ||
+    !/^\d{8}$/.test(accountNumber)){
+  throw new Error('Saved bank details could not be validated.');
+ }
+
+ // Full identifiers remain inside this function.
+ const matches=[];
+ let page=0;
+
+ while(true){
+  if(page>=100){
+   throw new Error('Modulr beneficiary pagination limit reached.');
+  }
+
+  const url=new URL(MODULR_BASE_URL+'beneficiaries');
+  url.searchParams.set('customerId',MODULR_CUSTOMER_ID);
+  url.searchParams.set('size','100');
+  url.searchParams.set('page',String(page));
+
+  const response=await fetch(url,{
+   method:'GET',
+   headers:{
+    Authorization:MODULR_API_KEY,
+    Accept:'application/json'
+   },
+   signal:AbortSignal.timeout(10000)
+  });
+
+  if(!response.ok){
+   throw new Error('Modulr beneficiary lookup failed.');
+  }
+
+  const data=await response.json();
+
+  if(!Array.isArray(data.content) ||
+     !Number.isInteger(data.totalPages) ||
+     data.totalPages<1){
+   throw new Error('Unexpected Modulr beneficiary response.');
+  }
+
+  for(const item of data.content){
+   if(item.customerId!==MODULR_CUSTOMER_ID){
+    throw new Error('Modulr beneficiary customer mismatch.');
+   }
+
+   const destination=item.destinationIdentifier||{};
+
+   if(
+    destination.sortCode===sortCode &&
+    destination.accountNumber===accountNumber &&
+    destination.currency==='GBP' &&
+    item.status==='ACTIVE'
+   ){
+    matches.push(item);
+   }
+  }
+
+  page++;
+
+  if(page>=data.totalPages)break;
+ }
+
+ // A driver may change bank details while the API request runs.
+ const current=db.prepare(`
+  SELECT sort_code_enc,account_number_enc,updated_at
+  FROM driver_bank_accounts
+  WHERE driver_id=?
+ `).get(driverId);
+
+ if(!current ||
+    current.updated_at!==row.updated_at ||
+    current.sort_code_enc!==row.sort_code_enc ||
+    current.account_number_enc!==row.account_number_enc){
+  return {matched:false,reason:'bank_details_changed'};
+ }
+
+ if(matches.length!==1){
+  return {
+   matched:false,
+   reason:matches.length?'multiple_matches':'no_match'
+  };
+ }
+
+ const beneficiary=matches[0];
+
+ return {
+  matched:true,
+  beneficiaryId:beneficiary.id,
+  status:beneficiary.status,
+  approvalStatus:beneficiary.approvalStatus||null,
+  approvalRequired:beneficiary.approvalRequired,
+  bankUpdatedAt:row.updated_at
+ };
+}
+
+// Modulr sandbox driver-bank matching test.
+// Restricted and read-only. No beneficiary or payment writes.
+app.get(
+ '/api/admin/integrations/modulr/drivers/:driverId/bank-match',
+ adminAuth,
+ requireStaffRole('administrator','finance'),
+ async(req,res)=>{
+  if(MODULR_ENV!=='sandbox' || MODULR_ENABLED){
+   return res.status(403).json({
+    error:'Bank matching is available only with Modulr payouts disabled in sandbox.'
+   });
+  }
+
+  const driverId=Number(req.params.driverId);
+
+  if(!Number.isSafeInteger(driverId) || driverId<=0){
+   return res.status(400).json({error:'Invalid driver ID.'});
+  }
+
+  const driver=cachedDriver(driverId);
+
+  if(!driver){
+   return res.status(404).json({error:'Driver not found.'});
+  }
+
+  try{
+   const result=await findModulrSandboxBankMatch(driverId);
+
+   res.json({
+    ok:true,
+    driverId,
+    callsign:driver.callsign,
+    matched:result.matched,
+    beneficiaryId:result.beneficiaryId||null,
+    beneficiaryStatus:result.status||null,
+    approvalStatus:result.approvalStatus||null,
+    approvalRequired:result.approvalRequired??null,
+    reason:result.reason||null,
+    paymentReady:false,
+    paymentExecutionEnabled:false
+   });
+  }catch(e){
+   res.status(502).json({
+    error:'Modulr sandbox bank matching could not be completed.'
+   });
+  }
+ }
+);
+
+// Modulr sandbox connection test — read-only.
+app.get(
+ '/api/admin/integrations/modulr/test',
+ adminAuth,
+ requireStaffRole('administrator','finance'),
+ async(req,res)=>{
+  if(MODULR_ENV!=='sandbox'){
+   return res.status(400).json({
+    error:'Modulr sandbox environment is required.'
+   });
+  }
+
+  if(!MODULR_API_KEY || !MODULR_CUSTOMER_ID || !MODULR_ACCOUNT_ID){
+   return res.status(400).json({
+    error:'Modulr sandbox credentials are not configured.'
+   });
+  }
+
+  try{
+   const response=await fetch(
+    MODULR_BASE_URL+'accounts/'+encodeURIComponent(MODULR_ACCOUNT_ID),
+    {
+     method:'GET',
+     headers:{
+      Authorization:MODULR_API_KEY,
+      Accept:'application/json'
+     },
+     signal:AbortSignal.timeout(10000)
+    }
+   );
+
+   if(!response.ok){
+    return res.status(502).json({
+     error:'Modulr sandbox connection failed.',
+     providerStatus:response.status
+    });
+   }
+
+   const account=await response.json();
+
+   if(account.id!==MODULR_ACCOUNT_ID ||
+      account.customerId!==MODULR_CUSTOMER_ID ||
+      account.currency!=='GBP'){
+    return res.status(502).json({
+     error:'Modulr sandbox account identity check failed.'
+    });
+   }
+
+   res.json({
+    ok:true,
+    provider:'modulr',
+    environment:'sandbox',
+    accountStatus:account.status,
+    currency:account.currency,
+    paymentExecutionReady:false
+   });
+  }catch(e){
+   res.status(502).json({
+    error:'Modulr sandbox connection could not be verified.'
+   });
+  }
+ }
+);
+
 app.post('/api/admin/integrations/wise/test',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{const out=await testWiseConnection();audit(req,'admin',req.auth.email,'wise_connection_test','integration','wise',{environment:WISE_ENV});res.json(out)}catch(e){res.status(500).json({error:e.message})}});
 app.post('/api/admin/autocab/test-adjustment',adminAuth,requireStaffRole('administrator'),async(req,res)=>{try{const callsign=String(req.body.callsign||'').trim();const d=cacheRows().find(x=>String(x.callsign)===callsign);if(!d)return res.status(404).json({error:'Callsign not found in FaivoPay cache'});const amount=Number(req.body.amount||0);if(!(amount>0))return res.status(400).json({error:'Amount must be greater than zero'});const result=await postAutocabAdjustment({driverId:d.driverId,callsign:d.callsign,amount,isCredit:Boolean(req.body.isCredit),description:String(req.body.description||'FaivoPay test adjustment'),adjustmentReason:String(req.body.adjustmentReason||'FaivoPay Test'),eventKey:`test:${Date.now()}:${d.driverId}`});audit(req,'admin',req.auth.email,'autocab_test_adjustment','driver',d.callsign,{callsign:d.callsign,amount,isCredit:Boolean(req.body.isCredit)});setTimeout(()=>syncAutocab().catch(()=>{}),500);res.json({ok:true,driver:{driverId:d.driverId,callsign:d.callsign,fullName:d.fullName},result})}catch(e){res.status(500).json({error:e.message})}});
 // STEP138_AUTOCAB_RECONCILIATION_API
@@ -8026,6 +8383,65 @@ app.post(
 );
 
 app.get('/api/admin/autocab/adjustments',adminAuth,(req,res)=>{const rows=db.prepare('SELECT id,event_key eventKey,driver_id driverId,callsign,amount,is_credit isCredit,description,adjustment_reason adjustmentReason,status,created_at createdAt,completed_at completedAt,error FROM autocab_adjustments ORDER BY created_at DESC LIMIT 250').all().map(x=>({...x,isCredit:Boolean(x.isCredit)}));res.json({adjustments:rows})});
+app.get('/api/admin/account-deletion-requests',
+ adminAuth,requireStaffRole('administrator'),(req,res)=>{
+ try{
+  const requests=db.prepare(`
+   SELECT id,driver_id AS driverId,user_id AS userId,
+    callsign,email,status,requested_at AS requestedAt,
+    reviewed_at AS reviewedAt,reviewed_by AS reviewedBy,
+    review_notes AS reviewNotes
+   FROM driver_deletion_requests
+   ORDER BY CASE WHEN status IN ('pending','in_review') THEN 0 ELSE 1 END,
+    requested_at DESC
+   LIMIT 250
+  `).all();
+
+  res.json({requests});
+ }catch(e){
+  res.status(500).json({error:'Unable to load deletion requests'});
+ }
+});
+
+app.patch('/api/admin/account-deletion-requests/:id',
+ adminAuth,requireStaffRole('administrator'),(req,res)=>{
+ try{
+  const status=String(req.body?.status||'');
+  const notes=String(req.body?.notes||'').trim();
+
+  if(!['in_review','rejected'].includes(status))
+   return res.status(400).json({error:'Invalid review status'});
+
+  if(notes.length>2000)
+   return res.status(400).json({error:'Notes are too long'});
+
+  const existing=db.prepare(
+   'SELECT * FROM driver_deletion_requests WHERE id=?'
+  ).get(req.params.id);
+
+  if(!existing)
+   return res.status(404).json({error:'Request not found'});
+
+  if(!['pending','in_review'].includes(existing.status))
+   return res.status(409).json({error:'Request is already closed'});
+
+  const now=new Date().toISOString();
+
+  db.prepare(`
+   UPDATE driver_deletion_requests
+   SET status=?,reviewed_at=?,reviewed_by=?,review_notes=?
+   WHERE id=?
+  `).run(status,now,req.auth.email,notes,existing.id);
+
+  audit(req,'staff',req.auth.email,'account_deletion_review_updated',
+   'driver_deletion_request',existing.id,{status});
+
+  res.json({ok:true,status});
+ }catch(e){
+  res.status(500).json({error:'Unable to update deletion request'});
+ }
+});
+
 app.get('/api/admin/dashboard',adminAuth,(req,res)=>{const drivers=cacheRows();const matched=drivers.filter(d=>d.currentBalance!==null).length;const owedOut=drivers.reduce((s,d)=>s+Math.max(0,Number(d.currentBalance||0)),0),owedIn=drivers.reduce((s,d)=>s+Math.max(0,-Number(d.currentBalance||0)),0);const stats={count:drivers.length,matched,unmatched:drivers.length-matched,owedOut,owedIn,openPaymentRequests:Number(db.prepare("SELECT COUNT(*) c FROM payment_requests WHERE status='open'").get().c),queuedPayouts:Number(db.prepare("SELECT COUNT(*) c FROM payouts WHERE status IN ('queued','requested','approved','batched')").get().c),pendingUsers:Number(db.prepare('SELECT COUNT(*) c FROM driver_users WHERE approved=0').get().c)};const lastSync=db.prepare('SELECT MAX(synced_at) lastSync FROM driver_cache').get()?.lastSync||null;res.json({fetchedAt:new Date().toISOString(),lastSync,stats,drivers})});
 app.get('/api/drivers',adminAuth,(req,res)=>{const drivers=cacheRows().map(d=>({...d,bankAccount:adminBankAccountInfo(d.driverId)}));const matched=drivers.filter(d=>d.currentBalance!==null).length;const lastSync=db.prepare('SELECT MAX(synced_at) lastSync FROM driver_cache').get()?.lastSync||null;const bankReady=drivers.filter(d=>d.bankAccount?.ready).length,bankMissing=drivers.length-bankReady,bankRecentlyChanged=drivers.filter(d=>d.bankAccount?.changedRecently).length;res.json({fetchedAt:new Date().toISOString(),lastSync,count:drivers.length,matched,unmatched:drivers.length-matched,bankReady,bankMissing,bankRecentlyChanged,drivers})});
 
@@ -21608,6 +22024,42 @@ app.post('/api/driver/forgot-password/start',async(req,res)=>{const email=safeEm
 app.post('/api/driver/forgot-password/complete',(req,res)=>{const c=db.prepare("SELECT * FROM auth_challenges WHERE id=? AND type='reset'").get(req.body.challengeId);if(!c||c.expires_at<Date.now())return res.status(400).json({error:'Reset code expired or invalid'});if(crypto.createHash('sha256').update(String(req.body.code||'')).digest('hex')!==c.code_hash)return res.status(400).json({error:'Incorrect reset code'});const password=String(req.body.password||'');if(password.length<8)return res.status(400).json({error:'Password must be at least 8 characters'});const p=hashPassword(password);db.prepare('UPDATE driver_users SET password_hash=?,password_salt=?,updated_at=? WHERE driver_id=?').run(p.hash,p.salt,new Date().toISOString(),c.driver_id);db.prepare('DELETE FROM auth_challenges WHERE id=?').run(c.id);audit(req,'driver',c.driver_id,'password_reset_completed','driver_user',c.driver_id);res.json({ok:true})});
 
 
+app.post('/api/driver/account-deletion-request',driverAuth,(req,res)=>{
+ try{
+  const user=db.prepare(
+   'SELECT id,driver_id,callsign,email FROM driver_users WHERE id=? AND driver_id=?'
+  ).get(req.auth.userId,req.auth.driverId);
+
+  if(!user)return res.status(401).json({error:'Driver account not found'});
+
+  const existing=db.prepare(
+   "SELECT id,status,requested_at FROM driver_deletion_requests WHERE user_id=? AND status IN ('pending','in_review') LIMIT 1"
+  ).get(user.id);
+
+  if(existing)return res.json({
+   ok:true,alreadyRequested:true,status:existing.status,
+   requestedAt:existing.requested_at
+  });
+
+  const requestId=id('deletion');
+  const now=new Date().toISOString();
+
+  db.prepare(
+   'INSERT INTO driver_deletion_requests(id,driver_id,user_id,callsign,email,status,requested_at) VALUES(?,?,?,?,?,?,?)'
+  ).run(requestId,user.driver_id,user.id,user.callsign,user.email,'pending',now);
+
+  audit(req,'driver',user.driver_id,'account_deletion_requested',
+   'driver_deletion_request',requestId);
+
+  res.json({ok:true,status:'pending',requestedAt:now});
+ }catch(e){
+  if(e.code?.startsWith('SQLITE_CONSTRAINT')){
+   return res.status(409).json({error:'A deletion request is already pending'});
+  }
+  res.status(500).json({error:'Unable to record deletion request'});
+ }
+});
+
 app.get('/api/driver/push-config',driverAuth,(req,res)=>res.json({enabled:Boolean(VAPID_PUBLIC_KEY&&VAPID_PRIVATE_KEY),publicKey:VAPID_PUBLIC_KEY||null}));
 app.post('/api/driver/push-subscription',driverAuth,(req,res)=>{try{const sub=req.body.subscription;if(!sub?.endpoint)return res.status(400).json({error:'Invalid push subscription'});const now=new Date().toISOString();db.prepare('INSERT INTO push_subscriptions(id,driver_id,endpoint,subscription_json,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET driver_id=excluded.driver_id,subscription_json=excluded.subscription_json,updated_at=excluded.updated_at').run(id('push'),req.auth.driverId,sub.endpoint,JSON.stringify(sub),now,now);audit(req,'driver',req.auth.driverId,'push_notifications_enabled','driver',req.auth.driverId);res.json({ok:true})}catch(e){res.status(500).json({error:e.message})}});
 app.post('/api/driver/push-test',driverAuth,async(req,res)=>{const d=cachedDriver(req.auth.driverId);await sendPush(req.auth.driverId,'FaivoPay test notification',`Push notifications are working for callsign ${d?.callsign||''}.`);res.json({ok:true})});
@@ -23726,7 +24178,7 @@ function scheduleWeeklyInvoiceAutomation(delayMs=60*60*1000){
  );
 }
 
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, process.env.SERVER_BIND_HOST || '0.0.0.0', () => {
   console.log(`FaivoPay server running on port ${PORT} · DB ${DB_PATH}`);
 
   if(!backgroundJobsDisabled()){
