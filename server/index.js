@@ -8100,7 +8100,9 @@ async function findModulrSandboxBankMatch(driverId){
   status:beneficiary.status,
   approvalStatus:beneficiary.approvalStatus||null,
   approvalRequired:beneficiary.approvalRequired,
-  bankUpdatedAt:row.updated_at
+  bankUpdatedAt:row.updated_at,
+  bankSortCodeEnc:row.sort_code_enc,
+  bankAccountNumberEnc:row.account_number_enc
  };
 }
 
@@ -8164,6 +8166,530 @@ async function assessModulrSandboxReadiness(driverId){
   paymentExecutionEnabled:false
  };
 }
+
+
+
+// Validate a Modulr recipient snapshot before transactional preparation.
+// Purely local checks: no provider requests or financial writes.
+// The caller must run the final validation inside BEGIN IMMEDIATE.
+function validateModulrPreparationSnapshot(payout,match){
+ if(!payout || payout.status!=='batched' || payout.paid_at){
+  throw new Error('Payout is not eligible for preparation.');
+ }
+
+ if(!match?.matched ||
+    !match.beneficiaryId ||
+    match.status!=='ACTIVE' ||
+    match.approvalStatus!=='APPROVED' ||
+    match.approvalRequired!==false){
+  throw new Error('Approved Modulr beneficiary is required.');
+ }
+
+ const amount=Number(payout.net_amount??payout.amount);
+ const amountMinor=Math.round(amount*100);
+
+ if(!Number.isFinite(amount) ||
+    !Number.isSafeInteger(amountMinor) ||
+    amountMinor<=0 ||
+    Math.abs(amount*100-amountMinor)>0.000001){
+  throw new Error('Invalid GBP payout amount.');
+ }
+
+ const bank=db.prepare(`
+  SELECT sort_code_enc,account_number_enc,
+         sort_code_last2,account_number_last4,updated_at
+  FROM driver_bank_accounts
+  WHERE driver_id=?
+ `).get(payout.driver_id);
+
+ if(!bank ||
+    !bank.updated_at ||
+    bank.updated_at!==match.bankUpdatedAt ||
+    bank.sort_code_enc!==match.bankSortCodeEnc ||
+    bank.account_number_enc!==match.bankAccountNumberEnc){
+  throw new Error('Driver bank details changed or are missing.');
+ }
+
+ const sortCode=decryptSecret(bank.sort_code_enc);
+ const accountNumber=decryptSecret(bank.account_number_enc);
+
+ if(!/^\d{6}$/.test(sortCode) ||
+    !/^\d{8}$/.test(accountNumber) ||
+    bank.sort_code_last2!==sortCode.slice(-2) ||
+    bank.account_number_last4!==accountNumber.slice(-4)){
+  throw new Error('Saved bank details failed validation.');
+ }
+
+ return {
+  payoutId:payout.id,
+  driverId:payout.driver_id,
+  recipientId:match.beneficiaryId,
+  recipientAccountLast4:bank.account_number_last4,
+  recipientSortCodeLast2:bank.sort_code_last2,
+  bankUpdatedAt:bank.updated_at,
+  amountMinor,
+  currency:'GBP',
+  provider:'modulr',
+  environment:'sandbox'
+ };
+}
+
+
+// Hard boundary for experimental Modulr transfer preparation.
+// This function must be called before any preparation database write.
+// Never use this guard as authorisation for live payment execution.
+function assertModulrPreparationTestEnvironment(){
+ const expectedDb=path.resolve(
+  process.cwd(),
+  'data/faivopay-modulr-preview-fixture.sqlite'
+ );
+
+ if(MODULR_ENV!=='sandbox' ||
+    MODULR_ENABLED ||
+    path.resolve(DB_PATH)!==expectedDb){
+  throw new Error(
+   'Modulr preparation is restricted to the isolated test database.'
+  );
+ }
+
+ return true;
+}
+
+
+// Sandbox-only transfer-intent preparation.
+// No Modulr payment submission, accounting or Autocab updates.
+// All database writes occur within one immediate transaction.
+function prepareModulrSandboxTransferIntents(runId,matches){
+ assertModulrPreparationTestEnvironment();
+
+ if(typeof runId!=='string' || !runId.trim()){
+  throw new Error('Valid payout-run ID required.');
+ }
+
+ if(!(matches instanceof Map)){
+  throw new Error('Verified beneficiary matches required.');
+ }
+
+ db.exec('BEGIN IMMEDIATE');
+
+ try{
+  const run=db.prepare(
+   'SELECT * FROM payout_runs WHERE id=?'
+  ).get(runId);
+
+  if(!run ||
+     run.status!=='funded' ||
+     run.funding_status!=='cleared' ||
+     run.provider!=='modulr' ||
+     !run.funds_cleared_at ||
+     run.provider_ref ||
+     run.released_at ||
+     run.paid_at){
+   throw new Error('Payout run is not eligible for preparation.');
+  }
+
+  const payouts=db.prepare(
+   'SELECT * FROM payouts WHERE payout_run_id=? ORDER BY id'
+  ).all(runId);
+
+  if(payouts.length===0 ||
+     payouts.length!==Number(run.item_count)){
+   throw new Error('Payout-run item count mismatch.');
+  }
+
+  const snapshots=[];
+  let totalMinor=0;
+
+  for(const payout of payouts){
+   if(payout.payout_run_id!==runId ||
+      payout.type!==run.run_type ||
+      payout.status!=='batched' ||
+      payout.paid_at){
+    throw new Error('Payout state changed or is ineligible.');
+   }
+
+   if(db.prepare(
+    'SELECT id FROM payout_transfer_intents WHERE payout_id=?'
+   ).get(payout.id)){
+    throw new Error('Transfer instruction already exists.');
+   }
+
+   if(db.prepare(
+    'SELECT id FROM payout_confirmations WHERE payout_id=? LIMIT 1'
+   ).get(payout.id)){
+    throw new Error('Payment evidence already exists.');
+   }
+
+   // Read the current payout exclusion inside BEGIN IMMEDIATE.
+   const driver=db.prepare(`
+    SELECT driver_id,payout_excluded
+    FROM driver_cache
+    WHERE driver_id=?
+   `).get(payout.driver_id);
+
+   if(!driver || driver.payout_excluded!==0){
+    throw new Error('Driver is missing or excluded from payouts.');
+   }
+
+   const match=matches.get(payout.driver_id);
+   const snapshot=validateModulrPreparationSnapshot(payout,match);
+
+   totalMinor+=snapshot.amountMinor;
+
+   if(!Number.isSafeInteger(totalMinor)){
+    throw new Error('Payout total exceeds safe integer range.');
+   }
+
+   snapshots.push(snapshot);
+  }
+
+  const runAmount=Number(run.total_amount);
+  const runAmountMinor=Math.round(runAmount*100);
+
+  if(!Number.isFinite(runAmount) ||
+     !Number.isSafeInteger(runAmountMinor) ||
+     Math.abs(runAmount*100-runAmountMinor)>0.000001 ||
+     totalMinor!==runAmountMinor){
+   throw new Error('Payout-run amount mismatch.');
+  }
+
+  const now=new Date().toISOString();
+
+  const insert=db.prepare(`
+   INSERT INTO payout_transfer_intents (
+    id,payout_id,payout_run_id,
+    provider,environment,idempotency_key,
+    recipient_id,recipient_account_last4,
+    recipient_sort_code_last2,recipient_verified_at,
+    recipient_snapshot_at,amount_minor,currency,
+    status,created_at,updated_at
+   )
+   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `);
+
+  for(const snapshot of snapshots){
+   const intentId=crypto.randomUUID();
+   const idempotencyKey=crypto.randomUUID();
+
+   insert.run(
+    intentId,snapshot.payoutId,runId,
+    'modulr','sandbox',idempotencyKey,
+    snapshot.recipientId,
+    snapshot.recipientAccountLast4,
+    snapshot.recipientSortCodeLast2,
+    now,now,
+    snapshot.amountMinor,'GBP',
+    'prepared',now,now
+   );
+  }
+
+  db.exec('COMMIT');
+
+  return {
+   ok:true,
+   runId,
+   preparedCount:snapshots.length,
+   totalMinor,
+   environment:'sandbox',
+   paymentSubmitted:false,
+   paymentExecutionEnabled:false
+  };
+
+ }catch(error){
+  db.exec('ROLLBACK');
+  throw error;
+ }
+}
+
+
+// Isolated-fixture Modulr preparation only.
+// Never submits funds to Modulr or finalises accounting.
+app.post(
+ '/api/admin/payout-runs/:id/modulr-prepare',
+ adminAuth,
+ requireStaffRole('administrator','finance'),
+ async(req,res)=>{
+  try{
+   // Enforce the database and environment boundary first.
+   assertModulrPreparationTestEnvironment();
+
+   const runId=String(req.params.id||'').trim();
+
+   if(!runId){
+    return res.status(400).json({
+     error:'Valid payout-run ID required.'
+    });
+   }
+
+   const run=db.prepare(
+    'SELECT * FROM payout_runs WHERE id=?'
+   ).get(runId);
+
+   if(!run){
+    return res.status(404).json({
+     error:'Payout run not found.'
+    });
+   }
+
+   // Preliminary checks avoid unnecessary provider requests.
+   // The preparation function repeats critical checks inside
+   // BEGIN IMMEDIATE before committing any instructions.
+   if(
+    run.provider!=='modulr' ||
+    run.status!=='funded' ||
+    run.funding_status!=='cleared' ||
+    !run.funds_cleared_at ||
+    run.provider_ref ||
+    run.released_at ||
+    run.paid_at
+   ){
+    return res.status(409).json({
+     error:'Payout run is not eligible for Modulr preparation.'
+    });
+   }
+
+   const payouts=db.prepare(
+    'SELECT * FROM payouts WHERE payout_run_id=? ORDER BY id'
+   ).all(runId);
+
+   if(
+    payouts.length===0 ||
+    payouts.length!==Number(run.item_count)
+   ){
+    return res.status(409).json({
+     error:'Payout-run item count mismatch.'
+    });
+   }
+
+   const matches=new Map();
+
+   for(const payout of payouts){
+    if(
+     payout.status!=='batched' ||
+     payout.paid_at ||
+     payout.type!==run.run_type ||
+     !Number.isSafeInteger(Number(payout.driver_id)) ||
+     Number(payout.driver_id)<=0
+    ){
+     return res.status(409).json({
+      error:'A payout is not eligible for preparation.'
+     });
+    }
+
+    const existing=db.prepare(
+     'SELECT id FROM payout_transfer_intents WHERE payout_id=?'
+    ).get(payout.id);
+
+    if(existing){
+     return res.status(409).json({
+      error:'A payout already has a transfer instruction.'
+     });
+    }
+
+    const confirmation=db.prepare(
+     'SELECT id FROM payout_confirmations WHERE payout_id=? LIMIT 1'
+    ).get(payout.id);
+
+    if(confirmation){
+     return res.status(409).json({
+      error:'Provider payment evidence already exists.'
+     });
+    }
+   }
+
+   // Independently verify beneficiaries before the transaction.
+   // No external requests occur while SQLite is locked.
+   for(const payout of payouts){
+    const driverId=Number(payout.driver_id);
+
+    if(matches.has(driverId)){
+     continue;
+    }
+
+    const driver=db.prepare(
+     'SELECT payout_excluded FROM driver_cache WHERE driver_id=?'
+    ).get(driverId);
+
+    if(!driver || driver.payout_excluded!==0){
+     return res.status(409).json({
+      error:'A driver is missing or excluded from payouts.'
+     });
+    }
+
+    const match=await findModulrSandboxBankMatch(driverId);
+
+    if(
+     !match.matched ||
+     !match.beneficiaryId ||
+     match.status!=='ACTIVE' ||
+     match.approvalStatus!=='APPROVED' ||
+     match.approvalRequired!==false
+    ){
+     return res.status(409).json({
+      error:'An approved Modulr beneficiary could not be confirmed.'
+     });
+    }
+
+    matches.set(driverId,match);
+   }
+
+   // Transactional validation and all-or-nothing preparation.
+   const result=prepareModulrSandboxTransferIntents(
+    runId,matches
+   );
+
+   return res.json(result);
+
+  }catch(error){
+   // Never expose provider credentials or raw banking details.
+   const boundaryError=String(error.message||'')
+    .includes('restricted to the isolated test database');
+
+   return res.status(boundaryError?403:409).json({
+    error:boundaryError
+     ?'Modulr preparation is restricted to isolated testing.'
+     :'Modulr preparation failed. No payment was submitted.',
+    paymentSubmitted:false,
+    paymentExecutionEnabled:false
+   });
+  }
+ }
+);
+
+// Modulr payout-run preview only.
+// No database writes, payment submission or accounting changes.
+app.get(
+ '/api/admin/payout-runs/:id/modulr-preview',
+ adminAuth,
+ requireStaffRole('administrator','finance'),
+ async(req,res)=>{
+  if(MODULR_ENV!=='sandbox' || MODULR_ENABLED){
+   return res.status(403).json({
+    error:'Preview requires Modulr sandbox with payments disabled.'
+   });
+  }
+
+  try{
+   const run=db.prepare(
+    'SELECT * FROM payout_runs WHERE id=?'
+   ).get(req.params.id);
+
+   if(!run){
+    return res.status(404).json({error:'Payout run not found.'});
+   }
+
+   const payouts=db.prepare(
+    'SELECT * FROM payouts WHERE payout_run_id=? ORDER BY id'
+   ).all(run.id);
+
+   const results=[];
+
+   for(const payout of payouts){
+    const reasons=[];
+    const amount=Number(payout.net_amount??payout.amount);
+    const amountMinor=Math.round(amount*100);
+
+    if(
+     !Number.isFinite(amount) ||
+     !Number.isSafeInteger(amountMinor) ||
+     amountMinor<=0 ||
+     Math.abs(amount*100-amountMinor)>0.000001
+    ){
+     reasons.push('invalid_amount');
+    }
+
+    if(payout.status!=='batched' || payout.paid_at){
+     reasons.push('payout_not_eligible');
+    }
+
+    const intent=db.prepare(
+     'SELECT id FROM payout_transfer_intents WHERE payout_id=?'
+    ).get(payout.id);
+
+    if(intent){
+     reasons.push('transfer_intent_exists');
+    }
+
+    const evidence=db.prepare(
+     'SELECT id FROM payout_confirmations WHERE payout_id=? LIMIT 1'
+    ).get(payout.id);
+
+    if(evidence){
+     reasons.push('payment_evidence_exists');
+    }
+
+    // Check beneficiary only for otherwise eligible payouts.
+    if(reasons.length===0){
+     const readiness=await assessModulrSandboxReadiness(
+      payout.driver_id
+     );
+
+     if(!readiness.checksPassed){
+      reasons.push(...readiness.reasons);
+     }
+    }
+
+    results.push({
+     payoutId:payout.id,
+     callsign:payout.callsign,
+     amountMinor:Number.isSafeInteger(amountMinor)
+      ?amountMinor:null,
+     checksPassed:reasons.length===0,
+     reasons
+    });
+   }
+
+   const totalMinor=results.reduce(
+    (sum,item)=>sum+(item.amountMinor||0),0
+   );
+
+   const runReasons=[];
+
+   if(run.status!=='funded' ||
+      run.funding_status!=='cleared'){
+    runReasons.push('run_not_funded');
+   }
+
+   if(run.provider_ref || run.released_at || run.paid_at){
+    runReasons.push('run_already_released');
+   }
+
+   if(results.length===0 ||
+      results.length!==Number(run.item_count)){
+    runReasons.push('item_count_mismatch');
+   }
+
+   if(
+    !Number.isSafeInteger(totalMinor) ||
+    totalMinor!==Math.round(Number(run.total_amount)*100)
+   ){
+    runReasons.push('total_amount_mismatch');
+   }
+
+   const checksPassed=
+    runReasons.length===0 &&
+    results.every(item=>item.checksPassed);
+
+   res.json({
+    ok:true,
+    environment:'sandbox',
+    runId:run.id,
+    runStatus:run.status,
+    itemCount:results.length,
+    totalMinor,
+    checksPassed,
+    runReasons,
+    items:results,
+    paymentReady:false,
+    paymentExecutionEnabled:false
+   });
+  }catch{
+   res.status(502).json({
+    error:'Modulr payout preview could not be completed.'
+   });
+  }
+ }
+);
 
 // Read-only sandbox payout-readiness assessment.
 // Never submits a payment or changes financial records.
