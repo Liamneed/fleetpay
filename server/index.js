@@ -1,3 +1,4 @@
+import { listModulrTransfersForReview } from './lib/modulr-transfer-review.mjs';
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -8550,6 +8551,40 @@ app.post(
      ?'Modulr preparation is restricted to isolated testing.'
      :'Modulr preparation failed. No payment was submitted.',
     paymentSubmitted:false,
+    paymentExecutionEnabled:false
+   });
+  }
+ }
+);
+
+// Read-only Modulr sandbox transfer investigation.
+// No payment submission, retry, provider call or accounting writes.
+app.get(
+ '/api/admin/modulr/transfers/review',
+ adminAuth,
+ requireStaffRole('administrator','finance'),
+ (req,res)=>{
+  if(MODULR_ENV!=='sandbox' || MODULR_ENABLED){
+   return res.status(403).json({
+    error:'Modulr sandbox review is unavailable.'
+   });
+  }
+
+  try{
+   const transfers=listModulrTransfersForReview(db);
+   return res.json({
+    ok:true,
+    environment:'sandbox',
+    reviewOnly:true,
+    paymentExecutionEnabled:false,
+    automaticRetryEnabled:false,
+    count:transfers.length,
+    transfers
+   });
+  }catch(error){
+   console.error('Modulr review failed:', error.message);
+   return res.status(500).json({
+    error:'Unable to retrieve Modulr transfer review.',
     paymentExecutionEnabled:false
    });
   }
