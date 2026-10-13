@@ -1,53 +1,40 @@
-// Interpretation of simulated Modulr submission outcomes.
-// This module performs no HTTP requests or database writes.
+// Interpret Modulr Create Payment responses.
+// Pure logic: no HTTP, database access, retries or accounting.
 
 export function classifyModulrSubmission(response) {
-  if (
-    !response ||
-    response.timeout === true ||
-    response.networkError === true
-  ) {
-    return {
-      status: 'unknown',
-      reason: 'provider_outcome_uncertain'
-    };
+  const unknown = reason => ({
+    status: 'unknown',
+    reason
+  });
+
+  if (!response || response.timeout === true ||
+      response.networkError === true) {
+    return unknown('provider_outcome_uncertain');
   }
 
-  const httpStatus = Number(response.httpStatus);
+  // Modulr documents HTTP 201 for a created payment.
+  // Creation does not establish settlement.
+  if (response.httpStatus === 201) {
+    const payment = response.body;
 
-  // Do not assume a transfer succeeded merely because the
-  // provider accepted the instruction.
-  if (httpStatus >= 200 && httpStatus < 300) {
-    const transferId = response.transferId;
+    if (!payment || typeof payment.id !== 'string' ||
+        !/^[A-Za-z0-9_-]{1,128}$/.test(payment.id)) {
+      return unknown('missing_provider_transfer_id');
+    }
 
-    if (typeof transferId !== 'string' || !transferId.trim()) {
-      return {
-        status: 'unknown',
-        reason: 'missing_provider_transfer_id'
-      };
+    if (typeof payment.status !== 'string' ||
+        !payment.status.trim()) {
+      return unknown('missing_provider_status');
     }
 
     return {
       status: 'submitted',
-      providerTransferId: transferId
+      providerTransferId: payment.id,
+      providerStatus: payment.status,
+      accountingFinalised: false
     };
   }
 
-  // Only an explicit, reliably classified rejection is final.
-  // Generic HTTP failures remain uncertain.
-  if (
-    response.definitiveRejection === true &&
-    httpStatus >= 400 &&
-    httpStatus < 500
-  ) {
-    return {
-      status: 'unknown',
-      reason: 'rejection_requires_verification'
-    };
-  }
-
-  return {
-    status: 'unknown',
-    reason: 'provider_outcome_uncertain'
-  };
+  // Never automatically retry an uncertain provider outcome.
+  return unknown('provider_outcome_uncertain');
 }

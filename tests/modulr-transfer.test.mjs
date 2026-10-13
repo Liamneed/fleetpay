@@ -219,10 +219,15 @@ test('Mock reconciliation does not pay the driver', () => {
       submitted,
       {
         id: 'mock_transfer_001',
-        recipientId: submitted.recipient_id,
-        amountMinor: 2500,
-        currency: 'GBP',
-        status: 'COMPLETED'
+        status: 'PROCESSED',
+        details: {
+          destination: {
+            type: 'BENEFICIARY',
+            id: submitted.recipient_id
+          },
+          amount: 2500 / 100,
+          currency: 'GBP'
+        }
       }
     );
 
@@ -269,22 +274,30 @@ test('Incorrect provider details fail reconciliation', () => {
 
   const payment = {
     id: 'mock_transfer_001',
-    recipientId: 'mock_beneficiary_001',
-    amountMinor: 2500,
-    currency: 'GBP',
-    status: 'COMPLETED'
+    status: 'PROCESSED',
+    details: {
+      destination: {
+        type: 'BENEFICIARY',
+        id: 'mock_beneficiary_001'
+      },
+      amount: 25,
+      currency: 'GBP'
+    }
   };
 
   assert.equal(
     validateModulrReconciliation(
-      intent, { ...payment, amountMinor: 2600 }
+      intent, { ...payment, details: { ...payment.details, amount: 26 } }
     ).verified,
     false
   );
 
   assert.equal(
     validateModulrReconciliation(
-      intent, { ...payment, recipientId: 'wrong' }
+      intent, { ...payment, details: {
+        ...payment.details,
+        destination: { type: 'BENEFICIARY', id: 'wrong' }
+      } }
     ).verified,
     false
   );
@@ -298,7 +311,7 @@ test('Incorrect provider details fail reconciliation', () => {
 
   assert.equal(
     validateModulrReconciliation(
-      intent, { ...payment, currency: 'EUR' }
+      intent, { ...payment, details: { ...payment.details, currency: 'EUR' } }
     ).verified,
     false
   );
@@ -349,10 +362,15 @@ test('Mock confirmation never creates a genuine confirmed transfer', () => {
       submitted,
       {
         id: 'mock_safe_confirmation',
-        recipientId: submitted.recipient_id,
-        amountMinor: submitted.amount_minor,
-        currency: 'GBP',
-        status: 'COMPLETED'
+        status: 'PROCESSED',
+        details: {
+          destination: {
+            type: 'BENEFICIARY',
+            id: submitted.recipient_id
+          },
+          amount: submitted.amount_minor / 100,
+          currency: 'GBP'
+        }
       }
     );
 
