@@ -397,3 +397,131 @@ test('Mock confirmation never creates a genuine confirmed transfer', () => {
     });
   });
 });
+
+
+// Offline submission simulation only. No fetch, network, or financial finalisation.
+test('Simulated Modulr 201 records one provider reference', () => {
+  withSnapshot((db, intent) => {
+    const claim = claimSynthetic(db, intent);
+    const claimed = db.prepare(
+      'SELECT * FROM payout_transfer_intents WHERE id=?'
+    ).get(intent.id);
+
+    assert.equal(claim.status, 'submitting');
+    assert.equal(claimed.status, 'submitting');
+
+    const response = classifyModulrSubmission({
+      httpStatus: 201,
+      body: { id: 'P_SIMULATED_302', status: 'VALIDATED' }
+    });
+
+    assert.equal(response.status, 'submitted');
+
+    const result = recordModulrTransferSubmission(
+      db, intent.id, response.providerTransferId
+    );
+
+    assert.equal(result.status, 'submitted');
+
+    const saved = db.prepare(`
+      SELECT status, provider_transfer_id
+      FROM payout_transfer_intents WHERE id=?
+    `).get(intent.id);
+
+    assert.equal(saved.status, 'submitted');
+    assert.equal(saved.provider_transfer_id, 'P_SIMULATED_302');
+
+    assert.throws(() => recordModulrTransferSubmission(
+      db, intent.id, 'P_DUPLICATE_302'
+    ));
+
+    const payout = db.prepare(
+      'SELECT status, paid_at FROM payouts WHERE id=?'
+    ).get(intent.payout_id);
+
+    assert.equal(payout.status, 'batched');
+    assert.equal(payout.paid_at, null);
+    assert.equal(db.prepare(
+      'SELECT COUNT(*) AS n FROM payout_confirmations WHERE payout_id=?'
+    ).get(intent.payout_id).n, 0);
+  });
+});
+
+test('Simulated timeout becomes unknown and blocks another claim', () => {
+  withSnapshot((db, intent) => {
+    claimSynthetic(db, intent);
+
+    const response = classifyModulrSubmission({ timeout: true });
+    assert.equal(response.status, 'unknown');
+
+    transitionModulrTransfer(
+      db, intent.id, 'submitting', 'unknown'
+    );
+
+    const saved = db.prepare(`
+      SELECT status, provider_transfer_id
+      FROM payout_transfer_intents WHERE id=?
+    `).get(intent.id);
+
+    assert.equal(saved.status, 'unknown');
+    assert.equal(saved.provider_transfer_id, null);
+
+    assert.throws(() => claimSynthetic(db, intent));
+    assert.throws(() => transitionModulrTransfer(
+      db, intent.id, 'unknown', 'submitting'
+    ));
+
+    assert.equal(db.prepare(
+      'SELECT paid_at FROM payouts WHERE id=?'
+    ).get(intent.payout_id).paid_at, null);
+  });
+});
+
+test('Malformed provider creation stays uncertain', () => {
+  withSnapshot((db, intent) => {
+    claimSynthetic(db, intent);
+
+    const response = classifyModulrSubmission({
+      httpStatus: 201,
+      body: { status: 'VALIDATED' }
+    });
+
+    assert.equal(response.status, 'unknown');
+
+    transitionModulrTransfer(
+      db, intent.id, 'submitting', 'unknown'
+    );
+
+    const saved = db.prepare(
+      'SELECT status, provider_transfer_id FROM payout_transfer_intents WHERE id=?'
+    ).get(intent.id);
+
+    assert.equal(saved.status, 'unknown');
+    assert.equal(saved.provider_transfer_id, null);
+    assert.throws(() => claimSynthetic(db, intent));
+  });
+});
+
+test('HTTP failure never records a submitted payment', () => {
+  withSnapshot((db, intent) => {
+    claimSynthetic(db, intent);
+
+    for (const code of [400, 429, 500]) {
+      assert.equal(classifyModulrSubmission({
+        httpStatus: code
+      }).status, 'unknown');
+    }
+
+    transitionModulrTransfer(
+      db, intent.id, 'submitting', 'unknown'
+    );
+
+    assert.throws(() => recordModulrTransferSubmission(
+      db, intent.id, 'P_UNAUTHORISED_302'
+    ));
+
+    assert.equal(db.prepare(
+      'SELECT paid_at FROM payouts WHERE id=?'
+    ).get(intent.payout_id).paid_at, null);
+  });
+});
