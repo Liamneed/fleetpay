@@ -1,3 +1,4 @@
+import { validateClaimedModulrSubmission } from '../server/lib/modulr-submission-gate.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
@@ -100,3 +101,78 @@ test('Generic writer still supports prepared cancellation',()=>withFixture((db)=
   transitionModulrTransfer(db,'intent','prepared','cancelled');
   assert.equal(status(db),'cancelled');
 }));
+
+test('SQLite claim feeds the offline Modulr submission gate', () =>
+  withFixture((db, match) => {
+    db.exec('ALTER TABLE payout_transfer_intents ADD COLUMN idempotency_key TEXT');
+    db.prepare(
+      'UPDATE payout_transfer_intents SET idempotency_key=? WHERE id=?'
+    ).run('nonce_integration_299', 'intent');
+
+    const before = db.prepare(
+      'SELECT status, paid_at FROM payouts WHERE id=?'
+    ).get('pay');
+
+    const claim = claimValidatedModulrTransfer(db, 'intent', match);
+
+    // Crucial: obtain the transfer from SQLite AFTER the claim commits.
+    const saved = db.prepare(
+      'SELECT * FROM payout_transfer_intents WHERE id=?'
+    ).get('intent');
+
+    assert.equal(saved.status, 'submitting');
+    assert.equal(claim.ok, true);
+
+    const gate = validateClaimedModulrSubmission({
+      intent: saved,
+      claim,
+      sourceAccountId: 'A_TEST_299'
+    });
+
+    assert.equal(gate.eligible, true);
+    assert.equal(gate.request.method, 'POST');
+    assert.equal(gate.request.body.amount, 25);
+    assert.equal(gate.request.body.destination.id, 'beneficiary');
+    assert.equal(gate.request.headers['x-mod-nonce'], 'nonce_integration_299');
+    assert.equal(gate.executionEnabled, false);
+    assert.equal(gate.paymentSubmitted, false);
+
+    // Duplicate claim must fail; the first claim is not rolled back.
+    assert.throws(() => claimValidatedModulrTransfer(db, 'intent', match));
+
+    const after = db.prepare(
+      'SELECT status, paid_at FROM payouts WHERE id=?'
+    ).get('pay');
+
+    assert.deepEqual(after, before);
+    assert.equal(
+      db.prepare(
+        'SELECT COUNT(*) AS n FROM payout_confirmations'
+      ).get().n,
+      0
+    );
+  })
+);
+
+test('Submission gate rejects SQLite transfer before atomic claim', () =>
+  withFixture((db) => {
+    db.exec('ALTER TABLE payout_transfer_intents ADD COLUMN idempotency_key TEXT');
+    db.prepare(
+      'UPDATE payout_transfer_intents SET idempotency_key=? WHERE id=?'
+    ).run('nonce_unclaimed_299', 'intent');
+
+    const saved = db.prepare(
+      'SELECT * FROM payout_transfer_intents WHERE id=?'
+    ).get('intent');
+
+    const result = validateClaimedModulrSubmission({
+      intent: saved,
+      claim: null,
+      sourceAccountId: 'A_TEST_299'
+    });
+
+    assert.equal(result.eligible, false);
+    assert.equal(result.paymentSubmitted, false);
+    assert.equal(saved.status, 'prepared');
+  })
+);
