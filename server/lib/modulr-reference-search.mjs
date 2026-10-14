@@ -45,6 +45,7 @@ export async function searchModulrReferenceRecovery({
 
   const payments = [];
   let completed = false;
+  let expectedTotalSize = null;
 
   for (let page = 0; page < maxPages; page++) {
     const params = new URLSearchParams({
@@ -87,9 +88,12 @@ export async function searchModulrReferenceRecovery({
       return unresolved('invalid_provider_page');
     }
 
-    // Reject inconsistent page metadata rather than trusting it.
-    if (payload.number !== undefined &&
-        payload.number !== page) {
+    // Modulr sandbox returns 'page', not 'number'.
+    // Accept both response variants, but verify any page index.
+    if ((payload.page !== undefined &&
+         payload.page !== page) ||
+        (payload.number !== undefined &&
+         payload.number !== page)) {
       return unresolved('pagination_mismatch');
     }
 
@@ -112,7 +116,32 @@ export async function searchModulrReferenceRecovery({
       }
     }
 
+    // The reported total must remain consistent across pages.
+    if (payload.totalSize !== undefined) {
+      if (!Number.isSafeInteger(payload.totalSize) ||
+          payload.totalSize < 0 ||
+          (expectedTotalSize !== null &&
+           payload.totalSize !== expectedTotalSize)) {
+        return unresolved('pagination_mismatch');
+      }
+      expectedTotalSize = payload.totalSize;
+    }
+
+    // The observed Modulr empty-search contract is one empty page.
+    // More pages with zero total records are contradictory.
+    if (expectedTotalSize === 0 &&
+        (page !== 0 ||
+         payload.totalPages !== 1 ||
+         payload.content.length !== 0)) {
+      return unresolved('pagination_mismatch');
+    }
+
     payments.push(...payload.content);
+
+    if (expectedTotalSize !== null &&
+        payments.length > expectedTotalSize) {
+      return unresolved('pagination_mismatch');
+    }
 
     if (payload.last === true) {
       completed = true;
@@ -141,6 +170,11 @@ export async function searchModulrReferenceRecovery({
   }
 
   if (!completed) return unresolved('pagination_incomplete');
+
+  if (expectedTotalSize !== null &&
+      payments.length !== expectedTotalSize) {
+    return unresolved('pagination_mismatch');
+  }
 
   return {
     ...inspectModulrReferenceMatches({
