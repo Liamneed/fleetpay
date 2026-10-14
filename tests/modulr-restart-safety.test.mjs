@@ -30,6 +30,7 @@ test('Atomic claim survives restart and cannot be claimed again', () => {
       WHERE provider='modulr'
         AND environment='sandbox'
         AND status='prepared'
+        AND amount_minor=2500
     `).get();
 
     assert.ok(intent);
@@ -62,7 +63,6 @@ test('Atomic claim survives restart and cannot be claimed again', () => {
       bankAccountNumberEnc: bank.account_number_enc
     };
 
-    db.exec('ALTER TABLE payout_transfer_intents ADD COLUMN attempt_started_at TEXT');
     const claim = claimValidatedModulrTransfer(db, intent.id, match);
     assert.equal(claim.status, 'submitting');
 
