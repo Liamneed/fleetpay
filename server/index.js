@@ -1,3 +1,4 @@
+import { claimValidatedModulrTransfer } from './lib/modulr-validated-claim.mjs';
 import { listModulrTransfersForReview } from './lib/modulr-transfer-review.mjs';
 import express from 'express';
 import cors from 'cors';
@@ -8550,6 +8551,100 @@ app.post(
     error:boundaryError
      ?'Modulr preparation is restricted to isolated testing.'
      :'Modulr preparation failed. No payment was submitted.',
+    paymentSubmitted:false,
+    paymentExecutionEnabled:false
+   });
+  }
+ }
+);
+
+// Isolated fixture only: fresh provider verification and atomic claim.
+// Does NOT submit a payment, retry a transfer or finalise accounting.
+app.post(
+ '/api/admin/modulr/transfers/:intentId/claim-test',
+ adminAuth,
+ requireStaffRole('administrator','finance'),
+ async(req,res)=>{
+  try{
+   assertModulrPreparationTestEnvironment();
+
+   if(process.env.PAYOUT_ACCOUNTING_FINALISATION_ENABLED==='true'){
+    return res.status(403).json({
+     error:'Accounting finalisation must remain disabled.'
+    });
+   }
+
+   const intentId=String(req.params.intentId||'').trim();
+
+   if(!intentId || intentId.length>128){
+    return res.status(400).json({
+     error:'Valid transfer ID required.'
+    });
+   }
+
+   const row=db.prepare(`
+    SELECT i.id,i.status,p.driver_id
+    FROM payout_transfer_intents i
+    JOIN payouts p ON p.id=i.payout_id
+    WHERE i.id=?
+      AND i.provider='modulr'
+      AND i.environment='sandbox'
+   `).get(intentId);
+
+   if(!row){
+    return res.status(404).json({
+     error:'Sandbox transfer not found.'
+    });
+   }
+
+   if(row.status!=='prepared'){
+    return res.status(409).json({
+     error:'Transfer is not prepared or was already claimed.'
+    });
+   }
+
+   const driverId=Number(row.driver_id);
+
+   if(!Number.isSafeInteger(driverId) || driverId<=0){
+    return res.status(409).json({
+     error:'Transfer driver is invalid.'
+    });
+   }
+
+   // Authentication comes from server-held Modulr credentials.
+   // The HTTP caller cannot supply beneficiary match evidence.
+   const match=await findModulrSandboxBankMatch(driverId);
+
+   if(!match.matched ||
+      match.status!=='ACTIVE' ||
+      match.approvalStatus!=='APPROVED' ||
+      match.approvalRequired!==false){
+    return res.status(409).json({
+     error:'Fresh approved beneficiary verification failed.'
+    });
+   }
+
+   // All financial and bank checks are repeated inside BEGIN IMMEDIATE.
+   const result=claimValidatedModulrTransfer(db,intentId,match);
+
+   return res.json({
+    ok:true,
+    transferId:intentId,
+    status:result.status,
+    amountMinor:result.amountMinor,
+    paymentSubmitted:false,
+    paymentExecutionEnabled:false,
+    accountingFinalised:false
+   });
+
+  }catch(error){
+   const restricted=String(error.message||'')
+    .includes('restricted to the isolated test database');
+
+   return res.status(restricted?403:409).json({
+    error:restricted
+     ?'Sandbox claim testing requires the isolated fixture.'
+     :'Sandbox transfer claim failed. No payment was submitted.',
     paymentSubmitted:false,
     paymentExecutionEnabled:false
    });
