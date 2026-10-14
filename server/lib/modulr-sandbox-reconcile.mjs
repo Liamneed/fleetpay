@@ -13,6 +13,7 @@ import {
 export async function inspectModulrSandboxTransfer({
   intent,
   apiKey,
+  sourceAccountId,
   fetchImpl
 }) {
   const unresolved = reason => ({
@@ -28,7 +29,9 @@ export async function inspectModulrSandboxTransfer({
       intent.environment !== 'sandbox' ||
       !['submitted', 'unknown'].includes(intent.status) ||
       typeof intent.provider_transfer_id !== 'string' ||
-      !intent.provider_transfer_id.trim()) {
+      !intent.provider_transfer_id.trim() ||
+      typeof sourceAccountId !== 'string' ||
+      !/^[A-Za-z0-9_-]{1,128}$/.test(sourceAccountId)) {
     return unresolved('transfer_not_eligible');
   }
 
@@ -39,7 +42,7 @@ export async function inspectModulrSandboxTransfer({
       fetchImpl
     });
 
-    const result = validateModulrReconciliation(intent, payment);
+    const result = validateModulrReconciliation(intent, payment, sourceAccountId);
 
     return {
       ...result,

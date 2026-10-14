@@ -225,12 +225,13 @@ test('Mock reconciliation does not pay the driver', () => {
       SELECT * FROM payout_transfer_intents WHERE id=?
     `).get(intent.id);
 
-    const validation = validateModulrReconciliation(
+    const validation = validateWithSource(
       submitted,
       {
         id: 'mock_transfer_001',
         status: 'PROCESSED',
         details: {
+          sourceAccountId: 'A_TEST_001',
           destination: {
             type: 'BENEFICIARY',
             id: submitted.recipient_id
@@ -286,6 +287,7 @@ test('Incorrect provider details fail reconciliation', () => {
     id: 'mock_transfer_001',
     status: 'PROCESSED',
     details: {
+      sourceAccountId: 'A_TEST_001',
       destination: {
         type: 'BENEFICIARY',
         id: 'mock_beneficiary_001'
@@ -296,14 +298,14 @@ test('Incorrect provider details fail reconciliation', () => {
   };
 
   assert.equal(
-    validateModulrReconciliation(
+    validateWithSource(
       intent, { ...payment, details: { ...payment.details, amount: 26 } }
     ).verified,
     false
   );
 
   assert.equal(
-    validateModulrReconciliation(
+    validateWithSource(
       intent, { ...payment, details: {
         ...payment.details,
         destination: { type: 'BENEFICIARY', id: 'wrong' }
@@ -313,14 +315,14 @@ test('Incorrect provider details fail reconciliation', () => {
   );
 
   assert.equal(
-    validateModulrReconciliation(
+    validateWithSource(
       intent, { ...payment, status: 'PENDING' }
     ).verified,
     false
   );
 
   assert.equal(
-    validateModulrReconciliation(
+    validateWithSource(
       intent, { ...payment, details: { ...payment.details, currency: 'EUR' } }
     ).verified,
     false
@@ -368,12 +370,13 @@ test('Mock confirmation never creates a genuine confirmed transfer', () => {
       SELECT * FROM payout_transfer_intents WHERE id=?
     `).get(intent.id);
 
-    const validation = validateModulrReconciliation(
+    const validation = validateWithSource(
       submitted,
       {
         id: 'mock_safe_confirmation',
         status: 'PROCESSED',
         details: {
+          sourceAccountId: 'A_TEST_001',
           destination: {
             type: 'BENEFICIARY',
             id: submitted.recipient_id
@@ -535,3 +538,8 @@ test('HTTP failure never records a submitted payment', () => {
     ).get(intent.payout_id).paid_at, null);
   });
 });
+
+
+function validateWithSource(intent, payment) {
+  return validateModulrReconciliation(intent, payment, 'A_TEST_001');
+}

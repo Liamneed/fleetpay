@@ -21,6 +21,7 @@ const processed = {
   id: 'P_TEST_293',
   status: 'PROCESSED',
   details: {
+    sourceAccountId: 'A_TEST_293',
     destination: {
       type: 'BENEFICIARY',
       id: 'B_TEST_293'
@@ -45,6 +46,7 @@ test('Independent GET validates processed transfer', async () => {
   const result = await inspectModulrSandboxTransfer({
     intent,
     apiKey: 'synthetic-key',
+    sourceAccountId: 'A_TEST_293',
     fetchImpl: providerResponse(processed)
   });
 
@@ -58,6 +60,7 @@ test('Pending payment never confirms', async () => {
   const result = await inspectModulrSandboxTransfer({
     intent,
     apiKey: 'synthetic-key',
+    sourceAccountId: 'A_TEST_293',
     fetchImpl: providerResponse({
       ...processed,
       status: 'PENDING'
@@ -71,6 +74,7 @@ test('Incorrect beneficiary never confirms', async () => {
   const result = await inspectModulrSandboxTransfer({
     intent,
     apiKey: 'synthetic-key',
+    sourceAccountId: 'A_TEST_293',
     fetchImpl: providerResponse({
       ...processed,
       details: {
@@ -90,6 +94,7 @@ test('Provider retrieval failure remains uncertain', async () => {
   const result = await inspectModulrSandboxTransfer({
     intent,
     apiKey: 'synthetic-key',
+    sourceAccountId: 'A_TEST_293',
     fetchImpl: providerResponse({}, 500)
   });
 
@@ -105,6 +110,7 @@ test('Missing provider ID never contacts provider', async () => {
       provider_transfer_id: null
     },
     apiKey: 'synthetic-key',
+    sourceAccountId: 'A_TEST_293',
     fetchImpl: () => {
       throw new Error('Unexpected provider request');
     }
@@ -112,4 +118,35 @@ test('Missing provider ID never contacts provider', async () => {
 
   assert.equal(result.verified, false);
   assert.equal(result.reason, 'transfer_not_eligible');
+});
+
+
+test('Missing expected account blocks GET', async () => {
+  let requests = 0;
+  const result = await inspectModulrSandboxTransfer({
+    intent,
+    apiKey: 'synthetic-key',
+    fetchImpl: () => {
+      requests++;
+      throw new Error('Unexpected GET');
+    }
+  });
+  assert.equal(requests, 0);
+  assert.equal(result.verified, false);
+  assert.equal(result.reason, 'transfer_not_eligible');
+});
+
+test('Incorrect account from independent GET is rejected', async () => {
+  const result = await inspectModulrSandboxTransfer({
+    intent,
+    apiKey: 'synthetic-key',
+    sourceAccountId: 'A_TEST_293',
+    fetchImpl: providerResponse({
+      ...processed,
+      details: { ...processed.details, sourceAccountId: 'A_WRONG' }
+    })
+  });
+  assert.equal(result.verified, false);
+  assert.equal(result.reason, 'source_account_mismatch');
+  assert.equal(result.accountingFinalised, false);
 });

@@ -2,7 +2,7 @@
 // No network, SQLite, accounting, or Autocab operations.
 // The caller must authenticate and retrieve the record from Modulr.
 
-export function validateModulrReconciliation(intent, payment) {
+export function validateModulrReconciliation(intent, payment, sourceAccountId) {
   const reject = reason => ({
     verified: false,
     status: 'unknown',
@@ -22,6 +22,14 @@ export function validateModulrReconciliation(intent, payment) {
   }
 
   const details = payment.details;
+
+  // The independently retrieved payment must originate from the
+  // explicitly configured Modulr source account.
+  if (typeof sourceAccountId !== 'string' ||
+      !/^[A-Za-z0-9_-]{1,128}$/.test(sourceAccountId) ||
+      details?.sourceAccountId !== sourceAccountId) {
+    return reject('source_account_mismatch');
+  }
 
   if (!details || details.destination?.type !== 'BENEFICIARY' ||
       details.destination.id !== intent.recipient_id) {
