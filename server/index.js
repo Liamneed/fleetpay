@@ -60,6 +60,10 @@ const AUTOCAB_FLEETPAY_CAPABILITY_ID = Number(process.env.AUTOCAB_FLEETPAY_CAPAB
 // Modulr payout provider — sandbox configuration only.
 // Payment submission remains disabled until separately implemented and tested.
 const MODULR_ENABLED = process.env.MODULR_ENABLED === 'true';
+import {
+ searchModulrReferenceRecovery
+} from './lib/modulr-reference-search.mjs';
+
 const MODULR_ENV = String(process.env.MODULR_ENV || 'sandbox').toLowerCase();
 const MODULR_API_KEY = process.env.MODULR_API_KEY || '';
 const MODULR_CUSTOMER_ID = process.env.MODULR_CUSTOMER_ID || '';
@@ -9156,6 +9160,127 @@ app.get(
   }catch(e){
    res.status(502).json({
     error:'Modulr sandbox connection could not be verified.'
+   });
+  }
+ }
+);
+
+// Administrator-only, GET-only Modulr sandbox reference recovery.
+// Investigates an interrupted transfer; never submits or records payments.
+app.get(
+ '/api/admin/modulr/transfers/:intentId/reference-recovery',
+ adminAuth,
+ requireStaffRole('administrator'),
+ requirePlatformAdmin,
+ async(req,res)=>{
+  if(MODULR_ENV!=='sandbox' ||
+     process.env.MODULR_ENABLED!=='false' ||
+     process.env.PAYOUT_ACCOUNTING_FINALISATION_ENABLED!=='false'){
+   return res.status(403).json({
+    error:'Read-only sandbox recovery requires payments and accounting disabled.'
+   });
+  }
+
+  if(!MODULR_API_KEY || !MODULR_ACCOUNT_ID){
+   return res.status(403).json({
+    error:'Modulr sandbox credentials are not configured.'
+   });
+  }
+
+  const intentId=String(req.params.intentId||'');
+
+  if(!/^[A-Za-z0-9_-]{1,50}$/.test(intentId)){
+   return res.status(400).json({error:'Invalid transfer ID.'});
+  }
+
+  try{
+   // Use the same isolated testing boundary as payment preflight.
+   assertModulrPreparationTestEnvironment();
+  }catch{
+   return res.status(409).json({
+    error:'Isolated sandbox testing database required.'
+   });
+  }
+
+  try{
+   const staff=db.prepare(
+    'SELECT id,role,active,mfa_enabled FROM staff_users WHERE id=?'
+   ).get(req.auth.staffId);
+
+   if(!staff || staff.active!==1 ||
+      staff.mfa_enabled!==1 ||
+      staff.role!=='administrator'){
+    return res.status(403).json({
+     error:'Active MFA-enabled administrator required.'
+    });
+   }
+
+   const intent=db.prepare(
+    `SELECT * FROM payout_transfer_intents
+     WHERE id=? AND provider='modulr'
+       AND environment='sandbox'`
+   ).get(intentId);
+
+   if(!intent){
+    return res.status(404).json({
+     error:'Sandbox transfer not found.'
+    });
+   }
+
+   if(!['submitting','unknown'].includes(intent.status) ||
+      intent.provider_transfer_id){
+    return res.status(409).json({
+     error:'Transfer is not eligible for reference recovery.'
+    });
+   }
+
+   const result=await searchModulrReferenceRecovery({
+    intent,
+    sourceAccountId:MODULR_ACCOUNT_ID,
+    apiKey:MODULR_API_KEY,
+    fetchImpl:fetch
+   });
+
+   // Treat unexpected recovery results as unresolved.
+   // Do not pass through arbitrary fields from a provider result.
+   const safelyMatched =
+    result?.verified===true &&
+    result?.status==='payment_found' &&
+    /^[A-Za-z0-9_-]{1,128}$/.test(
+     String(result.providerPaymentId||'')
+    ) &&
+    typeof result.providerStatus==='string' &&
+    result.providerStatus.trim()!=='' &&
+    result.amountMinor===intent.amount_minor &&
+    result.automaticRetryAllowed===false &&
+    result.accountingFinalised===false &&
+    result.paymentSubmitted===false &&
+    result.requiresIndependentPaymentRetrieval===true &&
+    result.requiresManualReconciliation===true;
+
+   res.json({
+    ok:true,
+    environment:'sandbox',
+    transferId:intentId,
+    verified:safelyMatched,
+    status:safelyMatched?'payment_found':'unknown',
+    reason:safelyMatched?null:
+     (result?.verified===false &&
+      /^[a-z_]{1,80}$/.test(String(result.reason||''))
+       ?result.reason:'recovery_result_unverified'),
+    providerPaymentId:safelyMatched?
+     result.providerPaymentId:null,
+    providerStatus:safelyMatched?
+     result.providerStatus:null,
+    paymentSubmitted:false,
+    paymentExecutionEnabled:false,
+    accountingFinalised:false,
+    automaticRetryAllowed:false,
+    requiresManualReconciliation:true
+   });
+  }catch{
+   res.status(502).json({
+    error:'Modulr sandbox recovery investigation failed.'
    });
   }
  }
