@@ -41,6 +41,9 @@ function fixture() {
   db.prepare('INSERT INTO driver_cache VALUES (1,0)').run();
   db.prepare(`INSERT INTO driver_bank_accounts VALUES
     (1,'2026-10-12T16:00:00Z','test_sort','test_account','56','1234')`).run();
+  db.exec(
+    'ALTER TABLE payout_transfer_intents ADD COLUMN attempt_started_at TEXT'
+  );
   const match = {
     matched:true,beneficiaryId:'beneficiary',status:'ACTIVE',
     approvalStatus:'APPROVED',approvalRequired:false,

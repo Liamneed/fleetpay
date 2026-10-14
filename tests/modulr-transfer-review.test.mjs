@@ -40,6 +40,12 @@ function withFixture(callback) {
     insert.run('t5','p5','r2','modulr','production',
       'unknown',5000,'GBP',null,'2026-10-13T11:00:00Z',null);
 
+    db.exec(
+      'ALTER TABLE payout_transfer_intents ADD COLUMN attempt_started_at TEXT'
+    );
+    db.prepare(
+      'UPDATE payout_transfer_intents SET attempt_started_at=? WHERE id=?'
+    ).run('2026-10-13T10:45:00Z', 't1');
     return callback(db);
   } finally {
     db.close();
@@ -91,5 +97,31 @@ test('Review does not expose bank or beneficiary details', () =>
       assert.equal('account_number' in row, false);
       assert.equal('sort_code' in row, false);
     }
+  })
+);
+
+test('Review retains original claim timestamp without payment authority', () =>
+  withFixture(db => {
+    const before = db.prepare(
+      'SELECT attempt_started_at FROM payout_transfer_intents WHERE id=?'
+    ).get('t1').attempt_started_at;
+
+    db.prepare(
+      'UPDATE payout_transfer_intents SET updated_at=?, status=? WHERE id=?'
+    ).run('2026-10-13T11:45:00Z', 'unknown', 't1');
+
+    const rows = listModulrTransfersForReview(db, { now });
+    const item = rows.find(x => x.transferId === 't1');
+
+    assert.equal(item.attemptStartedAt, before);
+    assert.equal(item.submittedAt, null);
+    assert.equal(item.automaticRetryAllowed, false);
+    assert.equal(item.accountingFinalised, false);
+    assert.equal(
+      db.prepare(
+        'SELECT attempt_started_at FROM payout_transfer_intents WHERE id=?'
+      ).get('t1').attempt_started_at,
+      before
+    );
   })
 );

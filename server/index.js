@@ -508,6 +508,7 @@ CREATE TABLE IF NOT EXISTS payout_transfer_intents (
  created_at TEXT NOT NULL,
  updated_at TEXT NOT NULL,
  submitted_at TEXT,
+ attempt_started_at TEXT,
  confirmed_at TEXT,
 
  FOREIGN KEY(payout_id) REFERENCES payouts(id),
@@ -711,6 +712,20 @@ db.exec(`
  );
 `);
 
+
+// Modulr claim reservation timestamp: safe on existing databases.
+// Do not invent timestamps for historic transfers.
+{
+ const cols=db.prepare(
+  'PRAGMA table_info(payout_transfer_intents)'
+ ).all();
+
+ if(!cols.some(c=>c.name==='attempt_started_at')){
+  db.exec(
+   'ALTER TABLE payout_transfer_intents ADD COLUMN attempt_started_at TEXT'
+  );
+ }
+}
 
 for (const sql of [
   'ALTER TABLE payouts ADD COLUMN decline_reason TEXT',

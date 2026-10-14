@@ -70,6 +70,10 @@ test('Actual Modulr endpoint enforces authentication and finance roles', async (
       'PRIVATE_BENEFICIARY'
     );
 
+    db.exec(
+      'ALTER TABLE payout_transfer_intents ADD COLUMN attempt_started_at TEXT'
+    );
+
     const app = express();
     const { signToken } = buildApp(
       app, db, crypto, Buffer,

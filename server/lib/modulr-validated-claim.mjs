@@ -97,14 +97,16 @@ export function claimValidatedModulrTransfer(db, intentId, match) {
 
     const result = db.prepare(`
       UPDATE payout_transfer_intents
-      SET status='submitting',updated_at=?
+      SET status='submitting',
+          attempt_started_at=COALESCE(attempt_started_at,?),
+          updated_at=?
       WHERE id=?
         AND status='prepared'
         AND provider='modulr'
         AND environment='sandbox'
         AND provider_transfer_id IS NULL
         AND confirmed_at IS NULL
-    `).run(now,intentId);
+    `).run(now,now,intentId);
 
     if (result.changes !== 1) {
       throw new Error('Transfer already claimed or changed.');

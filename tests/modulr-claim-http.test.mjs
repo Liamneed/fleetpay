@@ -99,6 +99,9 @@ function fixture() {
        'test_sort','test_account','56','1234');
   `);
 
+  db.exec(
+    'ALTER TABLE payout_transfer_intents ADD COLUMN attempt_started_at TEXT'
+  );
   return db;
 }
 

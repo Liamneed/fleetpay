@@ -98,6 +98,16 @@ function withSnapshot(callback) {
 
 // Synthetic fixture only: no provider lookup and no payment execution.
 function claimSynthetic(db, intent) {
+  const columns = db.prepare(
+    'PRAGMA table_info(payout_transfer_intents)'
+  ).all();
+
+  if (!columns.some(column => column.name === 'attempt_started_at')) {
+    db.exec(
+      'ALTER TABLE payout_transfer_intents ADD COLUMN attempt_started_at TEXT'
+    );
+  }
+
   const payout = db.prepare('SELECT * FROM payouts WHERE id=?')
     .get(intent.payout_id);
   const bank = db.prepare('SELECT * FROM driver_bank_accounts WHERE driver_id=?')

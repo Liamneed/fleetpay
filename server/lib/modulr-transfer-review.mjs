@@ -12,7 +12,7 @@ export function listModulrTransfersForReview(db, {
   const rows = db.prepare(`
     SELECT id, payout_id, payout_run_id, status,
            amount_minor, currency, provider_transfer_id,
-           updated_at, submitted_at
+           updated_at, submitted_at, attempt_started_at
     FROM payout_transfer_intents
     WHERE provider='modulr'
       AND environment='sandbox'
@@ -36,6 +36,7 @@ export function listModulrTransfersForReview(db, {
       providerPaymentIdPresent: Boolean(row.provider_transfer_id),
       updatedAt: row.updated_at,
       submittedAt: row.submitted_at,
+      attemptStartedAt: row.attempt_started_at,
       ageMinutes,
       action: 'manual_investigation',
       automaticRetryAllowed: false,
