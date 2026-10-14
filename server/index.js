@@ -1,3 +1,4 @@
+import { validateModulrSandboxApproval } from './lib/modulr-sandbox-approval.mjs';
 import { claimValidatedModulrTransfer } from './lib/modulr-validated-claim.mjs';
 import { listModulrTransfersForReview } from './lib/modulr-transfer-review.mjs';
 import express from 'express';
@@ -8915,6 +8916,182 @@ app.get(
   }catch(e){
    res.status(502).json({
     error:'Modulr sandbox bank matching could not be completed.'
+   });
+  }
+ }
+);
+
+// Administrator-only, read-only Modulr sandbox payment preflight.
+// Never claims a transfer, posts a payment or finalises accounting.
+app.post(
+ '/api/admin/modulr/transfers/:intentId/execution-preflight',
+ adminAuth,
+ requireStaffRole('administrator'),
+ requirePlatformAdmin,
+ async(req,res)=>{
+  try{
+   assertModulrPreparationTestEnvironment();
+
+   if(process.env.PAYOUT_ACCOUNTING_FINALISATION_ENABLED!=='false'){
+    return res.status(403).json({
+     error:'Accounting finalisation must be explicitly disabled.'
+    });
+   }
+
+   if(!MODULR_API_KEY || !MODULR_CUSTOMER_ID || !MODULR_ACCOUNT_ID){
+    return res.status(403).json({
+     error:'Sandbox credentials are not configured.'
+    });
+   }
+
+   const intentId=String(req.params.intentId||'');
+   const approvedAmountMinor=req.body?.approvedAmountMinor;
+
+   if(!/^[A-Za-z0-9_-]{1,50}$/.test(intentId) ||
+      !Number.isSafeInteger(approvedAmountMinor) ||
+      approvedAmountMinor<=0){
+    return res.status(400).json({
+     error:'Exact transfer ID and amount in pence are required.'
+    });
+   }
+
+   const staff=db.prepare(`
+    SELECT id,role,active,mfa_enabled
+    FROM staff_users WHERE id=?
+   `).get(req.auth.staffId);
+
+   if(!staff || staff.active!==1 ||
+      staff.mfa_enabled!==1 || staff.role!=='administrator'){
+    return res.status(403).json({
+     error:'Active MFA-enabled administrator required.'
+    });
+   }
+
+   const row=db.prepare(`
+    SELECT i.*,p.driver_id
+    FROM payout_transfer_intents i
+    JOIN payouts p ON p.id=i.payout_id
+    WHERE i.id=? AND i.provider='modulr'
+      AND i.environment='sandbox'
+   `).get(intentId);
+
+   if(!row){
+    return res.status(404).json({
+     error:'Sandbox transfer not found.'
+    });
+   }
+
+   if(row.status!=='prepared' ||
+      row.amount_minor!==approvedAmountMinor ||
+      row.attempt_started_at ||
+      row.provider_transfer_id){
+    return res.status(409).json({
+     error:'Transfer is not eligible for the approved amount.'
+    });
+   }
+
+   // Provider account evidence is obtained by the server itself.
+   const accountResponse=await fetch(
+    MODULR_BASE_URL+'accounts/'+encodeURIComponent(MODULR_ACCOUNT_ID),
+    {
+     method:'GET',
+     headers:{
+      Authorization:MODULR_API_KEY,
+      Accept:'application/json'
+     },
+     signal:AbortSignal.timeout(10000)
+    }
+   );
+
+   if(accountResponse.status!==200){
+    return res.status(502).json({
+     error:'Sandbox source account verification failed.'
+    });
+   }
+
+   const account=await accountResponse.json();
+
+   if(account.id!==MODULR_ACCOUNT_ID ||
+      account.customerId!==MODULR_CUSTOMER_ID ||
+      account.currency!=='GBP' ||
+      account.status!=='ACTIVE'){
+    return res.status(409).json({
+     error:'Sandbox account identity mismatch.'
+    });
+   }
+
+   const driverId=Number(row.driver_id);
+
+   if(!Number.isSafeInteger(driverId) || driverId<=0){
+    return res.status(409).json({
+     error:'Transfer driver is invalid.'
+    });
+   }
+
+   // Fresh beneficiary lookup; never use caller-supplied evidence.
+   const match=await findModulrSandboxBankMatch(driverId);
+
+   if(match.matched!==true ||
+      match.beneficiaryId!==row.recipient_id ||
+      match.status!=='ACTIVE' ||
+      match.approvalStatus!=='APPROVED' ||
+      match.approvalRequired!==false){
+    return res.status(409).json({
+     error:'Approved sandbox beneficiary could not be confirmed.'
+    });
+   }
+
+   // Re-read after provider requests to detect changed transfer state.
+   const current=db.prepare(`
+    SELECT * FROM payout_transfer_intents WHERE id=?
+   `).get(intentId);
+
+   const approval=validateModulrSandboxApproval({
+    actor:{
+     role:req.auth.role,
+     mfa:req.auth.mfa,
+     staffRole:staff.role,
+     staffId:staff.id
+    },
+    intent:current,
+    approvedTransferId:intentId,
+    approvedAmountMinor,
+    sourceAccountId:MODULR_ACCOUNT_ID,
+    verifiedSourceAccount:{
+     id:account.id,
+     currency:account.currency,
+     environment:'sandbox',
+     verified:true
+    }
+   });
+
+   if(!approval.eligible){
+    return res.status(409).json({
+     error:'Sandbox preflight failed.',
+     reason:approval.reason
+    });
+   }
+
+   // A successful preflight is NOT permission to execute.
+   return res.json({
+    ok:true,
+    transferId:intentId,
+    amountMinor:approval.amountMinor,
+    currency:'GBP',
+    environment:'sandbox',
+    sourceAccountVerified:true,
+    beneficiaryVerified:true,
+    requiresAtomicClaim:true,
+    paymentSubmitted:false,
+    paymentExecutionEnabled:false,
+    accountingFinalised:false
+   });
+
+  }catch(error){
+   return res.status(409).json({
+    error:'Sandbox preflight could not be completed.',
+    paymentSubmitted:false,
+    paymentExecutionEnabled:false
    });
   }
  }
