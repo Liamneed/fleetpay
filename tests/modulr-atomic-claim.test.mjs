@@ -1,3 +1,10 @@
+// Explicit safety settings for offline sandbox tests.
+process.env.MODULR_ENV = 'sandbox';
+process.env.MODULR_ENABLED = 'false';
+process.env.PAYOUT_ACCOUNTING_FINALISATION_ENABLED = 'false';
+process.env.AUTOCAB_ADJUSTMENTS_ENABLED = 'false';
+process.env.LIVE_TEST_AUTOCAB_WRITES_ENABLED = 'false';
+
 import { validateClaimedModulrSubmission } from '../server/lib/modulr-submission-gate.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
