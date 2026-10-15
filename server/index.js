@@ -1,3 +1,4 @@
+import { monitorModulrSandboxReturns } from './lib/modulr-return-monitor.mjs';
 import { validateModulrSandboxApproval } from './lib/modulr-sandbox-approval.mjs';
 import { claimValidatedModulrTransfer } from './lib/modulr-validated-claim.mjs';
 import { listModulrTransfersForReview } from './lib/modulr-transfer-review.mjs';
@@ -8671,6 +8672,68 @@ app.post(
   }
  }
 );
+
+// Administrator-only sandbox return monitoring.
+// Authenticated provider GET requests only.
+// No database writes, accounting, payment retries or Autocab actions.
+app.get(
+  '/api/admin/modulr/returns/monitor',
+  adminAuth,
+  requirePlatformAdmin,
+  async (req, res) => {
+    if (
+      MODULR_ENV !== 'sandbox' ||
+      process.env.MODULR_ENABLED !== 'false' ||
+      process.env.PAYOUT_ACCOUNTING_FINALISATION_ENABLED !== 'false' ||
+      process.env.AUTOCAB_ADJUSTMENTS_ENABLED !== 'false'
+    ) {
+      return res.status(403).json({
+        error: 'Sandbox read-only monitoring required.',
+        accountingAuthorised: false,
+        paymentSubmitted: false
+      });
+    }
+
+    try {
+      assertModulrPreparationTestEnvironment();
+    } catch {
+      return res.status(403).json({
+        error: 'Isolated sandbox database required.',
+        accountingAuthorised: false,
+        paymentSubmitted: false
+      });
+    }
+
+    if (!MODULR_API_KEY) {
+      return res.status(503).json({
+        error: 'Modulr sandbox credentials unavailable.',
+        accountingAuthorised: false,
+        paymentSubmitted: false
+      });
+    }
+
+    try {
+      const result = await monitorModulrSandboxReturns({
+        apiKey: MODULR_API_KEY,
+        fromCreatedDate: '2026-10-01T00:00:00Z',
+        fetchImpl: fetch
+      });
+
+      return res.status(result.ok ? 200 : 409).json(result);
+    } catch {
+      return res.status(409).json({
+        error: 'Return monitoring could not be completed.',
+        requiresManualReview: true,
+        returnConfirmed: false,
+        accountingAuthorised: false,
+        paymentSubmitted: false,
+        retryAuthorised: false
+      });
+    }
+  }
+);
+
+// End administrator-only sandbox return monitoring.
 
 // Read-only Modulr sandbox transfer investigation.
 // No payment submission, retry, provider call or accounting writes.

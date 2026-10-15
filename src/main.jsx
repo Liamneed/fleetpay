@@ -2368,6 +2368,101 @@ function AdminLogin({onLogin}){
   <div className="authSecurity"><ShieldCheck/><span>Office access requires password + authenticator verification. Security-sensitive actions are audit logged.</span></div>
  </div></div>
 }
+function ModulrReturnsPanel({api}) {
+ const [result,setResult]=useState(null);
+ const [busy,setBusy]=useState(false);
+ const [error,setError]=useState('');
+ const [checkedAt,setCheckedAt]=useState(null);
+
+ async function checkReturns(){
+  if(busy)return;
+  setBusy(true);
+  setError('');
+  setResult(null);
+  setCheckedAt(null);
+  try{
+   const response=await api('/api/admin/modulr/returns/monitor');
+   if(response?.ok!==true)throw new Error(response?.reason||'Monitoring incomplete');
+   if(response.returnConfirmed!==false ||
+      response.accountingAuthorised!==false ||
+      response.paymentSubmitted!==false ||
+      response.retryAuthorised!==false ||
+      !Array.isArray(response.candidates)){
+    throw new Error('Unexpected monitoring response');
+   }
+   setResult(response);
+   setCheckedAt(new Date().toLocaleString('en-GB'));
+  }catch(e){
+   setError(e.message||'Unable to check Modulr returns');
+  }finally{
+   setBusy(false);
+  }
+ }
+
+ return (
+  <section className="panel">
+   <div className="panelHead">
+    <div>
+     <h3>Modulr Returns — Sandbox</h3>
+     <p>Read-only monitoring. Potential bank returns require independent verification and manual review.</p>
+    </div>
+    <button className="mini" type="button" disabled={busy} onClick={checkReturns}>
+     {busy?'Checking…':'Check Returns'}
+    </button>
+   </div>
+
+   {error&&<div className="operatorWarning">
+    <AlertTriangle/>
+    <div><b>Monitoring unavailable</b><span>{error}</span></div>
+   </div>}
+
+   {!result&&!error&&!busy&&
+    <div className="emptyState">No check performed in this session.</div>}
+
+   {busy&&<div className="emptyState">Checking sandbox records…</div>}
+
+   {result&&<>
+    <div className="settingsInlineMeta">
+     <span>Last checked</span><b>{checkedAt}</b>
+     <span>Records examined</span><b>{result.checked}</b>
+     <span>Potential returns</span><b>{result.candidates.length}</b>
+     <span>Financial actions</span><b>Disabled</b>
+    </div>
+
+    {result.candidates.length===0
+     ?<div className="emptyState">
+       No potential bank returns identified in the checked records.
+       This is not settlement confirmation.
+      </div>
+     :<div className="tableWrap proTable">
+       <table>
+        <thead><tr>
+         <th>Provider payment</th>
+         <th>Type</th>
+         <th>Original scheme ID</th>
+         <th>Reason</th>
+         <th>Review</th>
+        </tr></thead>
+        <tbody>{result.candidates.map(c=><tr key={c.paymentId}>
+         <td>{c.paymentId}</td>
+         <td>{c.providerType||'Unknown'}</td>
+         <td>{c.originalSchemeId||'Unavailable'}</td>
+         <td>{c.returnReasonCode||'Unavailable'}</td>
+         <td><Pill tone="warn">Manual review</Pill></td>
+        </tr>)}</tbody>
+       </table>
+      </div>}
+   </>}
+
+   <small>
+    Sandbox only. No payout retries, balance changes, accounting
+    finalisation or Autocab adjustments. Monitoring results do
+    not confirm bank settlement or a returned payment.
+   </small>
+  </section>
+ );
+}
+
 function AdminApp(){
  const[token,setToken]=useState(localStorage.getItem('fleetpay_admin')||'');
  const[view,setView]=useState('dashboard');
@@ -9309,7 +9404,8 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
       <button className="primary" onClick={startCompanyWizard}><UserCheck/>New company</button>
      </section>
 
-     <section className="platformSummaryGrid">
+     <ModulrReturnsPanel api={api}/>
+      <section className="platformSummaryGrid">
       <div className="platformMetric"><span>Companies</span><b>{platformCompanies.length}</b><small>Configured on this FaivoPay platform</small></div>
       <div className="platformMetric"><span>Live</span><b>{platformCompanies.filter(x=>x.status==='live'||x.status==='active').length}</b><small>Currently marked active/live</small></div>
       <div className="platformMetric"><span>Draft</span><b>{platformCompanies.filter(x=>x.status==='draft'||x.status==='configuration_incomplete').length}</b><small>Still being configured</small></div>
