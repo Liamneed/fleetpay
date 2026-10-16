@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
+import os from 'node:os';
+import path from 'node:path';
+import fs from 'node:fs';
 import {createModulrSentAccountingSchema,postModulrSentRun,reverseModulrReturnedPayment} from '../server/lib/modulr-sent-accounting.mjs';
 const env={MODULR_ENV:'sandbox',MODULR_ENABLED:'false',MODULR_SENT_ACCOUNTING_ENABLED:'true',PAYOUT_ACCOUNTING_FINALISATION_ENABLED:'false',AUTOCAB_ADJUSTMENTS_ENABLED:'false',LIVE_TEST_AUTOCAB_WRITES_ENABLED:'false'};
 for(const [k,v] of Object.entries(env)) process.env[k]=v;
@@ -34,3 +37,46 @@ test('registered return posts one independent reversal',()=>{const db=fixture();
 test('incorrect return identity cannot reverse',()=>{const db=fixture();postModulrSentRun(db,'run1');db.exec("INSERT INTO modulr_return_register VALUES('return1','t1','other')");assert.throws(()=>reverseModulrReturnedPayment(db,'t1','return1'));assert.equal(db.prepare("SELECT count(*) n FROM driver_ledger WHERE entry_type='modulr_return_reversal'").get().n,0);});
 test('disabled gate refuses accounting',()=>{const db=fixture();process.env.MODULR_SENT_ACCOUNTING_ENABLED='false';assert.throws(()=>postModulrSentRun(db,'run1'));process.env.MODULR_SENT_ACCOUNTING_ENABLED='true';});
 test('file-backed database always rejected',()=>{const db=new DatabaseSync('/tmp/modulr-sent-accounting-safety-test.sqlite');try{assert.throws(()=>postModulrSentRun(db,'run1'));}finally{db.close();}});
+
+test('explicit temporary persistent fixture survives restart and cannot repost',()=>{
+ const target=path.join(os.tmpdir(),`faivopay-modulr-sandbox-fixture-${process.pid}-${Date.now()}.sqlite`);
+ const memory=fixture(2);
+ let db;
+ try {
+  db=new DatabaseSync(target);
+  // Fixture tables are copied only from the synthetic in-memory schema.
+  for(const row of memory.prepare("SELECT name,sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all()) db.exec(row.sql);
+  for(const row of memory.prepare("SELECT name,sql FROM sqlite_master WHERE type='index' AND sql IS NOT NULL ORDER BY name").all()) db.exec(row.sql);
+  for(const row of memory.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all()){
+   const cols=memory.prepare(`PRAGMA table_info(${row.name})`).all().map(c=>c.name);
+   const stmt=db.prepare(`INSERT INTO ${row.name} (${cols.join(',')}) VALUES (${cols.map(()=>'?').join(',')})`);
+   for(const item of memory.prepare(`SELECT * FROM ${row.name}`).all()) stmt.run(...cols.map(c=>item[c]));
+  }
+  process.env.MODULR_SENT_ACCOUNTING_FILE_FIXTURE_ENABLED='true';
+  process.env.MODULR_SENT_ACCOUNTING_FIXTURE_DB=target;
+  assert.equal(postModulrSentRun(db,'run1').posted,2);
+  db.close();db=null;
+  db=new DatabaseSync(target);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM modulr_sent_postings').get().n,2);
+  assert.throws(()=>postModulrSentRun(db,'run1'));
+  db.exec("INSERT INTO modulr_return_register VALUES('return1','t1','provider1')");
+  assert.equal(reverseModulrReturnedPayment(db,'t1','return1').reversedMinor,1000);
+  db.close();db=null;
+  db=new DatabaseSync(target);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM driver_ledger WHERE entry_type='modulr_return_reversal'").get().n,1);
+  assert.throws(()=>reverseModulrReturnedPayment(db,'t1','return1'));
+ } finally {
+  if(db)db.close();memory.close();
+  delete process.env.MODULR_SENT_ACCOUNTING_FILE_FIXTURE_ENABLED;
+  delete process.env.MODULR_SENT_ACCOUNTING_FIXTURE_DB;
+  for(const suffix of ['','-wal','-shm'])try{fs.unlinkSync(target+suffix)}catch{}
+ }
+});
+test('persistent fixture cannot be enabled without exact temporary file match',()=>{
+ const db=new DatabaseSync(path.join(os.tmpdir(),`faivopay-modulr-sandbox-fixture-${process.pid}-guard.sqlite`));
+ try{
+  process.env.MODULR_SENT_ACCOUNTING_FILE_FIXTURE_ENABLED='true';
+  process.env.MODULR_SENT_ACCOUNTING_FIXTURE_DB='/tmp/not-the-same.sqlite';
+  assert.throws(()=>postModulrSentRun(db,'run1'),/fixture/);
+ }finally{db.close();delete process.env.MODULR_SENT_ACCOUNTING_FILE_FIXTURE_ENABLED;delete process.env.MODULR_SENT_ACCOUNTING_FIXTURE_DB;try{fs.unlinkSync(path.join(os.tmpdir(),`faivopay-modulr-sandbox-fixture-${process.pid}-guard.sqlite`))}catch{}}
+});

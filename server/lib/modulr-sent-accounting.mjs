@@ -1,4 +1,7 @@
 import crypto from 'node:crypto';
+import path from 'node:path';
+import os from 'node:os';
+import fs from 'node:fs';
 
 // Deliberately unexposed to HTTP. Sandbox-only accounting engine, disabled by default.
 // Operational authorisation requires a separately reviewed server integration.
@@ -13,7 +16,17 @@ function gate(db) {
     process.env.LIVE_TEST_AUTOCAB_WRITES_ENABLED==='true') throw Error('Modulr sent accounting gate closed');
   if(db.isTransaction) throw Error('Existing transaction prohibited');
   const dbs=all(db,'PRAGMA database_list');
-  if(dbs.length!==1||dbs[0].name!=='main'||dbs[0].file!=='') throw Error('Only isolated in-memory sandbox databases permitted');
+  if(dbs.length!==1||dbs[0].name!=='main') throw Error('Attached databases prohibited');
+  if(dbs[0].file!=='') {
+    const expected=process.env.MODULR_SENT_ACCOUNTING_FIXTURE_DB;
+    const filename=fs.realpathSync(dbs[0].file);
+    const base=path.basename(filename);
+    if(process.env.MODULR_SENT_ACCOUNTING_FILE_FIXTURE_ENABLED!=='true'||
+       !expected||!fs.existsSync(expected)||fs.realpathSync(expected)!==filename||
+       path.dirname(filename)!==fs.realpathSync(os.tmpdir())||
+       !/^faivopay-modulr-sandbox-fixture-[a-z0-9-]+\.sqlite$/.test(base))
+      throw Error('Persistent accounting permitted only for explicit temporary sandbox fixture');
+  }
 }
 export function createModulrSentAccountingSchema(db){
   db.exec(`CREATE TABLE IF NOT EXISTS modulr_sent_postings (
