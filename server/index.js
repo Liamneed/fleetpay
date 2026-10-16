@@ -1,4 +1,5 @@
 import { authoriseModulrFunding, ensureModulrFundingAuthorisationTable } from './lib/modulr-funding-authorisation.mjs';
+import { readModulrRunCloseout } from './lib/modulr-run-closeout-read.mjs';
 import { monitorModulrSandboxReturns } from './lib/modulr-return-monitor.mjs';
 import { validateClaimedModulrSubmission } from './lib/modulr-submission-gate.mjs';
 import { executeModulrSandboxTransport } from './lib/modulr-sandbox-payment-transport.mjs';
@@ -8696,6 +8697,37 @@ app.post(
    });
   }
  }
+);
+
+
+// Administrator-only read of local reconciliation evidence.
+// No provider requests or financial state changes; not a release approval.
+app.get(
+  '/api/admin/payout-runs/:id/modulr-closeout-assessment',
+  adminAuth,
+  requireStaffRole('administrator'),
+  requirePlatformAdmin,
+  (req,res)=>{
+    if(MODULR_ENV!=='sandbox' || MODULR_ENABLED ||
+       process.env.MODULR_SANDBOX_POST_ENABLED==='true' ||
+       process.env.MODULR_ONE_POUND_EXECUTION_ENABLED==='true' ||
+       process.env.PAYOUT_ACCOUNTING_FINALISATION_ENABLED!=='false' ||
+       AUTOCAB_ADJUSTMENTS_ENABLED || LIVE_TEST_AUTOCAB_WRITES_ENABLED){
+      return res.status(403).json({error:'Safe sandbox configuration required.',fundingReleaseAuthorised:false});
+    }
+    const runId=String(req.params.id||'').trim();
+    if(!/^[A-Za-z0-9_-]{1,128}$/.test(runId)){
+      return res.status(400).json({error:'Invalid payout run ID.',fundingReleaseAuthorised:false});
+    }
+    try{
+      return res.json(readModulrRunCloseout(db,runId));
+    }catch(error){
+      if(error.message==='Payout run not found')return res.status(404).json({error:error.message,fundingReleaseAuthorised:false});
+      if(error.message==='Not a Modulr run')return res.status(409).json({error:error.message,fundingReleaseAuthorised:false});
+      console.error('Modulr closeout assessment unavailable:',error.message);
+      return res.status(409).json({error:'Reconciliation evidence unavailable.',fundingReleaseAuthorised:false});
+    }
+  }
 );
 
 // Administrator-only reconciliation of an EXISTING sandbox payment.

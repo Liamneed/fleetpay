@@ -6,6 +6,10 @@ export function assessModulrRunCloseout({run, payouts, transfers, returns, event
   if(!Array.isArray(payouts)||!Array.isArray(transfers)||!Array.isArray(returns)||!Array.isArray(events)) fail('incomplete_evidence');
   if(reasons.length) return conclusion(reasons);
   if(!payouts.length || !Number.isSafeInteger(Number(run.item_count)) || payouts.length!==Number(run.item_count)) fail('payout_count_mismatch');
+  if(!['funding_pending','funded','submitted','submitted_sandbox','processing','paid'].includes(run.status)) fail('run_status_not_reconcilable');
+  const totalMinor=Math.round(Number(run.total_amount)*100);
+  const aggregateMinor=payouts.reduce((sum,p)=>sum+Math.round(Number(p.net_amount??p.amount)*100),0);
+  if(!Number.isSafeInteger(totalMinor)||totalMinor<=0||!Number.isSafeInteger(aggregateMinor)||totalMinor!==aggregateMinor) fail('run_total_mismatch');
   if(transfers.length!==payouts.length) fail('transfer_count_mismatch');
   const ids=new Set(), refs=new Set();
   for(const t of transfers){
@@ -25,6 +29,11 @@ export function assessModulrRunCloseout({run, payouts, transfers, returns, event
     if(!Number.isFinite(amount)||!Number.isSafeInteger(pennies)||pennies<=0||Math.abs(amount*100-pennies)>0.000001||matching[0].amount_minor!==pennies) fail('amount_mismatch');
   }
   if(returns.length || events.some(e=>e.event_type==='returned')) fail('return_requires_review');
+  if(returns.some(r=>!transfers.some(t=>t.id===r.transfer_id)) || events.some(e=>!transfers.some(t=>t.id===e.transfer_id))) fail('orphan_evidence');
+  for(const t of transfers){
+    const confirmations=events.filter(e=>e.transfer_id===t.id && e.event_type==='confirmed');
+    if(confirmations.length!==1) fail('confirmation_history_count_invalid');
+  }
   if(events.some(e=>['unknown','failed'].includes(e.event_type))) fail('ambiguous_transfer_history');
   return conclusion(reasons);
 }

@@ -21,7 +21,7 @@ const begin = source.indexOf(
   '// Isolated fixture only: fresh provider verification and atomic claim.'
 );
 const end = source.indexOf(
-  '// Administrator-only reconciliation of an EXISTING sandbox payment.',
+  '// Administrator-only read of local reconciliation evidence.',
   begin
 );
 assert.ok(begin >= 0 && end > begin);
