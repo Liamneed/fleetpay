@@ -1,0 +1,15 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {DatabaseSync} from 'node:sqlite';
+import {observeAuthenticatedModulrDebit} from '../server/lib/modulr-authenticated-debit-observation.mjs';
+const env={MODULR_ENV:'sandbox',MODULR_ENABLED:'false',PAYOUT_ACCOUNTING_FINALISATION_ENABLED:'false',AUTOCAB_ADJUSTMENTS_ENABLED:'false',LIVE_TEST_AUTOCAB_WRITES_ENABLED:'false',MODULR_SANDBOX_POST_ENABLED:'false',MODULR_ONE_POUND_EXECUTION_ENABLED:'false'};
+function setEnv(){for(const [k,v] of Object.entries(env))process.env[k]=v;}
+function fixture(){const db=new DatabaseSync(':memory:');db.exec(`CREATE TABLE payout_transfer_intents(id TEXT PRIMARY KEY,provider TEXT,environment TEXT,status TEXT,provider_transfer_id TEXT,amount_minor INTEGER,currency TEXT); INSERT INTO payout_transfer_intents VALUES('t1','modulr','sandbox','confirmed','pay1',2500,'GBP');`);return db;}
+const tx={id:'txn1',sourceId:'pay1',account:{id:'acct1'},credit:false,currency:'GBP',amount:-25};
+const response=content=>({status:200,json:async()=>({content,page:0,totalPages:1,last:true,totalSize:content.length})});
+const input=(db,fetchImpl)=>({db,transferId:'t1',sourceAccountId:'acct1',apiKey:'token',fetchImpl});
+test('authenticated GET alone stores a debit without settlement',async()=>{setEnv();const db=fixture();try{let calls=0;const f=async(url,opts)=>{calls++;assert.equal(opts.method,'GET');assert.match(url,/sourceId=pay1/);return response([tx]);};let x=await observeAuthenticatedModulrDebit(input(db,f));assert.equal(x.ok,true);assert.equal(x.recorded,true);assert.equal(x.accountingAuthorised,false);assert.equal(x.settlementVerified,false);x=await observeAuthenticatedModulrDebit(input(db,f));assert.equal(x.alreadyRecorded,true);assert.equal(calls,2);assert.equal(db.prepare('SELECT count(*) AS n FROM modulr_debit_evidence').get().n,1);}finally{db.close()}});
+test('no matching debit never writes',async()=>{setEnv();const db=fixture();try{const x=await observeAuthenticatedModulrDebit(input(db,async()=>response([])));assert.equal(x.ok,false);assert.equal(db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE name='modulr_debit_evidence'").get().n,0)}finally{db.close()}});
+test('wrong amount cannot write',async()=>{setEnv();const db=fixture();try{const x=await observeAuthenticatedModulrDebit(input(db,async()=>response([{...tx,amount:-26}])));assert.equal(x.ok,false)}finally{db.close()}});
+test('conflicting independent debit fails closed',async()=>{setEnv();const db=fixture();try{await observeAuthenticatedModulrDebit(input(db,async()=>response([tx])));await assert.rejects(observeAuthenticatedModulrDebit(input(db,async()=>response([{...tx,id:'txn2'}]))));assert.equal(db.prepare('SELECT provider_transaction_id AS id FROM modulr_debit_evidence').get().id,'txn1')}finally{db.close()}});
+test('unsafe environment never invokes provider',async()=>{setEnv();const db=fixture();try{process.env.MODULR_ENABLED='true';let called=false;const x=await observeAuthenticatedModulrDebit(input(db,async()=>{called=true;return response([tx])}));assert.equal(x.ok,false);assert.equal(called,false)}finally{db.close();setEnv()}});

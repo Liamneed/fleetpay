@@ -1,5 +1,6 @@
 import { authoriseModulrFunding, ensureModulrFundingAuthorisationTable } from './lib/modulr-funding-authorisation.mjs';
 import { readModulrRunCloseout } from './lib/modulr-run-closeout-read.mjs';
+import { observeAuthenticatedModulrDebit } from './lib/modulr-authenticated-debit-observation.mjs';
 import { monitorModulrSandboxReturns } from './lib/modulr-return-monitor.mjs';
 import { validateClaimedModulrSubmission } from './lib/modulr-submission-gate.mjs';
 import { executeModulrSandboxTransport } from './lib/modulr-sandbox-payment-transport.mjs';
@@ -8796,6 +8797,35 @@ app.post(
   }
 );
 
+
+// Sandbox-only independently retrieved outgoing-debit observation.
+// Read-only provider GET; writes evidence only. Never marks a payout paid.
+app.post(
+ '/api/admin/modulr/transfers/:intentId/observe-debit',
+ adminAuth,
+ requirePlatformAdmin,
+ async(req,res)=>{
+  if(MODULR_ENV!=='sandbox'||MODULR_ENABLED||
+     process.env.MODULR_SANDBOX_POST_ENABLED==='true'||
+     process.env.MODULR_ONE_POUND_EXECUTION_ENABLED==='true'||
+     process.env.PAYOUT_ACCOUNTING_FINALISATION_ENABLED!=='false'||
+     AUTOCAB_ADJUSTMENTS_ENABLED||LIVE_TEST_AUTOCAB_WRITES_ENABLED){
+    return res.status(403).json({error:'Safe sandbox environment required.',accountingAuthorised:false});
+  }
+  try{assertModulrPreparationTestEnvironment();}
+  catch{return res.status(403).json({error:'Isolated sandbox database required.',accountingAuthorised:false});}
+  const transferId=String(req.params.intentId||'').trim();
+  if(!/^[A-Za-z0-9_-]{1,128}$/.test(transferId))return res.status(400).json({error:'Invalid transfer ID.'});
+  if(!MODULR_API_KEY||!MODULR_ACCOUNT_ID)return res.status(503).json({error:'Modulr sandbox configuration unavailable.'});
+  try{
+   const result=await observeAuthenticatedModulrDebit({db,transferId,sourceAccountId:MODULR_ACCOUNT_ID,apiKey:MODULR_API_KEY,fetchImpl:fetch});
+   return res.status(result.ok?200:409).json(result);
+  }catch(error){
+   console.error('Modulr debit observation failed:',error.message);
+   return res.status(409).json({error:'Provider debit evidence unavailable or conflicting.',accountingAuthorised:false,settlementVerified:false});
+  }
+ }
+);
 
 // Administrator-only sandbox return monitoring.
 // Authenticated provider GET requests only.
