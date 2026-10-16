@@ -10077,6 +10077,14 @@ app.patch(
 app.post('/api/admin/payout-runs/:id/cancel',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{
  const run=db.prepare('SELECT * FROM payout_runs WHERE id=?').get(req.params.id);if(!run)return res.status(404).json({error:'Payout run not found'});
  if(run.status==='cancelled')return res.json({ok:true,alreadyCancelled:true});
+ if(
+  run.provider==='modulr' &&
+  ['balance_verified','release_approved','cleared'].includes(run.funding_status)
+ ){
+  return res.status(409).json({
+   error:'Modulr funding commitment requires independent reconciliation before cancellation.'
+  });
+ }
  const cancellable=['ready','funding_pending','funded'];
  if(!cancellable.includes(run.status))return res.status(400).json({error:`This payment run cannot be cancelled at the ${run.status} stage. Cancellation is allowed only before payments are released.`});
  if(run.provider_ref||run.released_at)return res.status(400).json({error:'This payment run has already been released to the payment provider and cannot be cancelled safely.'});
@@ -10098,6 +10106,15 @@ app.post('/api/admin/payout-runs/:id/cancel',adminAuth,requireStaffRole('adminis
   ){
    throw new Error(
     'Payment-run state changed or provider execution has begun.'
+   );
+  }
+
+  if(
+   lockedRun.provider==='modulr' &&
+   ['balance_verified','release_approved','cleared'].includes(lockedRun.funding_status)
+  ){
+   throw new Error(
+    'Modulr funding commitment requires independent reconciliation before cancellation.'
    );
   }
 
