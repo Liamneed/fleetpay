@@ -202,3 +202,100 @@ test('Mock workflow cannot run without its test-only switch', async () => {
     db.close();
   }
 });
+
+test('Balance verification alone cannot authorise payment execution', () =>
+  withFixture(async (db, beneficiaryMatch) => {
+    db.prepare(`
+      UPDATE payout_runs
+      SET status='funding_pending',
+          funding_status='balance_verified',
+          funds_cleared_at=NULL
+      WHERE id='run'
+    `).run();
+
+    let paymentCalls = 0;
+
+    await assert.rejects(
+      runMockModulrPaymentWorkflow({
+        db,
+        intentId:'intent',
+        beneficiaryMatch,
+        fetchImpl:async()=>{
+          paymentCalls++;
+          throw new Error('PAYMENT MUST NOT BE CALLED');
+        }
+      })
+    );
+
+    assert.equal(paymentCalls,0);
+    assert.equal(getTransfer(db).status,'prepared');
+    assert.equal(getTransfer(db).attempt_started_at,null);
+    assert.equal(paidAt(db),null);
+  })
+);
+
+test('Verified funding earmark cannot execute or settle a payout', () =>
+  withFixture(async (db, beneficiaryMatch) => {
+    const { earmarkVerifiedModulrFunding,
+      ensureModulrFundingVerificationTable } =
+      await import('../server/lib/modulr-funding-earmark.mjs');
+
+    db.exec(`
+      ALTER TABLE payout_runs
+      ADD COLUMN funding_required REAL
+    `);
+
+    db.prepare(`
+      UPDATE payout_runs
+      SET status='funding_pending',
+          funding_status='awaiting_clearance',
+          funds_cleared_at=NULL
+      WHERE id='run'
+    `).run();
+
+    ensureModulrFundingVerificationTable(db);
+
+    const result=earmarkVerifiedModulrFunding(db,{
+      runId:'run',
+      account:{
+        id:'A_TEST_299',
+        customerId:'C_TEST_299',
+        currency:'GBP',
+        status:'ACTIVE',
+        availableBalance:'100.00'
+      },
+      accountId:'A_TEST_299',
+      customerId:'C_TEST_299'
+    });
+
+    assert.equal(result.verified,true);
+    assert.equal(result.fundingStatus,'balance_verified');
+    assert.equal(result.providerFundsReserved,false);
+
+    let calls=0;
+
+    await assert.rejects(
+      runMockModulrPaymentWorkflow({
+        db,
+        intentId:'intent',
+        beneficiaryMatch,
+        fetchImpl:async()=>{
+          calls++;
+          throw new Error('Unexpected payment execution');
+        }
+      })
+    );
+
+    assert.equal(calls,0);
+
+    const run=db.prepare(
+      'SELECT status,funding_status,funds_cleared_at FROM payout_runs WHERE id=?'
+    ).get('run');
+
+    assert.equal(run.status,'funding_pending');
+    assert.equal(run.funding_status,'balance_verified');
+    assert.equal(run.funds_cleared_at,null);
+    assert.equal(getTransfer(db).status,'prepared');
+    assert.equal(paidAt(db),null);
+  })
+);

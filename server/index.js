@@ -1,3 +1,4 @@
+import { authoriseModulrFunding, ensureModulrFundingAuthorisationTable } from './lib/modulr-funding-authorisation.mjs';
 import { monitorModulrSandboxReturns } from './lib/modulr-return-monitor.mjs';
 import { validateClaimedModulrSubmission } from './lib/modulr-submission-gate.mjs';
 import { executeModulrSandboxTransport } from './lib/modulr-sandbox-payment-transport.mjs';
@@ -82,6 +83,7 @@ import {
 
 import {
  earmarkVerifiedModulrFunding,
+ refreshVerifiedModulrFunding,
  ensureModulrFundingVerificationTable
 } from './lib/modulr-funding-earmark.mjs';
 
@@ -10464,6 +10466,187 @@ app.post(
    return reject(409,e.message);
   }
  }
+);
+
+
+// Refresh only the existing internal funding verification, never payout funds.
+app.post(
+ '/api/admin/payout-runs/:id/modulr-refresh-funding',
+ adminAuth,
+ requireStaffRole('administrator'),
+ requirePlatformAdmin,
+ async(req,res)=>{
+  const reject=(code,error)=>res.status(code).json({
+   verified:false,refreshed:false,error,paymentSubmitted:false,
+   fundsCleared:false,accountingFinalised:false,autocabReconciled:false
+  });
+  if(MODULR_ENV!=='sandbox' || MODULR_ENABLED ||
+     process.env.MODULR_SANDBOX_POST_ENABLED==='true' ||
+     process.env.MODULR_ONE_POUND_EXECUTION_ENABLED==='true' ||
+     process.env.PAYOUT_ACCOUNTING_FINALISATION_ENABLED!=='false' ||
+     AUTOCAB_ADJUSTMENTS_ENABLED || LIVE_TEST_AUTOCAB_WRITES_ENABLED){
+   return reject(403,'Safe sandbox configuration required.');
+  }
+  const administratorId=String(req.auth.staffId||'').trim();
+  const staff=db.prepare('SELECT * FROM staff_users WHERE id=?').get(administratorId);
+  if(!staff || Number(staff.active)!==1 ||
+     staff.role!=='administrator' || Number(staff.mfa_enabled)!==1){
+   return reject(403,'Active MFA administrator required.');
+  }
+  if(!MODULR_API_KEY || !MODULR_ACCOUNT_ID || !MODULR_CUSTOMER_ID){
+   return reject(503,'Modulr configuration unavailable.');
+  }
+  const runId=String(req.params.id||'').trim();
+  const run=db.prepare('SELECT * FROM payout_runs WHERE id=?').get(runId);
+  if(!run)return reject(404,'Payout run not found.');
+  if(run.provider!=='modulr' || run.status!=='funding_pending' ||
+     run.funding_status!=='balance_verified'){
+   return reject(409,'Run is not eligible for funding refresh.');
+  }
+  let account;
+  try{
+   const response=await fetch(
+    MODULR_BASE_URL+'accounts/'+encodeURIComponent(MODULR_ACCOUNT_ID),
+    {method:'GET',headers:{Authorization:MODULR_API_KEY,
+     Accept:'application/json'},signal:AbortSignal.timeout(10000)}
+   );
+   if(response.status!==200)return reject(502,'Modulr balance unavailable.');
+   account=await response.json();
+  }catch{return reject(502,'Modulr balance lookup failed.');}
+  try{
+   ensureModulrFundingVerificationTable(db);
+   const result=refreshVerifiedModulrFunding(db,{
+    runId,account,accountId:MODULR_ACCOUNT_ID,customerId:MODULR_CUSTOMER_ID
+   });
+   audit(req,'staff',req.auth.email,'modulr_funding_balance_refreshed',
+    'payout_run',runId,{requiredMinor:result.requiredMinor,
+     availableMinor:result.availableMinor,verifiedAt:result.verifiedAt,
+     paymentSubmitted:false,providerFundsReserved:false});
+   return res.json(result);
+  }catch(error){return reject(409,error.message);}
+ }
+);
+
+// Sandbox-only administrator funding approval.
+// Does not clear funds, reserve provider funds or submit payments.
+app.post(
+  '/api/admin/payout-runs/:id/modulr-authorise-funding',
+  adminAuth,
+  requireStaffRole('administrator'),
+  requirePlatformAdmin,
+  async (req,res) => {
+    const reject=(status,error)=>res.status(status).json({
+      authorised:false,
+      error,
+      paymentSubmitted:false,
+      fundsCleared:false,
+      accountingFinalised:false,
+      autocabReconciled:false
+    });
+
+    if (
+      MODULR_ENV!=='sandbox' ||
+      MODULR_ENABLED ||
+      process.env.MODULR_SANDBOX_POST_ENABLED==='true' ||
+      process.env.MODULR_ONE_POUND_EXECUTION_ENABLED==='true' ||
+      process.env.PAYOUT_ACCOUNTING_FINALISATION_ENABLED!=='false' ||
+      AUTOCAB_ADJUSTMENTS_ENABLED ||
+      LIVE_TEST_AUTOCAB_WRITES_ENABLED
+    ) {
+      return reject(403,'Safe sandbox configuration required.');
+    }
+
+    if (!MODULR_API_KEY || !MODULR_ACCOUNT_ID ||
+        !MODULR_CUSTOMER_ID) {
+      return reject(503,'Modulr configuration unavailable.');
+    }
+
+    const administratorId=String(req.auth.staffId||'').trim();
+
+    if (!administratorId) {
+      return reject(403,'Valid administrator required.');
+    }
+
+    const staff=db.prepare(
+      'SELECT * FROM staff_users WHERE id=?'
+    ).get(administratorId);
+
+    if (!staff ||
+        Number(staff.active)!==1 ||
+        staff.role!=='administrator' ||
+        Number(staff.mfa_enabled)!==1) {
+      return reject(403,'Active MFA administrator required.');
+    }
+
+    const runId=String(req.params.id||'').trim();
+    const run=db.prepare(
+      'SELECT * FROM payout_runs WHERE id=?'
+    ).get(runId);
+
+    if (!run) {
+      return reject(404,'Payout run not found.');
+    }
+
+    if (run.provider!=='modulr' ||
+        run.status!=='funding_pending' ||
+        run.funding_status!=='balance_verified') {
+      return reject(409,'Run is not eligible for approval.');
+    }
+
+    let account;
+
+    try {
+      const response=await fetch(
+        MODULR_BASE_URL+'accounts/'+
+          encodeURIComponent(MODULR_ACCOUNT_ID),
+        {
+          method:'GET',
+          headers:{
+            Authorization:MODULR_API_KEY,
+            Accept:'application/json'
+          },
+          signal:AbortSignal.timeout(10000)
+        }
+      );
+
+      if (response.status!==200) {
+        return reject(502,'Modulr balance unavailable.');
+      }
+
+      account=await response.json();
+    } catch {
+      return reject(502,'Modulr balance lookup failed.');
+    }
+
+    let result;
+
+    try {
+      ensureModulrFundingVerificationTable(db);
+      ensureModulrFundingAuthorisationTable(db);
+
+      result=authoriseModulrFunding(db,{
+        runId,
+        account,
+        administratorId
+      });
+    } catch(error) {
+      return reject(409,error.message);
+    }
+
+    audit(
+      req,'staff',req.auth.email,
+      'modulr_funding_release_approved',
+      'payout_run',runId,
+      {
+        administratorId,
+        accountId:MODULR_ACCOUNT_ID,
+        fundsCleared:false,
+        paymentSubmitted:false
+      }
+    );
+
+    return res.json(result);
+  }
 );
 
 app.post('/api/admin/payout-runs/:id/funding-sent',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{

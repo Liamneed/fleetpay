@@ -179,3 +179,67 @@ test('already funded runs block new earmarks', () => {
     db.close();
   }
 });
+
+test('release-approved run blocks a second funding earmark', () => {
+  const db = fixture();
+
+  try {
+    // First run obtains a verified balance snapshot.
+    const first = verify(db, 'run1');
+    assert.equal(first.verified, true);
+
+    // Simulate the completed internal administrator approval.
+    // Provider funds are not reserved or paid.
+    const changed = db.prepare(`
+      UPDATE payout_runs
+      SET funding_status='release_approved'
+      WHERE id='run1'
+        AND status='funding_pending'
+        AND funding_status='balance_verified'
+    `).run();
+
+    assert.equal(changed.changes, 1);
+
+    // The second run must not reuse the same verified balance,
+    // even though the available balance exceeds both run totals.
+    assert.throws(
+      () => verify(db, 'run2'),
+      /outstanding funding commitment/
+    );
+
+    const run1 = db.prepare(`
+      SELECT status, funding_status
+      FROM payout_runs WHERE id='run1'
+    `).get();
+
+    const run2 = db.prepare(`
+      SELECT status, funding_status
+      FROM payout_runs WHERE id='run2'
+    `).get();
+
+    assert.equal(run1.status, 'funding_pending');
+    assert.equal(run1.funding_status, 'release_approved');
+
+    assert.equal(run2.status, 'funding_pending');
+    assert.equal(run2.funding_status, 'awaiting_clearance');
+
+    assert.equal(
+      db.prepare(`
+        SELECT COUNT(*) AS n
+        FROM modulr_funding_verifications
+      `).get().n,
+      1
+    );
+
+    assert.equal(
+      db.prepare(`
+        SELECT COUNT(*) AS n
+        FROM modulr_funding_verifications
+        WHERE run_id='run2'
+      `).get().n,
+      0
+    );
+  } finally {
+    db.close();
+  }
+});

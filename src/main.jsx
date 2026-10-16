@@ -5392,6 +5392,50 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
   }
  }
 
+ const [modulrFundingActionBusy,setModulrFundingActionBusy]=useState(false);
+
+ async function refreshModulrFunding(r){
+  setModulrFundingActionBusy(true);
+  setModulrFundingError('');
+  try{
+   const result=await api(
+    `/api/admin/payout-runs/${r.id}/modulr-refresh-funding`,
+    {method:'POST'}
+   );
+   if(result?.verified!==true || result?.refreshed!==true ||
+      result?.runId!==r.id || result?.fundingStatus!=='balance_verified' ||
+      result?.paymentSubmitted!==false || result?.fundsCleared!==false){
+    throw new Error('Unexpected Modulr funding-refresh response.');
+   }
+   setModulrFunding(null);
+   await loadSett();
+   alert('Modulr funding evidence refreshed.\n\nApproval must be completed within 60 seconds. No payment has been submitted.');
+  }catch(e){setModulrFundingError(e.message||'Funding refresh failed.');}
+  finally{setModulrFundingActionBusy(false);}
+ }
+
+ async function approveModulrFunding(r){
+  if(!confirm('Approve this internally verified Modulr funding snapshot?\n\nThis does NOT clear funds, reserve funds with Modulr or send payments.\n\nIf the balance was verified more than 60 seconds ago, refresh it first.'))return;
+  setModulrFundingActionBusy(true);
+  setModulrFundingError('');
+  try{
+   const result=await api(
+    `/api/admin/payout-runs/${r.id}/modulr-authorise-funding`,
+    {method:'POST'}
+   );
+   if(result?.authorised!==true || result?.runId!==r.id ||
+      result?.fundingStatus!=='release_approved' ||
+      result?.paymentAuthorised!==false || result?.fundsCleared!==false ||
+      result?.accountingFinalised!==false){
+    throw new Error('Unexpected Modulr funding-approval response.');
+   }
+   setModulrFunding(null);
+   await loadSett();
+   alert('Internal funding approval recorded.\n\nNo payment submitted and funds are NOT cleared or reserved with Modulr.');
+  }catch(e){setModulrFundingError(e.message||'Funding approval failed.');}
+  finally{setModulrFundingActionBusy(false);}
+ }
+
  const LiveRunCard=({r,showSteps=true})=>{
   const idx=r.status==='ready'?3:r.status==='funding_pending'?4:r.status==='funded'?5:['submitted_sandbox','submitted','processing'].includes(r.status)?6:r.status==='paid'?7:r.status==='cancelled'?-1:3;
   const steps=r.runType==='weekly'
@@ -5424,7 +5468,12 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
      <button className="secondary" onClick={()=>downloadPayoutRunCsv(r)}><FileClock/>Export run CSV</button>
      {r.provider==='modulr'&&<button className="secondary" disabled={modulrReconciliationBusy} onClick={()=>inspectModulrReconciliation(r)}><FileClock/>{modulrReconciliation?.run?.id===r.id?'Hide reconciliation':'View payout reconciliation'}</button>}
      {r.provider==='modulr'&&['ready','funding_pending'].includes(r.status)&&r.fundingStatus!=='balance_verified'&&<button className="secondary" disabled={modulrFundingBusy} onClick={()=>checkModulrFunding(r)}><ShieldCheck/>{modulrFundingBusy?'Checking Modulr balance…':'Check Modulr balance'}</button>}
-     {r.provider==='modulr'&&r.fundingStatus==='balance_verified'&&<span className="tinyNote">Balance verified internally — not cleared or reserved with Modulr. Payment release remains disabled.</span>}
+     {r.provider==='modulr'&&r.status==='funding_pending'&&r.fundingStatus==='balance_verified'&&<>
+      <button className="secondary" disabled={modulrFundingActionBusy} onClick={()=>refreshModulrFunding(r)}><ShieldCheck/>{modulrFundingActionBusy?'Working…':'Refresh verified balance'}</button>
+      {canMoney&&<button className="secondary" disabled={modulrFundingActionBusy} onClick={()=>approveModulrFunding(r)}><CheckCircle2/>Approve funding internally</button>}
+      <span className="tinyNote">Approval requires a fresh (under 60 seconds) verification and active MFA platform administrator. No funds are cleared or sent.</span>
+     </>}
+     {r.provider==='modulr'&&r.fundingStatus==='release_approved'&&<span className="tinyNote">Internal funding approval recorded. Funds are not reserved with Modulr, cleared, or paid. Payment release remains disabled.</span>}
      {r.provider==='modulr'&&r.status==='funded'&&<button className="secondary" onClick={()=>previewModulrRun(r)}><ShieldCheck/>Check Modulr payout readiness</button>}
      {canCancel&&canMoney&&<button className="dangerOutline" onClick={()=>cancelPayoutRun(r)}><X/>Cancel payment run</button>}
      {r.status==='ready'&&canMoney&&<button className="primary" onClick={()=>confirmFundingSent(r)}><Banknote/>Funding transfer sent</button>}
