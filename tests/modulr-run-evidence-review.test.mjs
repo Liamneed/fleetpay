@@ -1,0 +1,18 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {reviewModulrRunEvidence as review} from '../server/lib/modulr-run-evidence-review.mjs';
+const run={id:'r1',provider:'modulr',item_count:1,total_amount:25};
+const payouts=[{id:'p1',payout_run_id:'r1',net_amount:25}];
+const transfers=[{id:'t1',payout_id:'p1',payout_run_id:'r1',provider:'modulr',environment:'sandbox',currency:'GBP',amount_minor:2500,provider_transfer_id:'pay1',status:'confirmed',provider_status:'PROCESSED',confirmed_at:'2026-10-16'}];
+const debits=[{transferId:'t1',providerPaymentId:'pay1',providerTransactionId:'txn1',sourceAccountId:'acct1',amountMinor:2500,currency:'GBP',evidenceStatus:'debit_observed'}];
+const events=[{transfer_id:'t1',event_type:'confirmed',provider_reference:'pay1',source:'modulr_api'}];
+const input=()=>({run,payouts,transfers,returns:[],events,debits});
+test('matching provider debit is visible, not beneficiary settlement',()=>{const x=review(input());assert.equal(x.items[0].debitObserved,true);assert.equal(x.accountingAuthorised,false);assert.equal(x.fundingReleaseAuthorised,false);assert.ok(x.blockers.includes('independent_beneficiary_settlement_not_established'))});
+test('missing debit is flagged',()=>assert.ok(review({...input(),debits:[]}).blockers.includes('debit_evidence_missing_or_conflicting')));
+test('wrong debit amount is flagged',()=>assert.ok(review({...input(),debits:[{...debits[0],amountMinor:2501}]}).blockers.includes('debit_evidence_missing_or_conflicting')));
+test('return overrides observed debit',()=>{const x=review({...input(),returns:[{transfer_id:'t1'}]});assert.equal(x.items[0].returnObserved,true);assert.ok(x.blockers.includes('bank_return_requires_review'))});
+test('duplicate debit evidence is rejected',()=>assert.ok(review({...input(),debits:[debits[0],debits[0]]}).blockers.includes('debit_evidence_missing_or_conflicting')));
+test('missing payout and mismatched run count rejected',()=>{const x=review({...input(),payouts:[]});assert.ok(x.blockers.includes('run_totals_or_counts_invalid'));assert.ok(x.blockers.includes('payout_identity_or_amount_invalid'))});
+test('unknown provider outcome blocks',()=>assert.ok(review({...input(),transfers:[{...transfers[0],status:'unknown'}]}).blockers.includes('payment_not_provider_confirmed')));
+test('orphan debit and return are flagged',()=>{const x=review({...input(),debits:[...debits,{...debits[0],transferId:'t2'}],returns:[{transfer_id:'t3'}]});assert.ok(x.blockers.includes('orphan_debit_evidence'));assert.ok(x.blockers.includes('orphan_bank_return'))});
+test('invalid or missing collections fail closed',()=>{const x=review({run});assert.equal(x.accountingAuthorised,false);assert.ok(x.blockers.includes('invalid_or_missing_run_evidence'))});
