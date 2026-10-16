@@ -1,3 +1,4 @@
+import {readModulrDebitObservations} from './modulr-debit-evidence-store.mjs';
 import {assessModulrRunCloseout} from './modulr-run-closeout-assessment.mjs';
 import {planModulrSettlement} from './modulr-settlement-readiness.mjs';
 // Uses ONLY existing tables and never mutates a database. Missing data fails closed.
@@ -21,5 +22,7 @@ export function readModulrRunCloseout(db,runId){
     returns.push(...db.prepare('SELECT * FROM modulr_return_register WHERE transfer_id=?').all(id));
     events.push(...db.prepare('SELECT * FROM modulr_payment_events WHERE transfer_id=?').all(id));
   }
-  return {runId, payoutCount:payouts.length,transferCount:transfers.length, returnCount:returns.length, assessment:assessModulrRunCloseout({run,payouts,transfers,returns,events}),settlementPlan:planModulrSettlement({run,payouts,transfers,returns,events})};
+  const debitEvidenceTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='modulr_debit_evidence'").get();
+  const debitObservations = debitEvidenceTable ? readModulrDebitObservations(db,transferIds) : [];
+  return {runId, payoutCount:payouts.length,transferCount:transfers.length, returnCount:returns.length, debitObservations, assessment:assessModulrRunCloseout({run,payouts,transfers,returns,events}),settlementPlan:planModulrSettlement({run,payouts,transfers,returns,events})};
 }
