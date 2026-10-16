@@ -9,6 +9,7 @@ import { validateClaimedModulrSubmission } from '../server/lib/modulr-submission
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
+import { createModulrPaymentHistoryTable } from '../server/lib/modulr-payment-history.mjs';
 import { claimValidatedModulrTransfer } from '../server/lib/modulr-validated-claim.mjs';
 import { transitionModulrTransfer } from '../server/lib/modulr-transfer-store.mjs';
 
@@ -57,6 +58,7 @@ function fixture() {
     bankUpdatedAt:'2026-10-12T16:00:00Z',
     bankSortCodeEnc:'test_sort',bankAccountNumberEnc:'test_account'
   };
+  createModulrPaymentHistoryTable(db);
   return {db,match};
 }
 function withFixture(callback) {

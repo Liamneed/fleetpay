@@ -142,17 +142,17 @@ function DemoLab({demo,loadDemo,resetDemo,action,demoEmail,setDemoEmail,demoMobi
  const processing=(r,early=false)=>approved(r,early).filter(x=>x.wiseStatus==='processing');
  const pending=(r,early=false)=>r?.items?.filter(x=>early?x.status==='requested':x.status==='pending')||[];
  const paymentTotal=(r,early=false)=>approved(r,early).reduce((a,x)=>a+Number(early?x.netAmount:x.amount||0),0);
- const weeklySteps=[['rentsheets','Confirm Rent Sheets'],['sync','Sync Autocab'],['review','Review & approve'],['funding','Create run'],['funding_wait','Fund Wise'],['funded','Release payouts'],['monitor','Update Autocab'],['complete','Reconcile']];
- const earlySteps=[['balance','Sync current balance'],['review','Review requests'],['funding','Create run'],['funding_wait','Check Wise funds'],['funded','Release payouts'],['monitor','Update Autocab'],['complete','Reconcile']];
+ const weeklySteps=[['rentsheets','Confirm Rent Sheets'],['sync','Sync Autocab'],['review','Review & approve'],['funding','Create run'],['funding_wait','Fund Modulr'],['funded','Release payouts'],['monitor','Update Autocab'],['complete','Reconcile']];
+ const earlySteps=[['balance','Sync current balance'],['review','Review requests'],['funding','Create run'],['funding_wait','Check Modulr funds'],['funded','Release payouts'],['monitor','Update Autocab'],['complete','Reconcile']];
  const stepIndex=(run,early)=>{const steps=early?earlySteps:weeklySteps;const i=steps.findIndex(x=>x[0]===run?.stage);if(run?.stage==='funding'&&Number(run?.topUpRequired||0)<=0)return 3;return Math.max(0,i)};
  const StepBar=({run,early=false})=>{const steps=(early?earlySteps:weeklySteps).map(x=>x[1]),idx=stepIndex(run,early);return <WizardSteps steps={steps} currentIndex={idx}/>};
  const Procedure=({early=false})=><div className="operatorProcedure"><div className="procedureTitle"><ShieldCheck/><div><b>{early?'Early payout operator procedure':'Monday weekly operator procedure'}</b><span>{early?'Uses the driver’s current Autocab balance — no Rent Sheets step.':'Always start after Monday Rent Sheets have been completed in Autocab.'}</span></div></div><div className="procedureGrid">{(early?[
-  ['1','Sync current balance','Refresh Autocab and confirm the driver still has enough available balance.'],['2','Review requests','Approve/decline every request. Nothing advances with pending decisions.'],['3','Create & lock run','Freeze the approved amounts so they cannot silently change.'],['4','Check Wise cleared funds','Use existing GBP balance first. If short, transfer only the shortfall.'],['5','Release payouts','Blocked until FaivoPay confirms cleared Wise balance is sufficient.'],['6','Monitor Wise','Track each driver payment individually. Retry failures only.'],['7','Update Autocab','Only successful bank payouts create the matching Autocab adjustment.'],['8','Reconcile & lock','Wise paid total and Autocab adjustments must match before completion.']
+  ['1','Sync current balance','Refresh Autocab and confirm the driver still has enough available balance.'],['2','Review requests','Approve/decline every request. Nothing advances with pending decisions.'],['3','Create & lock run','Freeze the approved amounts so they cannot silently change.'],['4','Check Modulr cleared funds','Use existing GBP balance first. If short, transfer only the shortfall.'],['5','Release payouts','Blocked until FaivoPay confirms cleared Modulr balance is sufficient.'],['6','Monitor Modulr','Track each driver payment individually. Retry failures only.'],['7','Update Autocab','Only successful bank payouts create the matching Autocab adjustment.'],['8','Reconcile & lock','Modulr paid total and Autocab adjustments must match before completion.']
  ]:[
-  ['1','Confirm Rent Sheets','Operator confirms Monday Rent Sheets have completed in Autocab.'],['2','Sync Previous Balance','FaivoPay refreshes Autocab and captures the post-rent-sheet Previous Balance.'],['3','Review every payout','Approve or exclude every positive balance. Collections remain separate.'],['4','Create & lock run','Approved driver list and values are frozen before funding.'],['5','Fund Wise','FaivoPay shows cleared Wise balance, exact shortfall, bank details and run reference.'],['6','Release payouts','Blocked until cleared funds cover the complete approved run.'],['7','Update Autocab','Only each confirmed successful payout is posted back to Autocab.'],['8','Reconcile & lock','Wise + FaivoPay + Autocab must agree before the run can close.']
+  ['1','Confirm Rent Sheets','Operator confirms Monday Rent Sheets have completed in Autocab.'],['2','Sync Previous Balance','FaivoPay refreshes Autocab and captures the post-rent-sheet Previous Balance.'],['3','Review every payout','Approve or exclude every positive balance. Collections remain separate.'],['4','Create & lock run','Approved driver list and values are frozen before funding.'],['5','Fund Modulr','FaivoPay shows cleared Modulr balance, exact shortfall, bank details and run reference.'],['6','Release payouts','Blocked until cleared funds cover the complete approved run.'],['7','Update Autocab','Only each confirmed successful payout is posted back to Autocab.'],['8','Reconcile & lock','Modulr + FaivoPay + Autocab must agree before the run can close.']
  ]).map(x=><div key={x[0]}><span>{x[0]}</span><div><b>{x[1]}</b><small>{x[2]}</small></div></div>)}</div></div>;
- const Funding=({run,title,early=false})=>{if(!['funding','funding_wait','funded','monitor','complete'].includes(run.stage))return null;const required=Number(run.fundingRequired||paymentTotal(run,early)),top=Number(run.topUpRequired||0),sent=Number(run.fundingTransferAmount||0);return <div className="demoFundingBox v23"><div className="demoFundingHead"><div><span>DEMO WISE FUNDING CONTROL</span><h4>{title}</h4></div><Pill tone={run.stage==='funded'||run.stage==='monitor'||run.stage==='complete'?'good':'warn'}>{run.stage==='funded'||run.stage==='monitor'||run.stage==='complete'?'Cleared funds confirmed':run.stage==='funding_wait'?'Bank transfer sent — awaiting clearance':'Funding check required'}</Pill></div><div className="demoFundingGrid"><div><span>Approved payout total</span><strong>{money(required)}</strong></div><div><span>Cleared demo Wise balance</span><strong>{money(run.wiseBalance||0)}</strong></div><div><span>Shortfall to transfer</span><strong className={top>0?'negative':''}>{money(top)}</strong></div><div><span>Payment run reference</span><strong>{run.reference||'—'}</strong></div></div><div className="demoBankDetails"><div><span>Account name</span><b>{run.wiseAccount?.name}</b></div><div><span>Sort code</span><b>{run.wiseAccount?.sortCode}</b></div><div><span>Account number</span><b>{run.wiseAccount?.accountNumber}</b></div></div>{run.stage==='funding'&&<div className="operatorWarning"><AlertTriangle/><div><b>Funding gate</b><span>{top>0?`Transfer exactly ${money(top)} using reference ${run.reference}. FaivoPay must not release any driver payment until Wise reports the money as cleared.`:'The existing Wise balance already covers this run. Check the cleared balance before release.'}</span></div></div>}{run.stage==='funding_wait'&&<div className="operatorWarning blue"><Clock3/><div><b>Waiting for cleared funds</b><span>{money(sent)} has been simulated as sent from the taxi company bank. The payout button stays locked until Wise confirms the credit.</span></div></div>}</div>};
- const StatusTable=({run,early=false})=>!['monitor','complete'].includes(run.stage)?null:<div className="demoMonitor"><div className="panelHead"><div><span className="sectionKicker">PAYMENT + AUTOCAB MONITOR</span><h3>Process each driver to final reconciliation</h3><p>A successful Wise payout is the trigger for the matching Autocab update. Failed bank payments must never reduce the driver’s Autocab balance.</p></div></div><div className="tableWrap proTable"><table><thead><tr><th>Driver</th><th>Payout</th><th>Wise payment</th><th>Autocab adjustment</th><th>Result</th></tr></thead><tbody>{approved(run,early).map(x=><tr key={x.id}><td><div className="driverCell"><span className="callsign">{x.callsign}</span><b>{x.driverName}</b></div></td><td><b>{money(early?x.netAmount:x.amount)}</b></td><td><Pill tone={tone(x.wiseStatus)}>{String(x.wiseStatus||'not_sent').replaceAll('_',' ')}</Pill></td><td><Pill tone={tone(x.autocabStatus)}>{String(x.autocabStatus||'not_posted').replaceAll('_',' ')}</Pill></td><td>{x.failureReason?<span className="failureText"><AlertTriangle/>{x.failureReason}</span>:x.wiseStatus==='paid'&&x.autocabStatus==='updated'?<span className="successText"><CheckCircle2/>Paid & reconciled</span>:'Waiting'}</td></tr>)}</tbody></table></div></div>;
+ const Funding=({run,title,early=false})=>{if(!['funding','funding_wait','funded','monitor','complete'].includes(run.stage))return null;const required=Number(run.fundingRequired||paymentTotal(run,early)),top=Number(run.topUpRequired||0),sent=Number(run.fundingTransferAmount||0);return <div className="demoFundingBox v23"><div className="demoFundingHead"><div><span>DEMO FUNDING CONTROL</span><h4>{title}</h4></div><Pill tone={run.stage==='funded'||run.stage==='monitor'||run.stage==='complete'?'good':'warn'}>{run.stage==='funded'||run.stage==='monitor'||run.stage==='complete'?'Cleared funds confirmed':run.stage==='funding_wait'?'Bank transfer sent — awaiting clearance':'Funding check required'}</Pill></div><div className="demoFundingGrid"><div><span>Approved payout total</span><strong>{money(required)}</strong></div><div><span>Cleared demo Modulr balance</span><strong>{money(run.wiseBalance||0)}</strong></div><div><span>Shortfall to transfer</span><strong className={top>0?'negative':''}>{money(top)}</strong></div><div><span>Payment run reference</span><strong>{run.reference||'—'}</strong></div></div><div className="demoBankDetails"><div><span>Account name</span><b>{run.wiseAccount?.name}</b></div><div><span>Sort code</span><b>{run.wiseAccount?.sortCode}</b></div><div><span>Account number</span><b>{run.wiseAccount?.accountNumber}</b></div></div>{run.stage==='funding'&&<div className="operatorWarning"><AlertTriangle/><div><b>Funding gate</b><span>{top>0?`Transfer exactly ${money(top)} using reference ${run.reference}. FaivoPay must not release any driver payment until Modulr reports the money as cleared.`:'The existing Modulr balance already covers this run. Check the cleared balance before release.'}</span></div></div>}{run.stage==='funding_wait'&&<div className="operatorWarning blue"><Clock3/><div><b>Waiting for cleared funds</b><span>{money(sent)} has been simulated as sent from the taxi company bank. The payout button stays locked until Modulr confirms the credit.</span></div></div>}</div>};
+ const StatusTable=({run,early=false})=>!['monitor','complete'].includes(run.stage)?null:<div className="demoMonitor"><div className="panelHead"><div><span className="sectionKicker">PAYMENT + AUTOCAB MONITOR</span><h3>Process each driver to final reconciliation</h3><p>A successful Provider payout is the trigger for the matching Autocab update. Failed bank payments must never reduce the driver’s Autocab balance.</p></div></div><div className="tableWrap proTable"><table><thead><tr><th>Driver</th><th>Payout</th><th>Provider payment</th><th>Autocab adjustment</th><th>Result</th></tr></thead><tbody>{approved(run,early).map(x=><tr key={x.id}><td><div className="driverCell"><span className="callsign">{x.callsign}</span><b>{x.driverName}</b></div></td><td><b>{money(early?x.netAmount:x.amount)}</b></td><td><Pill tone={tone(x.wiseStatus)}>{String(x.wiseStatus||'not_sent').replaceAll('_',' ')}</Pill></td><td><Pill tone={tone(x.autocabStatus)}>{String(x.autocabStatus||'not_posted').replaceAll('_',' ')}</Pill></td><td>{x.failureReason?<span className="failureText"><AlertTriangle/>{x.failureReason}</span>:x.wiseStatus==='paid'&&x.autocabStatus==='updated'?<span className="successText"><CheckCircle2/>Paid & reconciled</span>:'Waiting'}</td></tr>)}</tbody></table></div></div>;
  const RunCard=({kind,run,early=false})=>{
   // FAIVOPAY_STEP275_CONTROLS: safe demo cancellation through funding.
   const demoCanCancel=!run.locked&&!run.releasedAt&&!run.reconciledAt&&
@@ -196,7 +196,7 @@ function DemoLab({demo,loadDemo,resetDemo,action,demoEmail,setDemoEmail,demoMobi
      ['Payout release',released?'Released or processing':'Not released'],
     ];
     if(step>=4)facts.push(['Run reference',run.reference||'Not yet assigned']);
-    if(step>=5)facts.push(['Recorded demo Wise balance',money(run.wiseBalance||0)]);
+    if(step>=5)facts.push(['Recorded demo Modulr balance',money(run.wiseBalance||0)]);
     return <div className="faivoDemoReviewFacts">{facts.map(([label,value])=><div key={label}><span>{label}</span><strong>{value}</strong></div>)}
      <details className="faivoDemoReviewDrivers"><summary>View current saved driver results ({items.length})</summary><div className="tableWrap proTable"><table><thead><tr><th>Driver</th><th>Amount</th><th>Decision</th><th>Wise</th><th>Autocab</th></tr></thead><tbody>{items.map(x=><tr key={x.id}><td>{x.callsign} · {x.driverName}</td><td>{money(early?x.netAmount:x.amount)}</td><td>{x.status||'—'}</td><td>{x.wiseStatus||'—'}</td><td>{x.autocabStatus||'—'}</td></tr>)}</tbody></table></div></details>
     </div>;
@@ -317,7 +317,7 @@ function DemoLab({demo,loadDemo,resetDemo,action,demoEmail,setDemoEmail,demoMobi
     {run.stage==='funding'&&<div className="demoActions">
      {Number(run.topUpRequired||0)>0
       ?<button className="primary" onClick={()=>action(`${base}/top-up`,`Simulate sending ${money(run.topUpRequired)} from the taxi company bank to the Wise GBP account? It will NOT be treated as cleared yet.`)}><Banknote/>Simulate bank transfer to Wise</button>
-      :<button className="primary" onClick={()=>action(`${base}/fund`,'Check the demo Wise balance and confirm sufficient cleared funds are available?')}><RefreshCw/>Check cleared Wise funds</button>}
+      :<button className="primary" onClick={()=>action(`${base}/fund`,'Check the demo Modulr balance and confirm sufficient cleared funds are available?')}><RefreshCw/>Check cleared Wise funds</button>}
     </div>}
 
     {run.stage==='funding_wait'&&<div className="demoActions">
@@ -334,7 +334,7 @@ function DemoLab({demo,loadDemo,resetDemo,action,demoEmail,setDemoEmail,demoMobi
     {run.stage==='monitor'&&<div className="demoActions">
      <button className="secondary" disabled={!processing(run,early).length} onClick={()=>action(`${base}/refresh-status`,'Simulate Wise completing the processing payments and FaivoPay posting the successful Autocab adjustments?')}><RefreshCw/>Refresh Wise + Autocab status</button>
      <button className="secondary dangerOutline" disabled={!failed(run,early).length} onClick={()=>action(`${base}/retry-failed`,'Simulate correcting the failed recipient and retry only that payment?')}><AlertTriangle/>Correct & retry failed ({failed(run,early).length})</button>
-     <button className="primary" disabled={failed(run,early).length>0||processing(run,early).length>0} onClick={()=>action(`${base}/reconcile`,'Final check: every approved Wise payment is Paid and every matching Autocab adjustment is Updated. Reconcile and permanently lock this demo run?')}><ShieldCheck/>Reconcile & lock run</button>
+     <button className="primary" disabled={failed(run,early).length>0||processing(run,early).length>0} onClick={()=>action(`${base}/reconcile`,'Final check: every approved Provider payment is Paid and every matching Autocab adjustment is Updated. Reconcile and permanently lock this demo run?')}><ShieldCheck/>Reconcile & lock run</button>
     </div>}
 
     {run.stage==='complete'&&<div className="demoComplete"><CheckCircle2/><div><b>Run reconciled and locked</b><span>{approved(run,early).length} successful payments · {money(paymentTotal(run,early))} · all matching Autocab adjustments confirmed.</span></div></div>}
@@ -2368,6 +2368,7 @@ function AdminLogin({onLogin}){
   <div className="authSecurity"><ShieldCheck/><span>Office access requires password + authenticator verification. Security-sensitive actions are audit logged.</span></div>
  </div></div>
 }
+
 function ModulrReturnsPanel({api}) {
  const [result,setResult]=useState(null);
  const [busy,setBusy]=useState(false);
@@ -3804,7 +3805,7 @@ async function verifyMondayFinancials(){
  }
 }
 
-async function createWeeklyBatch(){if(!activeMonday||!weeklyApproved.length)return;if(!confirm(`Create the Wise payment batch for ${weeklyApproved.length} approved drivers totalling ${money(weeklyApprovedTotal)}? Excluded and pending drivers will not be included.`))return;try{const j=await api(`/api/admin/monday-runs/${activeMonday.id}/create-payout-run`,{method:'POST',body:JSON.stringify({provider:'wise'})});await Promise.all([loadMonday(),loadSett(),loadOverview()]);alert(`Payment batch created: ${j.run.itemCount} drivers · ${money(j.run.totalAmount)}.`)}catch(e){alert(e.message)}}
+async function createWeeklyBatch(){if(!activeMonday||!weeklyApproved.length)return;if(!confirm(`Create the Provider payment batch for ${weeklyApproved.length} approved drivers totalling ${money(weeklyApprovedTotal)}? Excluded and pending drivers will not be included.`))return;try{const j=await api(`/api/admin/monday-runs/${activeMonday.id}/create-payout-run`,{method:'POST',body:JSON.stringify({provider:'modulr'})});await Promise.all([loadMonday(),loadSett(),loadOverview()]);alert(`Payment batch created: ${j.run.itemCount} drivers · ${money(j.run.totalAmount)}.`)}catch(e){alert(e.message)}}
  async function sendWiseSandbox(r){if(!confirm(`Submit ${r.itemCount} payouts (${money(r.totalAmount)}) to Wise Sandbox? No real money will move.`))return;try{const j=await api(`/api/admin/payout-runs/${r.id}/wise-sandbox`,{method:'POST'});alert(j.message);await loadSett()}catch(e){alert(e.message)}}
  async function confirmFundingSent(r){if(!confirm(`Confirm the funding transfer for ${money(r.totalAmount)} has been sent to the payout account?\n\nThis does NOT mark the money as cleared.`))return;try{await api(`/api/admin/payout-runs/${r.id}/funding-sent`,{method:'POST'});await loadSett()}catch(e){alert(e.message)}}
  async function confirmFundsCleared(r){if(!confirm(`Confirm cleared funds of at least ${money(r.totalAmount)} are available for this run?\n\nUntil Wise API balance monitoring is connected, this is a manual control and must be checked against the provider account.`))return;try{await api(`/api/admin/payout-runs/${r.id}/funds-cleared`,{method:'POST'});await loadSett()}catch(e){alert(e.message)}}
@@ -5244,6 +5245,153 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
  async function demoSendSms(){try{await api('/api/admin/demo/test-sms',{method:'POST',body:JSON.stringify({to:demoMobile})});alert('Demo SMS sent.')}catch(e){alert(e.message)}}
  async function demoAction(path,confirmText='',body={}){if(confirmText&&!confirm(confirmText))return;try{setDemo(await api(path,{method:'POST',body:JSON.stringify(body)}))}catch(e){alert(e.message)}}
  async function launchReset(){if(resetPhrase!=='RESET FAIVOPAY FOR LIVE LAUNCH')return alert('Type the confirmation phrase exactly.');if(!confirm('FINAL CHECK: create a backup and clear FaivoPay operational data for live launch?'))return;try{const j=await api('/api/admin/launch-reset',{method:'POST',body:JSON.stringify({phrase:resetPhrase,includeDriverAccounts:resetDrivers})});setResetPhrase('');alert(`Launch reset complete. Backup: ${j.backupFile}`);await refreshCore()}catch(e){alert(e.message)}}
+ async function previewModulrRun(r){
+  try{
+   const result=await api(
+    `/api/admin/payout-runs/${r.id}/modulr-preview`
+   );
+
+   const failed=(result.items||[])
+    .filter(x=>!x.checksPassed);
+
+   const details=[
+    'MODULR SANDBOX PAYOUT PREVIEW',
+    '',
+    `Run: ${r.id}`,
+    `Drivers: ${result.itemCount}`,
+    `Total: £${((result.totalMinor||0)/100).toFixed(2)}`,
+    `Checks: ${result.checksPassed?'PASSED':'BLOCKED'}`,
+    `Payment enabled: NO`,
+    '',
+    ...((result.runReasons||[]).map(x=>`Run issue: ${x}`)),
+    ...failed.map(x=>
+     `Callsign ${x.callsign}: ${(x.reasons||[]).join(', ')}`
+    )
+   ];
+
+   alert(details.join('\\n'));
+  }catch(e){
+   alert('Modulr preview unavailable: '+e.message);
+  }
+ }
+
+ const [modulrFundingVerifyBusy,setModulrFundingVerifyBusy]=useState(false);
+
+ async function recordModulrFundingVerification(r){
+  if(!modulrFunding?.verified ||
+     modulrFunding.runId!==r.id){
+   return alert('Check the Modulr balance first.');
+  }
+
+  if(!confirm(
+   'Record this Modulr balance verification?\\n\\n'+
+   'This records an internal funding earmark only. '+
+   'Funds are NOT reserved by Modulr and no payments will be released.'
+  ))return;
+
+  setModulrFundingVerifyBusy(true);
+
+  try{
+   const result=await api(
+    `/api/admin/payout-runs/${r.id}/modulr-verify-funding`,
+    {method:'POST'}
+   );
+
+   if(
+    result?.verified!==true ||
+    result.runId!==r.id ||
+    result.fundingStatus!=='balance_verified' ||
+    result.paymentSubmitted!==false
+   ){
+    throw new Error('Unexpected funding verification response.');
+   }
+
+   setModulrFunding(null);
+   setModulrFundingError('');
+   await loadSett();
+
+   alert(
+    'Modulr balance verification recorded.\\n\\n'+
+    'Payouts remain disabled. Funds are not reserved by Modulr.'
+   );
+
+  }catch(e){
+   setModulrFundingError(
+    e.message||'Funding verification could not be recorded.'
+   );
+  }finally{
+   setModulrFundingVerifyBusy(false);
+  }
+ }
+
+ const [modulrFunding,setModulrFunding]=useState(null);
+ const [modulrFundingBusy,setModulrFundingBusy]=useState(false);
+ const [modulrFundingError,setModulrFundingError]=useState('');
+
+ async function checkModulrFunding(r){
+  setModulrFunding(null);
+  setModulrFundingError('');
+  setModulrFundingBusy(true);
+
+  try{
+   const result=await api(
+    `/api/admin/payout-runs/${r.id}/modulr-funding-check`
+   );
+
+   if(
+    result?.runId!==r.id ||
+    result.currency!=='GBP' ||
+    !Number.isSafeInteger(result.availableMinor) ||
+    !Number.isSafeInteger(result.requiredMinor)
+   ){
+    throw new Error('Unexpected Modulr funding response.');
+   }
+
+   setModulrFunding(result);
+  }catch(e){
+   setModulrFundingError(e.message||'Funding check unavailable.');
+  }finally{
+   setModulrFundingBusy(false);
+  }
+ }
+
+
+ const [modulrReconciliationBusy,setModulrReconciliationBusy]=useState(false);
+ const [modulrReconciliationError,setModulrReconciliationError]=useState('');
+
+ async function inspectModulrReconciliation(r){
+  if(modulrReconciliation?.run?.id===r.id){
+   setModulrReconciliation(null);
+   setModulrReconciliationError('');
+   return;
+  }
+
+  setModulrReconciliation(null);
+  setModulrReconciliationError('');
+  setModulrReconciliationBusy(true);
+
+  try{
+   const result=await api(
+    `/api/admin/payout-runs/${r.id}/reconciliation`
+   );
+
+   if(
+    !result?.run ||
+    result.run.id!==r.id ||
+    !result.summary ||
+    !Array.isArray(result.items)
+   ){
+    throw new Error('Unexpected reconciliation response.');
+   }
+
+   setModulrReconciliation(result);
+  }catch(e){
+   setModulrReconciliationError(e.message||'Report unavailable.');
+  }finally{
+   setModulrReconciliationBusy(false);
+  }
+ }
+
  const LiveRunCard=({r,showSteps=true})=>{
   const idx=r.status==='ready'?3:r.status==='funding_pending'?4:r.status==='funded'?5:['submitted_sandbox','submitted','processing'].includes(r.status)?6:r.status==='paid'?7:r.status==='cancelled'?-1:3;
   const steps=r.runType==='weekly'
@@ -5256,7 +5404,7 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
     <div>
      <span>{r.runType==='weekly'?'WEEKLY PAYMENT RUN':'EARLY PAYOUT RUN'} · {dt(r.createdAt)}</span>
      <h3>{money(r.totalAmount)}</h3>
-     <p>{r.itemCount} drivers · {r.id}</p>
+     <p>{r.itemCount} drivers · {r.id} · Provider: {r.provider||'Not selected'}</p>
     </div>
     <Pill tone={statusTone(r.status)}>{String(r.status).replaceAll('_',' ')}</Pill>
    </div>
@@ -5274,13 +5422,130 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
 
     <div className="runCardActions liveRunActions">
      <button className="secondary" onClick={()=>downloadPayoutRunCsv(r)}><FileClock/>Export run CSV</button>
+     {r.provider==='modulr'&&<button className="secondary" disabled={modulrReconciliationBusy} onClick={()=>inspectModulrReconciliation(r)}><FileClock/>{modulrReconciliation?.run?.id===r.id?'Hide reconciliation':'View payout reconciliation'}</button>}
+     {r.provider==='modulr'&&['ready','funding_pending'].includes(r.status)&&r.fundingStatus!=='balance_verified'&&<button className="secondary" disabled={modulrFundingBusy} onClick={()=>checkModulrFunding(r)}><ShieldCheck/>{modulrFundingBusy?'Checking Modulr balance…':'Check Modulr balance'}</button>}
+     {r.provider==='modulr'&&r.fundingStatus==='balance_verified'&&<span className="tinyNote">Balance verified internally — not cleared or reserved with Modulr. Payment release remains disabled.</span>}
+     {r.provider==='modulr'&&r.status==='funded'&&<button className="secondary" onClick={()=>previewModulrRun(r)}><ShieldCheck/>Check Modulr payout readiness</button>}
      {canCancel&&canMoney&&<button className="dangerOutline" onClick={()=>cancelPayoutRun(r)}><X/>Cancel payment run</button>}
      {r.status==='ready'&&canMoney&&<button className="primary" onClick={()=>confirmFundingSent(r)}><Banknote/>Funding transfer sent</button>}
-     {r.status==='funding_pending'&&canMoney&&<button className="primary" onClick={()=>confirmFundsCleared(r)}><CheckCircle2/>Confirm funds cleared</button>}
-     {r.status==='funded'&&integrations?.wise?.environment==='sandbox'&&canMoney&&<button className="primary" onClick={()=>sendWiseSandbox(r)}><Send/>Release payouts to Wise sandbox</button>}
-     {r.status==='funded'&&integrations?.wise?.environment!=='sandbox'&&<span className="tinyNote">Live provider release will unlock when Wise production payout API is connected.</span>}
-     {['submitted_sandbox','submitted','processing'].includes(r.status)&&canMoney&&<button className="primary" onClick={()=>markRunPaid(r)}><ShieldCheck/>Confirm paid & update Autocab</button>}
+     {r.status==='funding_pending'&&r.provider!=='modulr'&&canMoney&&<button className="primary" onClick={()=>confirmFundsCleared(r)}><CheckCircle2/>Confirm funds cleared</button>}
+     {r.status==='funded'&&r.provider==='modulr'&&<span className="tinyNote">Modulr sandbox — preview only. Payment release remains disabled pending verified settlement and reconciliation.</span>}
+     {r.status==='funded'&&r.provider!=='modulr'&&<span className="tinyNote">This payout provider is retired or unsupported. Payment release is disabled.</span>}
+     {['submitted_sandbox','submitted','processing'].includes(r.status)&&<span className="tinyNote">Provider processing requires independent verification before accounting or Autocab updates.</span>}
     </div>
+
+    {r.provider==='modulr'&&['ready','funding_pending'].includes(r.status)&&modulrFundingError&&<div className="operatorWarning"><AlertTriangle/><span>Modulr funding check: {modulrFundingError}</span></div>}
+
+    {r.provider==='modulr'&&['ready','funding_pending'].includes(r.status)&&modulrFunding?.runId===r.id&&
+     <section className="panel" style={{marginTop:16}}>
+      <h3>Modulr balance verification</h3>
+      <p><b>Result:</b> {modulrFunding.verified?'Sufficient available balance':'Verification incomplete'}</p>
+      <p><b>Available:</b> {money(modulrFunding.availableMinor/100)}</p>
+      <p><b>Required:</b> {money(modulrFunding.requiredMinor/100)}</p>
+      <p><b>Difference:</b> {money((modulrFunding.availableMinor-modulrFunding.requiredMinor)/100)}</p>
+      <p><b>Checked:</b> {modulrFunding.checkedAt||'Unknown'}</p>
+      <p className="tinyNote">Read-only sandbox balance snapshot. Funds are not reserved for this run. Payment release and accounting remain disabled.</p>
+      {r.status==='funding_pending'&&r.fundingStatus==='awaiting_clearance'&&modulrFunding.verified&&canMoney&&
+       <button
+        className="secondary"
+        disabled={modulrFundingVerifyBusy}
+        onClick={()=>recordModulrFundingVerification(r)}
+       >
+        <ShieldCheck/>
+        {modulrFundingVerifyBusy?'Recording verification…':'Record verified balance'}
+       </button>
+      }
+     </section>
+    }
+
+    {r.provider==='modulr'&&modulrReconciliationError&&<div className="operatorWarning"><AlertTriangle/><span>Reconciliation report: {modulrReconciliationError}</span></div>}
+
+    {r.provider==='modulr'&&modulrReconciliation?.run?.id===r.id&&
+     <section className="panel" style={{marginTop:16}}>
+      <div className="panelHead">
+       <div>
+        <h3>Modulr payout reconciliation</h3>
+        <p>Read-only evidence review. Provider processing or reported payment does not establish beneficiary receipt.</p>
+       </div>
+      </div>
+
+      <div className="platformSummaryGrid">
+       <div className="platformMetric"><span>Drivers</span><b>{modulrReconciliation.summary.totalPayouts}</b></div>
+       <div className="platformMetric"><span>Matching verified evidence</span><b>{modulrReconciliation.summary.withMatchingVerifiedPaidEvidence}</b></div>
+       <div className="platformMetric"><span>Accounting marked paid</span><b>{modulrReconciliation.summary.accountingMarkedPaid}</b></div>
+       <div className="platformMetric"><span>Require review</span><b>{modulrReconciliation.summary.awaitingOrRequiringReview}</b></div>
+      </div>
+
+      <div className="tableWrap proTable">
+       <table>
+        <thead>
+         <tr>
+          <th>Callsign</th>
+          <th>Driver</th>
+          <th>Expected</th>
+          <th>Accounting status</th>
+          <th>Modulr transfer</th>
+          <th>Provider evidence</th>
+          <th>Review</th>
+         </tr>
+        </thead>
+        <tbody>
+         {modulrReconciliation.items.map(item=>
+          <tr key={item.payoutId}>
+           <td><b>{item.callsign}</b></td>
+           <td>{item.driverName}</td>
+           <td>{money(item.expectedAmount)}</td>
+           <td><Pill tone={statusTone(item.payoutStatus)}>{String(item.payoutStatus||'unknown').replaceAll('_',' ')}</Pill></td>
+           <td>
+            {item.modulrTransfer
+             ?<div>
+               <b>{item.modulrTransfer.status}</b>
+               <div className="tinyNote">
+                Provider: {item.modulrTransfer.providerStatus||'Awaiting update'}
+               </div>
+               <div className="tinyNote">
+                Amount: {item.modulrTransfer.amountMatches?'Matches':'Mismatch — investigate'}
+               </div>
+               {item.modulrTransfer.providerTransferId&&
+                <div className="tinyNote">
+                 Ref: {item.modulrTransfer.providerTransferId}
+                </div>}
+               {item.modulrTransfer.history?.length>0&&
+                <details>
+                 <summary>Payment history ({item.modulrTransfer.history.length})</summary>
+                 {item.modulrTransfer.history.map(event=>
+                  <div key={event.id} className="tinyNote">
+                   {event.createdAt} — {event.eventType}
+                   {event.providerStatus?` (${event.providerStatus})`:''}
+                  </div>
+                 )}
+                </details>}
+              </div>
+             :<span>No Modulr transfer recorded</span>}
+           </td>
+           <td>
+            {item.confirmations.length===0
+             ?'No evidence recorded'
+             :item.confirmations.map(c=>
+              <div key={c.id}>
+               {c.provider}: {c.outcome} — {c.verificationStatus}
+              </div>
+             )}
+           </td>
+           <td>
+            {item.payoutStatus==='paid'&&item.hasMatchingVerifiedPaidEvidence&&!item.hasUncertainEvidence
+             ?<span>Evidence matches — final receipt still requires confirmation</span>
+             :<span>Review required</span>}
+           </td>
+          </tr>
+         )}
+        </tbody>
+       </table>
+      </div>
+
+      <p className="tinyNote">This report does not submit payments, verify beneficiary receipt, update accounting or post Autocab adjustments.</p>
+     </section>
+    }
 
     {r.status==='paid'&&<div className="demoComplete"><CheckCircle2/><div><b>Run reconciled</b><span>Provider payment confirmed and matching Autocab updates completed.</span></div></div>}
     {r.status==='cancelled'&&<div className="cancelledRunNote"><X/><span>Cancelled before release. Included drivers were returned to Approved.</span></div>}

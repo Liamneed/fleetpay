@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
+import { createModulrPaymentHistoryTable } from '../server/lib/modulr-payment-history.mjs';
 import { runMockModulrPaymentWorkflow } from
   '../server/lib/modulr-mock-payment-workflow.mjs';
 
@@ -73,6 +74,7 @@ function fixture() {
     bankAccountNumberEnc:'test_account'
   };
 
+  createModulrPaymentHistoryTable(db);
   return { db, beneficiaryMatch };
 }
 

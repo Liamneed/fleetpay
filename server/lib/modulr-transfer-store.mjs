@@ -1,6 +1,9 @@
 import {
   assertModulrTransferTransition
 } from './modulr-transfer-state.mjs';
+import {
+  recordModulrPaymentEvent
+} from './modulr-payment-history.mjs';
 
 // Local state management only. Never contacts Modulr.
 export function transitionModulrTransfer(db, intentId, from, to) {
@@ -47,6 +50,12 @@ export function transitionModulrTransfer(db, intentId, from, to) {
     if (result.changes !== 1) {
       throw new Error('Transfer state changed during update.');
     }
+
+    recordModulrPaymentEvent(db, {
+      transferId: intentId,
+      eventType: to,
+      source: 'faivopay'
+    });
 
     db.exec('COMMIT');
     return { ok: true, status: to };
@@ -100,6 +109,14 @@ export function recordModulrTransferSubmission(db, intentId, transferId) {
     if (result.changes !== 1) {
       throw new Error('Transfer changed during submission recording.');
     }
+
+    recordModulrPaymentEvent(db, {
+      transferId: intentId,
+      eventType: 'submitted',
+      providerReference: transferId,
+      providerStatus: 'SUBMITTED',
+      source: 'modulr_api'
+    });
 
     db.exec('COMMIT');
 

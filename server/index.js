@@ -1,4 +1,15 @@
 import { monitorModulrSandboxReturns } from './lib/modulr-return-monitor.mjs';
+import { validateClaimedModulrSubmission } from './lib/modulr-submission-gate.mjs';
+import { executeModulrSandboxTransport } from './lib/modulr-sandbox-payment-transport.mjs';
+import { recordModulrTransferSubmission, transitionModulrTransfer } from './lib/modulr-transfer-store.mjs';
+import {
+  reconcileAuthenticatedModulrTransfer
+} from './lib/modulr-authenticated-reconciliation.mjs';
+import {
+  createModulrPaymentHistoryTable,
+  getModulrPaymentHistory
+} from './lib/modulr-payment-history.mjs';
+
 import { validateModulrSandboxApproval } from './lib/modulr-sandbox-approval.mjs';
 import { claimValidatedModulrTransfer } from './lib/modulr-validated-claim.mjs';
 import { listModulrTransfersForReview } from './lib/modulr-transfer-review.mjs';
@@ -64,6 +75,15 @@ const MODULR_ENABLED = process.env.MODULR_ENABLED === 'true';
 import {
  searchModulrReferenceRecovery
 } from './lib/modulr-reference-search.mjs';
+import {
+ validateModulrFundingBalance
+} from './lib/modulr-funding-validation.mjs';
+
+
+import {
+ earmarkVerifiedModulrFunding,
+ ensureModulrFundingVerificationTable
+} from './lib/modulr-funding-earmark.mjs';
 
 const MODULR_ENV = String(process.env.MODULR_ENV || 'sandbox').toLowerCase();
 const MODULR_API_KEY = process.env.MODULR_API_KEY || '';
@@ -718,6 +738,9 @@ db.exec(`
  );
 `);
 
+
+// Append-only Modulr payment history schema.
+createModulrPaymentHistoryTable(db);
 
 // Modulr claim reservation timestamp: safe on existing databases.
 // Do not invent timestamps for historic transfers.
@@ -8673,6 +8696,73 @@ app.post(
  }
 );
 
+// Administrator-only reconciliation of an EXISTING sandbox payment.
+// Provider GET only. No payment submission, accounting or Autocab writes.
+app.post(
+  '/api/admin/modulr/transfers/:intentId/reconcile',
+  adminAuth,
+  requirePlatformAdmin,
+  async(req,res)=>{
+    if(
+      MODULR_ENV!=='sandbox' ||
+      MODULR_ENABLED ||
+      process.env.PAYOUT_ACCOUNTING_FINALISATION_ENABLED==='true'
+    ){
+      return res.status(403).json({
+        error:'Sandbox-only reconciliation is required.'
+      });
+    }
+
+    // Never reconcile against the normal application database.
+    try{
+      assertModulrPreparationTestEnvironment();
+    }catch{
+      return res.status(403).json({
+        error:'Reconciliation requires the isolated sandbox database.'
+      });
+    }
+
+    const intentId=String(req.params.intentId||'').trim();
+
+    if(!/^[A-Za-z0-9_-]{1,128}$/.test(intentId)){
+      return res.status(400).json({
+        error:'Valid transfer ID required.'
+      });
+    }
+
+    if(!MODULR_API_KEY || !MODULR_ACCOUNT_ID){
+      return res.status(503).json({
+        error:'Modulr sandbox configuration unavailable.'
+      });
+    }
+
+    try{
+      const result=await reconcileAuthenticatedModulrTransfer({
+        db,
+        intentId,
+        apiKey:MODULR_API_KEY,
+        sourceAccountId:MODULR_ACCOUNT_ID
+      });
+
+      return res.status(result.ok?200:409).json(result);
+
+    }catch(error){
+      console.error(
+        'Modulr reconciliation failed:',
+        error.message
+      );
+
+      return res.status(409).json({
+        error:'Transfer reconciliation could not be completed.',
+        paymentSubmitted:false,
+        accountingFinalised:false,
+        autocabReconciled:false
+      });
+    }
+  }
+);
+
+
 // Administrator-only sandbox return monitoring.
 // Authenticated provider GET requests only.
 // No database writes, accounting, payment retries or Autocab actions.
@@ -8734,6 +8824,59 @@ app.get(
 );
 
 // End administrator-only sandbox return monitoring.
+// Authenticated, read-only Modulr transfer timeline.
+app.get(
+  '/api/admin/modulr/transfers/:intentId/history',
+  adminAuth,
+  requireStaffRole('administrator','finance'),
+  (req,res)=>{
+    try{
+      const intentId=String(req.params.intentId||'').trim();
+
+      if(!/^[A-Za-z0-9_-]{1,128}$/.test(intentId)){
+        return res.status(400).json({
+          error:'Valid transfer ID required.'
+        });
+      }
+
+      const transfer=db.prepare(`
+        SELECT id,payout_id,payout_run_id,environment,
+               status,provider_status,provider_transfer_id,
+               created_at,submitted_at,confirmed_at
+        FROM payout_transfer_intents
+        WHERE id=? AND provider='modulr'
+      `).get(intentId);
+
+      if(!transfer){
+        return res.status(404).json({
+          error:'Modulr transfer not found.'
+        });
+      }
+
+      return res.json({
+        ok:true,
+        transfer:{
+          id:transfer.id,
+          payoutId:transfer.payout_id,
+          payoutRunId:transfer.payout_run_id,
+          environment:transfer.environment,
+          status:transfer.status,
+          providerStatus:transfer.provider_status,
+          providerReference:transfer.provider_transfer_id,
+          createdAt:transfer.created_at,
+          submittedAt:transfer.submitted_at,
+          confirmedAt:transfer.confirmed_at
+        },
+        history:getModulrPaymentHistory(db,intentId)
+      });
+    }catch(error){
+      console.error('Modulr payment history failed:',error.message);
+      return res.status(500).json({
+        error:'Unable to retrieve payment history.'
+      });
+    }
+  }
+);
 
 // Read-only Modulr sandbox transfer investigation.
 // No payment submission, retry, provider call or accounting writes.
@@ -8789,6 +8932,14 @@ app.get(
 
    if(!run){
     return res.status(404).json({error:'Payout run not found.'});
+   }
+
+   if(run.provider!=='modulr'){
+    return res.status(409).json({
+     error:'Modulr preview is available only for Modulr payout runs.',
+     paymentReady:false,
+     paymentExecutionEnabled:false
+    });
    }
 
    const payouts=db.prepare(
@@ -8985,6 +9136,256 @@ app.get(
     error:'Modulr sandbox bank matching could not be completed.'
    });
   }
+ }
+);
+
+
+// One-off £1 Modulr SANDBOX execution.
+// Disabled unless two independent sandbox switches are explicitly enabled.
+// Never finalises accounting, marks a driver paid or writes to Autocab.
+app.post(
+ '/api/admin/modulr/transfers/:intentId/execute-sandbox-one-pound',
+ adminAuth,
+ requireStaffRole('administrator'),
+ requirePlatformAdmin,
+ async(req,res)=>{
+  const reject=(status,message)=>res.status(status).json({
+   error:message,
+   accountingFinalised:false,
+   automaticRetryAllowed:false
+  });
+
+  if(process.env.MODULR_SANDBOX_POST_ENABLED!=='true' ||
+     process.env.MODULR_ONE_POUND_EXECUTION_ENABLED!=='true' ||
+     process.env.MODULR_ENV!=='sandbox' ||
+     process.env.MODULR_ENABLED!=='false' ||
+     process.env.PAYOUT_ACCOUNTING_FINALISATION_ENABLED!=='false' ||
+     process.env.AUTOCAB_ADJUSTMENTS_ENABLED!=='false' ||
+     process.env.LIVE_TEST_AUTOCAB_WRITES_ENABLED!=='false'){
+   return reject(403,'Sandbox execution is disabled.');
+  }
+
+  try{
+   assertModulrPreparationTestEnvironment();
+  }catch{
+   return reject(403,'Isolated sandbox database required.');
+  }
+
+  const intentId=String(req.params.intentId||'');
+  const approvedAmountMinor=req.body?.approvedAmountMinor;
+
+  if(!/^[A-Za-z0-9_-]{1,50}$/.test(intentId) ||
+     approvedAmountMinor!==100 ||
+     req.body?.authoriseSandboxPayment!==
+       'SUBMIT_ONE_GBP_SANDBOX_PAYMENT' ||
+     !process.env.MODULR_SANDBOX_EXECUTION_INTENT_ID ||
+     intentId!==process.env.MODULR_SANDBOX_EXECUTION_INTENT_ID){
+   return reject(400,'Exact £1 sandbox authorisation required.');
+  }
+
+  if(!MODULR_API_KEY || !MODULR_CUSTOMER_ID || !MODULR_ACCOUNT_ID){
+   return reject(403,'Sandbox credentials unavailable.');
+  }
+
+  const staff=db.prepare(`
+   SELECT id,role,active,mfa_enabled
+   FROM staff_users WHERE id=?
+  `).get(req.auth.staffId);
+
+  if(!staff || staff.active!==1 ||
+     staff.mfa_enabled!==1 || staff.role!=='administrator'){
+   return reject(403,'MFA-enabled administrator required.');
+  }
+
+  const original=db.prepare(`
+   SELECT i.*,p.driver_id
+   FROM payout_transfer_intents i
+   JOIN payouts p ON p.id=i.payout_id
+   WHERE i.id=? AND i.provider='modulr'
+     AND i.environment='sandbox'
+  `).get(intentId);
+
+  if(!original ||
+     original.status!=='prepared' ||
+     original.amount_minor!==100 ||
+     original.currency!=='GBP' ||
+     original.attempt_started_at ||
+     original.submitted_at ||
+     original.provider_transfer_id ||
+     original.confirmed_at){
+   return reject(409,'Transfer already attempted or ineligible.');
+  }
+
+  let account,match;
+  try{
+   const response=await fetch(
+    MODULR_BASE_URL+'accounts/'+encodeURIComponent(MODULR_ACCOUNT_ID),
+    {
+     method:'GET',
+     headers:{
+      Authorization:MODULR_API_KEY,
+      Accept:'application/json'
+     },
+     signal:AbortSignal.timeout(10000)
+    }
+   );
+
+   if(response.status!==200){
+    return reject(502,'Sandbox source account verification failed.');
+   }
+
+   account=await response.json();
+
+   if(account.id!==MODULR_ACCOUNT_ID ||
+      account.customerId!==MODULR_CUSTOMER_ID ||
+      account.currency!=='GBP' ||
+      account.status!=='ACTIVE'){
+    return reject(409,'Sandbox source account mismatch.');
+   }
+
+   // Modulr returns availableBalance as a decimal string.
+   // Reject missing, malformed, negative or insufficient balances.
+   const available=account.availableBalance;
+   if(typeof available!=='string' ||
+      !/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(available)){
+    return reject(409,'Valid sandbox available balance required.');
+   }
+
+   const [pounds,pence='']=available.split('.');
+   const availableMinor=Number(pounds)*100+
+     Number(pence.padEnd(2,'0'));
+
+   if(!Number.isSafeInteger(availableMinor) ||
+      availableMinor<100){
+    return reject(409,'Insufficient sandbox available balance.');
+   }
+
+   const driverId=Number(original.driver_id);
+   if(!Number.isSafeInteger(driverId) || driverId<=0){
+    return reject(409,'Transfer driver invalid.');
+   }
+
+   match=await findModulrSandboxBankMatch(driverId);
+
+   if(match.matched!==true ||
+      match.beneficiaryId!==original.recipient_id ||
+      match.status!=='ACTIVE' ||
+      match.approvalStatus!=='APPROVED' ||
+      match.approvalRequired!==false){
+    return reject(409,'Fresh beneficiary verification failed.');
+   }
+  }catch{
+   return reject(502,'Sandbox verification unavailable.');
+  }
+
+  const current=db.prepare(`
+   SELECT * FROM payout_transfer_intents WHERE id=?
+  `).get(intentId);
+
+  const approval=validateModulrSandboxApproval({
+   actor:{
+    role:req.auth.role,
+    mfa:req.auth.mfa,
+    staffRole:staff.role,
+    staffId:staff.id
+   },
+   intent:current,
+   approvedTransferId:intentId,
+   approvedAmountMinor:100,
+   sourceAccountId:MODULR_ACCOUNT_ID,
+   verifiedSourceAccount:{
+    id:account.id,
+    currency:account.currency,
+    environment:'sandbox',
+    verified:true
+   }
+  });
+
+  if(!approval.eligible){
+   return reject(409,'Sandbox approval rejected.');
+  }
+
+  // The only claim for this request, committed BEFORE provider POST.
+  let claim;
+  try{
+   claim=claimValidatedModulrTransfer(db,intentId,match);
+  }catch{
+   return reject(409,'Atomic transfer claim rejected.');
+  }
+
+  const markUnknown=()=>{
+   try{
+    transitionModulrTransfer(db,intentId,'submitting','unknown');
+   }catch{}
+  };
+
+  let gate;
+  try{
+   const claimed=db.prepare(`
+    SELECT * FROM payout_transfer_intents WHERE id=?
+   `).get(intentId);
+
+   gate=validateClaimedModulrSubmission({
+    intent:claimed,
+    claim,
+    sourceAccountId:MODULR_ACCOUNT_ID
+   });
+
+   if(!gate.eligible ||
+      gate.request?.body?.amount!==1 ||
+      gate.request?.body?.currency!=='GBP' ||
+      gate.request?.body?.externalReference!==intentId){
+    markUnknown();
+    return reject(409,'Claimed submission validation failed.');
+   }
+  }catch{
+   markUnknown();
+   return reject(409,'Claimed submission validation failed.');
+  }
+
+  // Exactly one provider POST is permitted.
+  // Any ambiguous response permanently blocks automatic resubmission.
+  let result;
+  try{
+   result=await executeModulrSandboxTransport({
+    validatedSubmission:gate,
+    apiKey:MODULR_API_KEY,
+    fetchImpl:fetch
+   });
+  }catch{
+   result={status:'unknown'};
+  }
+
+  if(result.status==='submitted' && result.providerTransferId){
+   try{
+    recordModulrTransferSubmission(
+     db,intentId,result.providerTransferId
+    );
+    return res.status(201).json({
+     ok:true,
+     environment:'sandbox',
+     amountMinor:100,
+     status:'submitted',
+     providerTransferId:result.providerTransferId,
+     accountingFinalised:false,
+     automaticRetryAllowed:false
+    });
+   }catch{
+    markUnknown();
+    return reject(202,'Provider accepted; local recording uncertain.');
+   }
+  }
+
+  markUnknown();
+  return res.status(202).json({
+   ok:false,
+   environment:'sandbox',
+   amountMinor:100,
+   status:'unknown',
+   requiresManualReconciliation:true,
+   accountingFinalised:false,
+   automaticRetryAllowed:false
+  });
  }
 );
 
@@ -9653,7 +10054,7 @@ app.post('/api/admin/payout-runs',adminAuth,requireStaffRole('administrator','fi
  const today=londonWindow().date;const eligible=runType==='early'?db.prepare("SELECT * FROM payouts WHERE type='early' AND status='approved' AND payout_run_id IS NULL AND (eligible_run_date IS NULL OR eligible_run_date<=?) ORDER BY COALESCE(eligible_run_date,substr(created_at,1,10)),created_at").all(today):db.prepare("SELECT * FROM payouts WHERE type='weekly' AND status='queued' AND payout_run_id IS NULL ORDER BY created_at").all();
  if(!eligible.length)return res.status(400).json({error:`No ${runType} payouts are ready to batch`});
  const runId=id('payrun'),now=new Date().toISOString(),total=eligible.reduce((s,x)=>s+Number(x.net_amount||x.amount||0),0);
- db.prepare('INSERT INTO payout_runs(id,run_type,status,created_at,created_by,scheduled_for,total_amount,item_count,provider,notes,funding_status,funding_required) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(runId,runType,'ready',now,req.auth.email,now,total,eligible.length,String(req.body.provider||'manual'),String(req.body.notes||''),'not_started',total);
+ db.prepare('INSERT INTO payout_runs(id,run_type,status,created_at,created_by,scheduled_for,total_amount,item_count,provider,notes,funding_status,funding_required) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(runId,runType,'ready',now,req.auth.email,now,total,eligible.length,'modulr',String(req.body.notes||''),'not_started',total);
  const upd=db.prepare("UPDATE payouts SET payout_run_id=?,status='batched',updated_at=? WHERE id=?");for(const x of eligible)upd.run(runId,now,x.id);
  audit(req,'admin',req.auth.email,'payout_run_created','payout_run',runId,{runType,itemCount:eligible.length,totalAmount:total,callsigns:eligible.map(x=>x.callsign)});
  res.json({run:serializePayoutRun(db.prepare('SELECT * FROM payout_runs WHERE id=?').get(runId)),items:eligible.map(x=>({id:x.id,callsign:x.callsign,driverName:x.driver_name,amount:Number(x.net_amount||x.amount||0)}))});
@@ -9858,6 +10259,213 @@ app.post('/api/admin/payout-runs/:id/cancel',adminAuth,requireStaffRole('adminis
 });
 
 
+
+// Read-only Modulr funding check.
+// Does not mark a run funded, reserve money or submit payouts.
+app.get(
+ '/api/admin/payout-runs/:id/modulr-funding-check',
+ adminAuth,
+ requireStaffRole('administrator'),
+ requirePlatformAdmin,
+ async(req,res)=>{
+  const reject=(status,error)=>res.status(status).json({
+   verified:false,
+   error,
+   fundingAuthorised:false,
+   paymentSubmitted:false,
+   accountingFinalised:false,
+   autocabReconciled:false
+  });
+
+  if(MODULR_ENV!=='sandbox' || MODULR_ENABLED){
+   return reject(403,'Sandbox-only verification.');
+  }
+
+  if(
+   process.env.PAYOUT_ACCOUNTING_FINALISATION_ENABLED==='true' ||
+   AUTOCAB_ADJUSTMENTS_ENABLED
+  ){
+   return reject(403,'Financial operations must remain disabled.');
+  }
+
+  if(!MODULR_API_KEY || !MODULR_ACCOUNT_ID || !MODULR_CUSTOMER_ID){
+   return reject(503,'Modulr configuration unavailable.');
+  }
+
+  const run=db.prepare(
+   'SELECT * FROM payout_runs WHERE id=?'
+  ).get(req.params.id);
+
+  if(!run)return reject(404,'Payout run not found.');
+
+  if(run.provider!=='modulr'){
+   return reject(409,'Not a Modulr payout run.');
+  }
+
+  if(!['ready','funding_pending'].includes(run.status)){
+   return reject(409,'Run is not awaiting funding.');
+  }
+
+  const amount=Number(run.total_amount);
+  const requiredMinor=Math.round(amount*100);
+
+  if(
+   !Number.isFinite(amount) ||
+   !Number.isSafeInteger(requiredMinor) ||
+   requiredMinor<=0 ||
+   Math.abs(amount*100-requiredMinor)>0.000001
+  ){
+   return reject(409,'Invalid payout run total.');
+  }
+
+  try{
+   const response=await fetch(
+    MODULR_BASE_URL+'accounts/'+encodeURIComponent(MODULR_ACCOUNT_ID),
+    {
+     method:'GET',
+     headers:{
+      Authorization:MODULR_API_KEY,
+      Accept:'application/json'
+     },
+     signal:AbortSignal.timeout(10000)
+    }
+   );
+
+   if(response.status!==200){
+    return reject(502,'Modulr account verification unavailable.');
+   }
+
+   const account=await response.json();
+
+   const result=validateModulrFundingBalance({
+    account,
+    accountId:MODULR_ACCOUNT_ID,
+    customerId:MODULR_CUSTOMER_ID,
+    requiredMinor
+   });
+
+   return res.status(result.verified?200:409).json({
+    ...result,
+    runId:run.id,
+    checkedAt:new Date().toISOString(),
+    currency:'GBP',
+    fundingAuthorised:false,
+    paymentSubmitted:false,
+    accountingFinalised:false,
+    autocabReconciled:false
+   });
+
+  }catch{
+   return reject(502,'Modulr balance could not be verified.');
+  }
+ }
+);
+
+
+// Verified Modulr balance snapshot — sandbox only.
+// Does not mark funds cleared or authorise payout execution.
+app.post(
+ '/api/admin/payout-runs/:id/modulr-verify-funding',
+ adminAuth,
+ requireStaffRole('administrator'),
+ requirePlatformAdmin,
+ async(req,res)=>{
+  const reject=(status,error)=>res.status(status).json({
+   verified:false,
+   error,
+   paymentSubmitted:false,
+   accountingFinalised:false,
+   autocabReconciled:false
+  });
+
+  if(
+   MODULR_ENV!=='sandbox' ||
+   MODULR_ENABLED ||
+   process.env.MODULR_SANDBOX_POST_ENABLED==='true' ||
+   process.env.MODULR_ONE_POUND_EXECUTION_ENABLED==='true' ||
+   process.env.PAYOUT_ACCOUNTING_FINALISATION_ENABLED!=='false' ||
+   AUTOCAB_ADJUSTMENTS_ENABLED ||
+   LIVE_TEST_AUTOCAB_WRITES_ENABLED
+  ){
+   return reject(403,'Safe sandbox configuration required.');
+  }
+
+  if(
+   !MODULR_API_KEY ||
+   !MODULR_ACCOUNT_ID ||
+   !MODULR_CUSTOMER_ID
+  ){
+   return reject(503,'Modulr configuration unavailable.');
+  }
+
+  const run=db.prepare(
+   'SELECT * FROM payout_runs WHERE id=?'
+  ).get(req.params.id);
+
+  if(!run)return reject(404,'Payout run not found.');
+
+  if(
+   run.provider!=='modulr' ||
+   run.status!=='funding_pending' ||
+   run.funding_status!=='awaiting_clearance'
+  ){
+   return reject(409,'Run is not awaiting funding verification.');
+  }
+
+  let account;
+
+  try{
+   const response=await fetch(
+    MODULR_BASE_URL+'accounts/'+encodeURIComponent(MODULR_ACCOUNT_ID),
+    {
+     method:'GET',
+     headers:{
+      Authorization:MODULR_API_KEY,
+      Accept:'application/json'
+     },
+     signal:AbortSignal.timeout(10000)
+    }
+   );
+
+   if(response.status!==200){
+    return reject(502,'Modulr account verification unavailable.');
+   }
+
+   account=await response.json();
+  }catch{
+   return reject(502,'Modulr account verification failed.');
+  }
+
+  try{
+   ensureModulrFundingVerificationTable(db);
+
+   const result=earmarkVerifiedModulrFunding(db,{
+    runId:run.id,
+    account,
+    accountId:MODULR_ACCOUNT_ID,
+    customerId:MODULR_CUSTOMER_ID
+   });
+
+   audit(
+    req,'staff',req.auth.email,
+    'modulr_funding_balance_verified',
+    'payout_run',run.id,
+    {
+     availableMinor:result.availableMinor,
+     requiredMinor:result.requiredMinor,
+     verifiedAt:result.verifiedAt,
+     providerFundsReserved:false
+    }
+   );
+
+   return res.json(result);
+
+  }catch(e){
+   return reject(409,e.message);
+  }
+ }
+);
+
 app.post('/api/admin/payout-runs/:id/funding-sent',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{
  const run=db.prepare('SELECT * FROM payout_runs WHERE id=?').get(req.params.id);if(!run)return res.status(404).json({error:'Payout run not found'});
  if(run.status!=='ready')return res.status(400).json({error:'Funding can only be started from a ready payment run.'});
@@ -9867,13 +10475,29 @@ app.post('/api/admin/payout-runs/:id/funding-sent',adminAuth,requireStaffRole('a
 });
 app.post('/api/admin/payout-runs/:id/funds-cleared',adminAuth,requireStaffRole('administrator','finance'),(req,res)=>{
  const run=db.prepare('SELECT * FROM payout_runs WHERE id=?').get(req.params.id);if(!run)return res.status(404).json({error:'Payout run not found'});
+ if(run.provider==='modulr'){
+  return res.status(409).json({
+   error:'Modulr funding requires independent provider balance verification. Manual confirmation is disabled.',
+   fundingVerified:false,
+   paymentSubmitted:false,
+   accountingFinalised:false,
+   autocabReconciled:false
+  });
+ }
  if(!['ready','funding_pending'].includes(run.status))return res.status(400).json({error:'Cleared funds can only be confirmed before the payment run is released.'});
  const now=new Date().toISOString();db.prepare("UPDATE payout_runs SET status='funded',funding_status='cleared',funding_required=COALESCE(funding_required,total_amount),funds_cleared_at=? WHERE id=?").run(now,run.id);
  audit(req,'staff',req.auth.email,'payout_run_funds_cleared','payout_run',run.id,{runType:run.run_type,totalAmount:run.total_amount,manualConfirmation:true});
  res.json({ok:true,run:serializePayoutRun(db.prepare('SELECT * FROM payout_runs WHERE id=?').get(run.id))});
 });
 
-app.post('/api/admin/payout-runs/:id/wise-sandbox',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{try{
+app.post('/api/admin/payout-runs/:id/wise-sandbox',adminAuth,requireStaffRole('administrator','finance'),async(req,res)=>{
+ return res.status(410).json({
+  error:'Wise payout execution has been retired. Modulr is the selected payout provider.',
+  paymentSubmitted:false,
+  accountingFinalised:false,
+  autocabReconciled:false
+ });
+ try{
  if(WISE_ENV!=='sandbox')return res.status(400).json({error:'WISE_ENV must be sandbox for demo submission'});
  const run=db.prepare('SELECT * FROM payout_runs WHERE id=?').get(req.params.id);if(!run)return res.status(404).json({error:'Payout run not found'});
  if(run.status!=='funded')return res.status(400).json({error:'FaivoPay will not release this run until cleared funds have been confirmed.'});
@@ -10121,6 +10745,32 @@ app.get(
    ORDER BY created_at,id
   `).all(run.id);
 
+  // Local Modulr transfer evidence only.
+  // No provider requests or financial state changes.
+  const transfers=run.provider==='modulr'
+   ?db.prepare(`
+     SELECT
+      id,payout_id,provider,environment,
+      amount_minor,currency,status,
+      provider_transfer_id,provider_status,
+      created_at,submitted_at,confirmed_at
+     FROM payout_transfer_intents
+     WHERE payout_run_id=?
+       AND provider='modulr'
+     ORDER BY created_at,id
+    `).all(run.id)
+   :[];
+
+  const transfersByPayout=new Map();
+
+  for(const transfer of transfers){
+   if(transfersByPayout.has(transfer.payout_id)){
+    throw new Error('Duplicate transfer for payout.');
+   }
+
+   transfersByPayout.set(transfer.payout_id,transfer);
+  }
+
   const byPayout=new Map();
 
   for(const row of evidence){
@@ -10164,7 +10814,27 @@ app.get(
     c.verificationStatus==='unverified'
    );
 
+   const transfer=transfersByPayout.get(item.id);
+
+   const modulrTransfer=transfer?{
+    id:transfer.id,
+    environment:transfer.environment,
+    amountMinor:transfer.amount_minor,
+    currency:transfer.currency,
+    status:transfer.status,
+    providerTransferId:transfer.provider_transfer_id,
+    providerStatus:transfer.provider_status,
+    createdAt:transfer.created_at,
+    submittedAt:transfer.submitted_at,
+    confirmedAt:transfer.confirmed_at,
+    amountMatches:
+     Number.isSafeInteger(transfer.amount_minor) &&
+     transfer.amount_minor===Math.round(expectedAmount*100),
+    history:getModulrPaymentHistory(db,transfer.id)
+   }:null;
+
    return {
+    modulrTransfer,
     payoutId:item.id,
     driverId:item.driver_id,
     callsign:item.callsign,
@@ -15995,7 +16665,7 @@ if(excludedApproved.length){
    excludedApproved.map(x=>x.callsign).join(', ')
  });
 }
-if(!eligible.length)return res.status(400).json({error:'No approved weekly payouts are ready'});const runId=id('payrun'),now=new Date().toISOString(),total=eligible.reduce((a,x)=>a+Number(x.net_amount||x.amount||0),0);db.prepare('INSERT INTO payout_runs(id,run_type,status,created_at,created_by,scheduled_for,total_amount,item_count,provider,notes,funding_status,funding_required) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(runId,'weekly','ready',now,req.auth.email,now,total,eligible.length,String(req.body.provider||'wise'),`Monday run ${settlement.id}`,'not_started',total);const up=db.prepare("UPDATE payouts SET payout_run_id=?,status='batched',updated_at=? WHERE id=?");for(const x of eligible)up.run(runId,now,x.id);db.prepare("UPDATE settlement_runs SET status='batched',payout_run_id=? WHERE id=?").run(runId,settlement.id);audit(req,'staff',req.auth.email,'weekly_payout_run_created','payout_run',runId,{settlementRunId:settlement.id,itemCount:eligible.length,totalAmount:total,callsigns:eligible.map(x=>x.callsign)});res.json({run:serializePayoutRun(db.prepare('SELECT * FROM payout_runs WHERE id=?').get(runId)),items:eligible.map(x=>({id:x.id,callsign:x.callsign,driverName:x.driver_name,amount:Number(x.net_amount||x.amount||0)}))})});
+if(!eligible.length)return res.status(400).json({error:'No approved weekly payouts are ready'});const runId=id('payrun'),now=new Date().toISOString(),total=eligible.reduce((a,x)=>a+Number(x.net_amount||x.amount||0),0);db.prepare('INSERT INTO payout_runs(id,run_type,status,created_at,created_by,scheduled_for,total_amount,item_count,provider,notes,funding_status,funding_required) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(runId,'weekly','ready',now,req.auth.email,now,total,eligible.length,'modulr',`Monday run ${settlement.id}`,'not_started',total);const up=db.prepare("UPDATE payouts SET payout_run_id=?,status='batched',updated_at=? WHERE id=?");for(const x of eligible)up.run(runId,now,x.id);db.prepare("UPDATE settlement_runs SET status='batched',payout_run_id=? WHERE id=?").run(runId,settlement.id);audit(req,'staff',req.auth.email,'weekly_payout_run_created','payout_run',runId,{settlementRunId:settlement.id,itemCount:eligible.length,totalAmount:total,callsigns:eligible.map(x=>x.callsign)});res.json({run:serializePayoutRun(db.prepare('SELECT * FROM payout_runs WHERE id=?').get(runId)),items:eligible.map(x=>({id:x.id,callsign:x.callsign,driverName:x.driver_name,amount:Number(x.net_amount||x.amount||0)}))})});
 
 
 /* ============================================================

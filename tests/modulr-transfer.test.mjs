@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { createModulrPaymentHistoryTable } from '../server/lib/modulr-payment-history.mjs';
 
 import {
   canSubmitModulrTransfer,
@@ -51,6 +52,7 @@ function withSnapshot(callback) {
     source = null;
 
     db = new DatabaseSync(target);
+    createModulrPaymentHistoryTable(db);
 
     const intent = db.prepare(`
       SELECT *
