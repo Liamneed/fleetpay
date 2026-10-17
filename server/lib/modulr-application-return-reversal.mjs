@@ -1,6 +1,7 @@
 // Local accounting only. Requires independently reviewed return evidence.
 // Never sends payouts, retries transfers, or writes to Autocab.
 import {randomUUID} from 'node:crypto';
+import {assertModulrSandboxAccountingDatabase} from './modulr-sandbox-accounting-database.mjs';
 const minor=v=>{const n=Number(v),c=Math.round(n*100);if(!Number.isFinite(n)||!Number.isSafeInteger(c)||c<=0||Math.abs(n*100-c)>1e-6)throw Error('Invalid amount');return c;};
 function gate(){
  for(const [key,want] of Object.entries({MODULR_APPLICATION_ACCOUNTING_ENABLED:'true',MODULR_ENV:'sandbox',MODULR_ENABLED:'false',MODULR_SANDBOX_POST_ENABLED:'false',MODULR_ONE_POUND_EXECUTION_ENABLED:'false',PAYOUT_ACCOUNTING_FINALISATION_ENABLED:'false',AUTOCAB_ADJUSTMENTS_ENABLED:'false',LIVE_TEST_AUTOCAB_WRITES_ENABLED:'false'}))
@@ -25,6 +26,7 @@ export function createModulrApplicationReturnReviewSchema(db){
 export function reverseModulrApplicationReturn(db,returnPaymentId){
  gate();
  if(typeof returnPaymentId!=='string'||!/^[\w-]{1,128}$/.test(returnPaymentId))throw Error('Invalid return identity');
+ assertModulrSandboxAccountingDatabase(db);
  db.exec('BEGIN IMMEDIATE');
  try{
   for(const name of ['modulr_return_register','modulr_application_return_reviews','modulr_application_return_reversals','payout_transfer_intents','payouts','driver_ledger'])

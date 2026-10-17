@@ -1,6 +1,7 @@
 // Modulr outgoing SENT bookkeeping using the EXISTING FaivoPay driver_ledger.
 // Disabled unless explicitly authorised; never sends a payment or calls Autocab.
 import {randomUUID} from 'node:crypto';
+import {assertModulrSandboxAccountingDatabase} from './modulr-sandbox-accounting-database.mjs';
 import {reviewModulrApplicationAccounting} from './modulr-application-reconciliation.mjs';
 const minor=v=>{const n=Number(v),p=Math.round(n*100);if(!Number.isFinite(n)||!Number.isSafeInteger(p)||p<=0||Math.abs(n*100-p)>1e-6)throw Error('Invalid financial amount');return p;};
 function gate(){
@@ -18,9 +19,7 @@ function gate(){
 export function postModulrApplicationSentRun(db,runId){
  gate();
  if(db.isTransaction)throw Error('Existing transaction prohibited');
- const databases=db.prepare('PRAGMA database_list').all();
- if(databases.length!==1 || databases[0].name!=='main' || databases[0].file!=='')
-  throw Error('Application posting restricted to in-memory sandbox fixture');
+ assertModulrSandboxAccountingDatabase(db);
  db.exec('BEGIN IMMEDIATE');
  try{
   const review=reviewModulrApplicationAccounting(db,runId);

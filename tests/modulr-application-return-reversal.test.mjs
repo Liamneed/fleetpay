@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
+import {randomUUID} from 'node:crypto';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {unlinkSync} from 'node:fs';
 import {createModulrApplicationReturnReviewSchema,reverseModulrApplicationReturn} from '../server/lib/modulr-application-return-reversal.mjs';
 const flags={MODULR_APPLICATION_ACCOUNTING_ENABLED:'true',MODULR_ENV:'sandbox',MODULR_ENABLED:'false',MODULR_SANDBOX_POST_ENABLED:'false',MODULR_ONE_POUND_EXECUTION_ENABLED:'false',PAYOUT_ACCOUNTING_FINALISATION_ENABLED:'false',AUTOCAB_ADJUSTMENTS_ENABLED:'false',LIVE_TEST_AUTOCAB_WRITES_ENABLED:'false'};
 function env(fn){const old=Object.fromEntries(Object.keys(flags).map(x=>[x,process.env[x]]));Object.assign(process.env,flags);try{return fn()}finally{for(const [k,v] of Object.entries(old))if(v===undefined)delete process.env[k];else process.env[k]=v;}}
@@ -41,4 +45,33 @@ test('reversal ledger insert failure leaves SENT payout and review unchanged',()
   assert.equal(db.prepare('SELECT COUNT(*) n FROM modulr_application_return_reversals').get().n,0);
   assert.equal(db.prepare('SELECT COUNT(*) n FROM driver_ledger').get().n,1);
  }finally{db.close()}
+}));
+
+
+test('reviewed return reversal persists over sandbox restart and never duplicates',()=>env(()=>{
+ const filename=join(tmpdir(),`faivopay-modulr-application-fixture-${randomUUID()}.sqlite`);
+ const seed=fixture();
+ try {
+  seed.exec("UPDATE payouts SET status='sent',paid_at=NULL WHERE id='p1'");
+  seed.prepare('INSERT INTO modulr_application_return_reviews VALUES(?,?,?,?,?,?,?)').run('ret1','t1','reviewer','2026-10-17','bank-ref-durable',900,'bank_statement');
+  seed.exec(`VACUUM INTO '${filename}'`);
+ }finally{seed.close();}
+ const prior=process.env.MODULR_APPLICATION_ACCOUNTING_FIXTURE_DB;
+ const priorFlag=process.env.MODULR_APPLICATION_ACCOUNTING_FILE_FIXTURE_ENABLED;
+ process.env.MODULR_APPLICATION_ACCOUNTING_FIXTURE_DB=filename;
+ process.env.MODULR_APPLICATION_ACCOUNTING_FILE_FIXTURE_ENABLED='true';
+ try {
+  let db=new DatabaseSync(filename);
+  try {reverseModulrApplicationReturn(db,'ret1');}finally{db.close();}
+  db=new DatabaseSync(filename);
+  try {
+   assert.equal(db.prepare("SELECT status FROM payouts WHERE id='p1'").get().status,'returned');
+   assert.equal(db.prepare("SELECT count(*) n FROM driver_ledger WHERE entry_type='modulr_return_reversal'").get().n,1);
+   assert.throws(()=>reverseModulrApplicationReturn(db,'ret1'),/already reversed/);
+  }finally{db.close();}
+ }finally{
+  if(prior===undefined)delete process.env.MODULR_APPLICATION_ACCOUNTING_FIXTURE_DB;else process.env.MODULR_APPLICATION_ACCOUNTING_FIXTURE_DB=prior;
+  if(priorFlag===undefined)delete process.env.MODULR_APPLICATION_ACCOUNTING_FILE_FIXTURE_ENABLED;else process.env.MODULR_APPLICATION_ACCOUNTING_FILE_FIXTURE_ENABLED=priorFlag;
+  unlinkSync(filename);
+ }
 }));

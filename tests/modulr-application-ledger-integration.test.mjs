@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
+import {randomUUID} from 'node:crypto';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {unlinkSync} from 'node:fs';
 import {postModulrApplicationSentRun} from '../server/lib/modulr-application-posting.mjs';
 
 const flags = {
@@ -165,4 +169,41 @@ test('PROCESSED is not beneficiary paid: paid timestamps stay empty',()=>withFla
   assert.equal(db.prepare('SELECT reconciled_at FROM payout_runs WHERE id=?').get('run937').reconciled_at,null);
   assert.equal(db.prepare("SELECT COUNT(*) n FROM driver_ledger WHERE status='paid'").get().n,0);
  }finally{db.close();}
+}));
+
+
+test('durable sandbox SENT records survive restart and replay cannot double-post',()=>withFlags(()=>{
+ const filename=join(tmpdir(),`faivopay-modulr-application-fixture-${randomUUID()}.sqlite`);
+ const seed=fixture({second:true});
+ try {seed.exec(`VACUUM INTO '${filename}'`);} finally {seed.close();}
+ const prior=process.env.MODULR_APPLICATION_ACCOUNTING_FIXTURE_DB;
+ const priorFlag=process.env.MODULR_APPLICATION_ACCOUNTING_FILE_FIXTURE_ENABLED;
+ process.env.MODULR_APPLICATION_ACCOUNTING_FIXTURE_DB=filename;
+ process.env.MODULR_APPLICATION_ACCOUNTING_FILE_FIXTURE_ENABLED='true';
+ try {
+  let db=new DatabaseSync(filename);
+  try {const result=postModulrApplicationSentRun(db,'run937');assert.equal(result.payoutCount,2);}finally{db.close();}
+  db=new DatabaseSync(filename);
+  try {
+   assert.equal(db.prepare("SELECT count(*) n FROM payouts WHERE status='sent'").get().n,2);
+   assert.equal(db.prepare('SELECT count(*) n FROM driver_ledger').get().n,2);
+   assert.throws(()=>postModulrApplicationSentRun(db,'run937'));
+   assert.equal(db.prepare('SELECT count(*) n FROM driver_ledger').get().n,2);
+  }finally{db.close();}
+ }finally{
+  if(prior===undefined)delete process.env.MODULR_APPLICATION_ACCOUNTING_FIXTURE_DB;else process.env.MODULR_APPLICATION_ACCOUNTING_FIXTURE_DB=prior;
+  if(priorFlag===undefined)delete process.env.MODULR_APPLICATION_ACCOUNTING_FILE_FIXTURE_ENABLED;else process.env.MODULR_APPLICATION_ACCOUNTING_FILE_FIXTURE_ENABLED=priorFlag;
+  unlinkSync(filename);
+ }
+}));
+
+test('application accounting refuses file database without exact sandbox fixture opt-in',()=>withFlags(()=>{
+ const filename=join(tmpdir(),`faivopay-modulr-application-fixture-${randomUUID()}.sqlite`);
+ const seed=fixture();
+ try {seed.exec(`VACUUM INTO '${filename}'`);} finally {seed.close();}
+ const db=new DatabaseSync(filename);
+ try {
+  assert.throws(()=>postModulrApplicationSentRun(db,'run937'),/fixture/);
+  assert.equal(db.prepare('SELECT count(*) n FROM driver_ledger').get().n,0);
+ }finally{db.close();unlinkSync(filename);}
 }));
