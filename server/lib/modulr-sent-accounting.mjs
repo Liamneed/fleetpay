@@ -64,7 +64,7 @@ function assertPayment(db,p,t){
  if(get(db,'SELECT 1 FROM modulr_sent_postings WHERE payout_id=?',p.id)||p.status==='paid'||p.paid_at) throw Error('Already posted');
  if(p.status!=='batched'||!Number.isInteger(p.driver_id)) throw Error('Payout not eligible');
  if(minor(p.fee||0)!==null && Number(p.fee)!==0) throw Error('Fee accounting requires separate approval');
- if(Number(p.fee)!==0) throw Error('Fee accounting not supported');
+ if(Number(p.fee)!==0 || Number(p.weekly_fee||0)!==0 || Number(p.carried_charges||0)!==0) throw Error('Weekly fee, early fee and carried deductions require reconciled Autocab accounting');
  if(get(db,'SELECT 1 FROM payout_confirmations WHERE payout_id=? LIMIT 1',p.id)) throw Error('Existing confirmation requires review');
  if(get(db,"SELECT 1 FROM driver_ledger WHERE reference_id=? AND entry_type IN ('early_payout','weekly_payout') LIMIT 1",p.id)) throw Error('Existing ledger posting requires review');
 }

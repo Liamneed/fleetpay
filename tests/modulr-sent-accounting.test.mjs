@@ -10,7 +10,7 @@ for(const [k,v] of Object.entries(env)) process.env[k]=v;
 function fixture(count=2){
  const db=new DatabaseSync(':memory:');
  db.exec(`CREATE TABLE payout_runs(id TEXT PRIMARY KEY,provider TEXT,status TEXT,funding_status TEXT,total_amount REAL,item_count INTEGER,paid_at TEXT,reconciled_at TEXT);
- CREATE TABLE payouts(id TEXT PRIMARY KEY,payout_run_id TEXT,driver_id INTEGER,net_amount REAL,amount REAL,fee REAL,type TEXT,status TEXT,paid_at TEXT,updated_at TEXT);
+ CREATE TABLE payouts(id TEXT PRIMARY KEY,payout_run_id TEXT,driver_id INTEGER,net_amount REAL,amount REAL,fee REAL,weekly_fee REAL DEFAULT 0,carried_charges REAL DEFAULT 0,type TEXT,status TEXT,paid_at TEXT,updated_at TEXT);
  CREATE TABLE payout_transfer_intents(id TEXT PRIMARY KEY,payout_id TEXT,payout_run_id TEXT,provider TEXT,environment TEXT,status TEXT,provider_status TEXT,confirmed_at TEXT,provider_transfer_id TEXT,amount_minor INTEGER,currency TEXT);
  CREATE TABLE modulr_payment_events(transfer_id TEXT,event_type TEXT,provider_reference TEXT,source TEXT);
  CREATE TABLE modulr_debit_evidence(transfer_id TEXT,provider_payment_id TEXT,amount_minor INTEGER,currency TEXT,evidence_status TEXT,provider_transaction_id TEXT,source_account_id TEXT);
@@ -21,7 +21,7 @@ function fixture(count=2){
  createModulrSentAccountingSchema(db);
  db.prepare('INSERT INTO payout_runs VALUES(?,?,?,?,?,?,?,?)').run('run1','modulr','processing','cleared',count*10,count,null,null);
  for(let i=1;i<=count;i++){
-  db.prepare('INSERT INTO payouts VALUES(?,?,?,?,?,?,?,?,?,?)').run('p'+i,'run1',i,10,10,0,'weekly','batched',null,null);
+  db.prepare('INSERT INTO payouts(id,payout_run_id,driver_id,net_amount,amount,fee,type,status,paid_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run('p'+i,'run1',i,10,10,0,'weekly','batched',null,null);
   db.prepare('INSERT INTO payout_transfer_intents VALUES(?,?,?,?,?,?,?,?,?,?,?)').run('t'+i,'p'+i,'run1','modulr','sandbox','confirmed','PROCESSED','2026-10-16','provider'+i,1000,'GBP');
   db.prepare('INSERT INTO modulr_payment_events VALUES(?,?,?,?)').run('t'+i,'confirmed','provider'+i,'modulr_api');
   db.prepare('INSERT INTO modulr_debit_evidence VALUES(?,?,?,?,?,?,?)').run('t'+i,'provider'+i,1000,'GBP','debit_observed','transaction'+i,'account1');
@@ -80,3 +80,6 @@ test('persistent fixture cannot be enabled without exact temporary file match',(
   assert.throws(()=>postModulrSentRun(db,'run1'),/fixture/);
  }finally{db.close();delete process.env.MODULR_SENT_ACCOUNTING_FILE_FIXTURE_ENABLED;delete process.env.MODULR_SENT_ACCOUNTING_FIXTURE_DB;try{fs.unlinkSync(path.join(os.tmpdir(),`faivopay-modulr-sandbox-fixture-${process.pid}-guard.sqlite`))}catch{}}
 });
+
+test('weekly fee cannot be silently omitted from sent accounting',()=>{const db=fixture();try{db.exec("UPDATE payouts SET weekly_fee=1 WHERE id='p1'");assert.throws(()=>postModulrSentRun(db,'run1'),/fee|deduction/i);assert.equal(db.prepare('SELECT COUNT(*) n FROM driver_ledger').get().n,0);assert.equal(db.prepare('SELECT COUNT(*) n FROM modulr_sent_postings').get().n,0);assert.equal(db.prepare('SELECT status FROM payout_runs').get().status,'processing');}finally{db.close();}});
+test('carried charges cannot be silently omitted from sent accounting',()=>{const db=fixture();try{db.exec("UPDATE payouts SET carried_charges=2 WHERE id='p1'");assert.throws(()=>postModulrSentRun(db,'run1'),/fee|deduction/i);assert.equal(db.prepare('SELECT COUNT(*) n FROM driver_ledger').get().n,0);assert.equal(db.prepare('SELECT COUNT(*) n FROM modulr_sent_postings').get().n,0);}finally{db.close();}});

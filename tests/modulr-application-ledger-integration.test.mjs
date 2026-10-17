@@ -87,3 +87,12 @@ test('SQLite write failure halfway through a run reverses all prior writes',()=>
   assert.equal(db.prepare("SELECT status FROM payout_runs WHERE id='run937'").get().status,'released');
  }finally{db.close();}
 }));
+
+test('carried deductions cannot silently post in application ledger',()=>withFlags(()=>{
+ const db=fixture();try{
+  db.exec("UPDATE payouts SET carried_charges=2 WHERE id='p1'");
+  assert.throws(()=>postModulrApplicationSentRun(db,'run937'),/fee|blocked/i);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM driver_ledger').get().n,0);
+  assert.equal(db.prepare("SELECT status FROM payouts WHERE id='p1'").get().status,'batched');
+ }finally{db.close();}
+}));

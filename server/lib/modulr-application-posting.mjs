@@ -17,6 +17,10 @@ function gate(){
 }
 export function postModulrApplicationSentRun(db,runId){
  gate();
+ if(db.isTransaction)throw Error('Existing transaction prohibited');
+ const databases=db.prepare('PRAGMA database_list').all();
+ if(databases.length!==1 || databases[0].name!=='main' || databases[0].file!=='')
+  throw Error('Application posting restricted to in-memory sandbox fixture');
  db.exec('BEGIN IMMEDIATE');
  try{
   const review=reviewModulrApplicationAccounting(db,runId);
