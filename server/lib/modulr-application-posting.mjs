@@ -38,16 +38,16 @@ export function postModulrApplicationSentRun(db,runId){
    const t=db.prepare("SELECT * FROM payout_transfer_intents WHERE payout_id=? AND payout_run_id=? AND provider='modulr'").all(p.id,runId);
    if(t.length!==1||t[0].environment!=='sandbox'||t[0].status!=='confirmed'||t[0].provider_status!=='PROCESSED'||t[0].amount_minor!==amount)throw Error('Transfer is not authenticated SENT');
    if(db.prepare('SELECT 1 FROM driver_ledger WHERE reference_id=? LIMIT 1').get(p.id))throw Error('Prior driver posting');
-   const changed=db.prepare("UPDATE payouts SET status='paid',paid_at=?,updated_at=? WHERE id=? AND status='batched' AND paid_at IS NULL").run(now,now,p.id);
+   const changed=db.prepare("UPDATE payouts SET status='sent',updated_at=? WHERE id=? AND status='batched' AND paid_at IS NULL").run(now,p.id);
    if(changed.changes!==1)throw Error('Payout changed while posting');
    db.prepare(`INSERT INTO driver_ledger(id,driver_id,entry_type,direction,amount,fee_amount,description,reference_id,status,created_at)
       VALUES(?,?,?,?,?,?,?,?,?,?)`).run(`modulr_${randomUUID()}`,p.driver_id,p.type==='early'?'early_payout':'weekly_payout','credit',amount/100,0,
       p.type==='early'?'Modulr payout sent (beneficiary credit unverified)':'Modulr weekly payout sent (beneficiary credit unverified)',p.id,'sent',now);
   }
   if(sum!==minor(run.total_amount))throw Error('Run amount changed');
-  const changed=db.prepare("UPDATE payout_runs SET status='paid',paid_at=?,reconciled_at=? WHERE id=? AND paid_at IS NULL AND status<>'cancelled'").run(now,now,runId);
+  const changed=db.prepare("UPDATE payout_runs SET status='processing' WHERE id=? AND paid_at IS NULL AND status<>'cancelled'").run(runId);
   if(changed.changes!==1)throw Error('Run changed during posting');
   db.exec('COMMIT');
-  return {runId,payoutCount:payouts.length,amountMinor:sum,accountingStatus:'sent_not_beneficiary_credited',autocabAdjusted:false};
+  return {runId,payoutCount:payouts.length,amountMinor:sum,accountingStatus:'sent_not_beneficiary_credited',payoutStatus:'sent',runStatus:'processing',autocabAdjusted:false};
  }catch(e){try{db.exec('ROLLBACK')}catch{}throw e;}
 }

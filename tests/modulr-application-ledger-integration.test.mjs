@@ -52,9 +52,9 @@ test('actual FaivoPay payout, run and driver ledger schema posts SENT exactly on
   const output=postModulrApplicationSentRun(db,'run937');
   assert.equal(output.payoutCount,2);assert.equal(output.amountMinor,1800);
   assert.equal(output.accountingStatus,'sent_not_beneficiary_credited');
-  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM payouts WHERE status='paid'").get().n,2);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM payouts WHERE status='sent' AND paid_at IS NULL").get().n,2);
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM driver_ledger WHERE direction='credit' AND status='sent'").get().n,2);
-  assert.equal(db.prepare("SELECT status FROM payout_runs WHERE id='run937'").get().status,'paid');
+  assert.equal(db.prepare("SELECT status FROM payout_runs WHERE id='run937'").get().status,'processing');
   assert.throws(()=>postModulrApplicationSentRun(db,'run937'),/blocked|eligible|finalised/i);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM driver_ledger').get().n,2);
  }finally{db.close();}
@@ -154,5 +154,15 @@ test('wrong-driver Autocab fee evidence blocks payout posting',()=>withFlags(()=
   db.prepare("UPDATE autocab_adjustments SET driver_id=99 WHERE event_key='payout:p1:fee'").run();
   assert.throws(()=>postModulrApplicationSentRun(db,'run937'),/blocked/);
   assert.equal(db.prepare("SELECT status FROM payouts WHERE id='p1'").get().status,'batched');
+ }finally{db.close();}
+}));
+
+test('PROCESSED is not beneficiary paid: paid timestamps stay empty',()=>withFlags(()=>{
+ const db=fixture({second:true});try{
+  postModulrApplicationSentRun(db,'run937');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM payouts WHERE paid_at IS NOT NULL').get().n,0);
+  assert.equal(db.prepare('SELECT paid_at FROM payout_runs WHERE id=?').get('run937').paid_at,null);
+  assert.equal(db.prepare('SELECT reconciled_at FROM payout_runs WHERE id=?').get('run937').reconciled_at,null);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM driver_ledger WHERE status='paid'").get().n,0);
  }finally{db.close();}
 }));
