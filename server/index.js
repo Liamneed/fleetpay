@@ -1,4 +1,5 @@
 import { assessModulrPayoutOperationalState } from './lib/modulr-operational-payout-state.mjs';
+import { inspectModulrPayoutLedger } from './lib/modulr-persistent-accounting-check.mjs';
 import { authoriseModulrFunding, ensureModulrFundingAuthorisationTable } from './lib/modulr-funding-authorisation.mjs';
 import { readModulrRunCloseout } from './lib/modulr-run-closeout-read.mjs';
 import { observeAuthenticatedModulrDebit } from './lib/modulr-authenticated-debit-observation.mjs';
@@ -11109,6 +11110,7 @@ app.get(
     hasMatchingVerifiedPaidEvidence:
      matchingVerifiedPaid.length===1,
     hasUncertainEvidence,
+    ledgerEvidence:run.provider==='modulr' ? inspectModulrPayoutLedger(db,item) : null,
     confirmations
    };
   });

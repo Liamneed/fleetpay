@@ -23,6 +23,7 @@ export function assessModulrPayoutOperationalState(items){
   }else if(!['batched','approved','queued'].includes(item.payoutStatus)){
    reasons.push('unexpected_payout_status');
   }
+  if(item.ledgerEvidence?.blockers?.length)reasons.push(...item.ledgerEvidence.blockers);
   if(item.hasUncertainEvidence)reasons.push('unresolved_provider_evidence');
   if(item.paidAt && item.payoutStatus!=='paid')reasons.push('paid_timestamp_state_mismatch');
   return {

@@ -1,0 +1,14 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {DatabaseSync} from 'node:sqlite';
+import {inspectModulrPayoutLedger} from '../server/lib/modulr-persistent-accounting-check.mjs';
+import {assessModulrPayoutOperationalState} from '../server/lib/modulr-operational-payout-state.mjs';
+const setup=()=>{const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE driver_ledger(reference_id TEXT,driver_id INTEGER,entry_type TEXT,direction TEXT,amount REAL,status TEXT)');return db;};
+const payout=(status='sent')=>({id:'pay1',driver_id:1,type:'weekly',net_amount:99,status});
+const insert=(db,driver=1,amount=99)=>db.prepare("INSERT INTO driver_ledger VALUES('pay1',?,'weekly_payout','credit',?,'sent')").run(driver,amount);
+test('real ledger matching for sent payout and correct driver/amount',()=>{const db=setup();try{insert(db);assert.deepEqual(inspectModulrPayoutLedger(db,payout()).blockers,[]);}finally{db.close();}});
+test('missing sent row is reported',()=>{const db=setup();try{assert.ok(inspectModulrPayoutLedger(db,payout()).blockers.includes('missing_or_duplicate_sent_ledger'));}finally{db.close();}});
+test('duplicate sent entries are reported',()=>{const db=setup();try{insert(db);insert(db);assert.ok(inspectModulrPayoutLedger(db,payout()).blockers.includes('missing_or_duplicate_sent_ledger'));}finally{db.close();}});
+test('wrong driver or amount is blocked',()=>{const db=setup();try{insert(db,2,98);assert.ok(inspectModulrPayoutLedger(db,payout()).blockers.includes('sent_ledger_identity_or_amount_mismatch'));}finally{db.close();}});
+test('premature sent ledger on batched payout is blocked',()=>{const db=setup();try{insert(db);assert.ok(inspectModulrPayoutLedger(db,payout('batched')).blockers.includes('premature_sent_ledger'));}finally{db.close();}});
+test('operational review surfaces actual ledger blockers, without granting paid status',()=>{const db=setup();try{const evidence=inspectModulrPayoutLedger(db,payout());const result=assessModulrPayoutOperationalState([{payoutId:'pay1',payoutStatus:'sent',ledgerEvidence:evidence,modulrTransfer:{currency:'GBP',amountMatches:true,providerTransferId:'p1'},hasUncertainEvidence:false}]);assert.ok(result.items[0].blockers.includes('missing_or_duplicate_sent_ledger'));assert.equal(result.safeForAutomaticFinalisation,false);}finally{db.close();}});
