@@ -1,3 +1,4 @@
+import { reviewStoredModulrTransfer } from './lib/modulr-live-record-provider-review.mjs';
 import { assessModulrPayoutOperationalState } from './lib/modulr-operational-payout-state.mjs';
 import { inspectModulrPayoutLedger } from './lib/modulr-persistent-accounting-check.mjs';
 import { authoriseModulrFunding, ensureModulrFundingAuthorisationTable } from './lib/modulr-funding-authorisation.mjs';
@@ -8732,6 +8733,18 @@ app.get(
     }
   }
 );
+
+// Read-only authenticated provider verification against persistent FaivoPay records.
+// Does not write, submit, reverse, mark paid or contact Autocab.
+app.get('/api/admin/modulr/transfers/:intentId/verify-provider',adminAuth,requirePlatformAdmin,async(req,res)=>{
+ if(MODULR_ENV!=='sandbox'||MODULR_ENABLED||process.env.PAYOUT_ACCOUNTING_FINALISATION_ENABLED==='true')
+  return res.status(403).json({error:'Sandbox read-only review required.'});
+ if(!MODULR_API_KEY||!MODULR_ACCOUNT_ID)return res.status(503).json({error:'Provider sandbox credentials unavailable.'});
+ try{
+  const result=await reviewStoredModulrTransfer({db,intentId:String(req.params.intentId||''),apiKey:MODULR_API_KEY,sourceAccountId:MODULR_ACCOUNT_ID});
+  return res.json(result);
+ }catch(error){console.error('Modulr provider review failed:',error.message);return res.status(409).json({error:'Provider review unavailable or inconsistent.',accountingFinalised:false,paymentSubmitted:false});}
+});
 
 // Administrator-only reconciliation of an EXISTING sandbox payment.
 // Provider GET only. No payment submission, accounting or Autocab writes.
