@@ -1,6 +1,7 @@
 // Read-only reconciliation against FaivoPay's real payout, ledger, confirmation,
 // fee and Autocab queues. This module never authorises payment or accounting.
 import {readModulrRunCloseout} from './modulr-run-closeout-read.mjs';
+import {assessModulrAutocabSettlement} from './modulr-autocab-settlement-evidence.mjs';
 const cents = value => {
   if (value === null || value === undefined || value === '') return null;
   const v = Number(value), n = Math.round(v * 100);
@@ -34,7 +35,11 @@ export function reviewModulrApplicationAccounting(db, runId) {
     const net=cents(p.net_amount??p.amount),fee=cents(p.type==='early'?p.fee:p.weekly_fee),
       carried=cents(p.carried_charges);
     if(net===null || net===0 || fee===null || carried===null) deny('invalid_payout_fee_or_amount');
-    if(fee>0 || carried>0) deny('fee_or_carried_charges_need_atomic_autocab_reconciliation');
+    if(fee>0 || carried>0) {
+      const adjustmentEvidence=assessModulrAutocabSettlement(db,p);
+      for(const blocker of adjustmentEvidence.blockers) deny(`autocab:${blocker}`);
+      deny('fee_or_carried_charges_need_atomic_autocab_reconciliation');
+    }
     if(p.type!=='weekly' && p.type!=='early') deny('unsupported_payout_type');
     const matched=transfers.filter(t=>t.payout_id===p.id);
     if(matched.length!==1 || matched[0].amount_minor!==net) deny('transfer_payout_binding_invalid');
