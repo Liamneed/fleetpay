@@ -2529,6 +2529,14 @@ function AdminApp(){
  const[adjustmentReviewBusy,setAdjustmentReviewBusy]=useState(false);
  const[adjustmentReviewLoading,setAdjustmentReviewLoading]=useState(false);
  const[resetPhrase,setResetPhrase]=useState(''),[resetDrivers,setResetDrivers]=useState(false);
+ const [modulrFundingVerifyBusy,setModulrFundingVerifyBusy]=useState(false);
+ const [modulrFunding,setModulrFunding]=useState(null);
+ const [modulrFundingBusy,setModulrFundingBusy]=useState(false);
+ const [modulrFundingError,setModulrFundingError]=useState('');
+ const [modulrReconciliation,setModulrReconciliation]=useState(null);
+ const [modulrReconciliationBusy,setModulrReconciliationBusy]=useState(false);
+ const [modulrReconciliationError,setModulrReconciliationError]=useState('');
+ const [modulrFundingActionBusy,setModulrFundingActionBusy]=useState(false);
  const api=(u,o={})=>call(u,o,token);
  function logout(){localStorage.removeItem('fleetpay_admin');setToken('');setMe(null)}
  async function safeLoad(fn){try{return await fn()}catch(e){if(/authentication|office authentication/i.test(e.message))logout();else setErr(e.message)}}
@@ -5275,7 +5283,6 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
   }
  }
 
- const [modulrFundingVerifyBusy,setModulrFundingVerifyBusy]=useState(false);
 
  async function recordModulrFundingVerification(r){
   if(!modulrFunding?.verified ||
@@ -5324,9 +5331,6 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
   }
  }
 
- const [modulrFunding,setModulrFunding]=useState(null);
- const [modulrFundingBusy,setModulrFundingBusy]=useState(false);
- const [modulrFundingError,setModulrFundingError]=useState('');
 
  async function checkModulrFunding(r){
   setModulrFunding(null);
@@ -5356,8 +5360,6 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
  }
 
 
- const [modulrReconciliationBusy,setModulrReconciliationBusy]=useState(false);
- const [modulrReconciliationError,setModulrReconciliationError]=useState('');
 
  async function inspectModulrReconciliation(r){
   if(modulrReconciliation?.run?.id===r.id){
@@ -5392,7 +5394,6 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
   }
  }
 
- const [modulrFundingActionBusy,setModulrFundingActionBusy]=useState(false);
 
  async function refreshModulrFunding(r){
   setModulrFundingActionBusy(true);
@@ -5533,6 +5534,7 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
           <th>Driver</th>
           <th>Expected</th>
           <th>Accounting status</th>
+          <th>Settlement stage</th>
           <th>Modulr transfer</th>
           <th>Provider evidence</th>
           <th>Review</th>
@@ -5545,6 +5547,7 @@ async function createStaff(e){e.preventDefault();try{await api('/api/admin/staff
            <td>{item.driverName}</td>
            <td>{money(item.expectedAmount)}</td>
            <td><Pill tone={statusTone(item.payoutStatus)}>{String(item.payoutStatus||'unknown').replaceAll('_',' ')}</Pill></td>
+           <td>{String(item.reconciliationStage?.stage||'unknown').replaceAll('_',' ')}</td>
            <td>
             {item.modulrTransfer
              ?<div>

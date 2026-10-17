@@ -1,3 +1,6 @@
+import { finaliseModulrManualAccounting } from './lib/modulr-manual-accounting-finalise.mjs';
+import { verifyModulrBankProof } from './lib/modulr-bank-proof-review.mjs';
+import { classifyModulrPayoutStage } from './lib/modulr-reconciliation-stage.mjs';
 import { reviewStoredModulrTransfer } from './lib/modulr-live-record-provider-review.mjs';
 import { persistAuthenticatedModulrProcessed } from './lib/modulr-durable-processed-status.mjs';
 import { assessModulrPayoutOperationalState } from './lib/modulr-operational-payout-state.mjs';
@@ -10999,6 +11002,42 @@ app.post(
  }
 );
 
+// Two-person manual bank receipt review, sandbox only. Never finalises accounting.
+app.post('/api/admin/payout-runs/:id/evidence/:evidenceId/verify-bank',
+ adminAuth,requireStaffRole('administrator'),(req,res)=>{
+  try{
+   if(!req.auth?.email)return res.status(403).json({error:'Authenticated administrator required'});
+   const result=verifyModulrBankProof(db,{
+    runId:req.params.id,evidenceId:req.params.evidenceId,
+    reviewer:req.auth.email,
+    bankReference:req.body?.bankConfirmationReference,
+    attestation:req.body?.attestBeneficiaryReceipt===true
+   });
+   audit(req,'staff',req.auth.email,'modulr_bank_receipt_verified',
+    'payout_confirmation',req.params.evidenceId,{
+     payoutRunId:req.params.id,payoutId:result.payoutId,
+     accountingFinalised:false,autocabPosted:false
+    });
+   return res.json(result);
+  }catch(e){return res.status(409).json({error:e.message,accountingFinalised:false})}
+ });
+
+// Explicitly gated, sandbox-only, two-person bank verified accounting finalisation.
+// Never sends payment instructions or Autocab adjustments.
+app.post('/api/admin/payout-runs/:id/evidence/:evidenceId/finalise-modulr-accounting',
+ adminAuth,requireStaffRole('administrator'),(req,res)=>{
+  try{
+   if(!req.auth?.email)return res.status(403).json({error:'Authenticated administrator required'});
+   if(req.body?.confirmFinalisation!==true)return res.status(400).json({error:'Explicit accounting finalisation confirmation required'});
+   const result=finaliseModulrManualAccounting(db,{
+    runId:req.params.id,evidenceId:req.params.evidenceId,actor:req.auth.email,
+    ledger,recordFee,
+    audit:(action,entityType,entityId,details)=>audit(req,'staff',req.auth.email,action,entityType,entityId,details)
+   });
+   return res.json(result);
+  }catch(e){return res.status(409).json({error:e.message,accountingFinalised:false,autocabPosted:false})}
+ });
+
 // Read-only reconciliation: evidence is not proof of finalised payment.
 app.get(
  '/api/admin/payout-runs/:id/reconciliation',
@@ -11125,6 +11164,9 @@ app.get(
    }:null;
 
    return {
+    reconciliationStage: run.provider==='modulr'
+     ?classifyModulrPayoutStage({transfer,confirmations,payoutStatus:item.status})
+     :null,
     modulrTransfer,
     payoutId:item.id,
     driverId:item.driver_id,
