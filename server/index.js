@@ -1,4 +1,5 @@
 import { reviewStoredModulrTransfer } from './lib/modulr-live-record-provider-review.mjs';
+import { persistAuthenticatedModulrProcessed } from './lib/modulr-durable-processed-status.mjs';
 import { assessModulrPayoutOperationalState } from './lib/modulr-operational-payout-state.mjs';
 import { inspectModulrPayoutLedger } from './lib/modulr-persistent-accounting-check.mjs';
 import { authoriseModulrFunding, ensureModulrFundingAuthorisationTable } from './lib/modulr-funding-authorisation.mjs';
@@ -8744,6 +8745,19 @@ app.get('/api/admin/modulr/transfers/:intentId/verify-provider',adminAuth,requir
   const result=await reviewStoredModulrTransfer({db,intentId:String(req.params.intentId||''),apiKey:MODULR_API_KEY,sourceAccountId:MODULR_ACCOUNT_ID});
   return res.json(result);
  }catch(error){console.error('Modulr provider review failed:',error.message);return res.status(409).json({error:'Provider review unavailable or inconsistent.',accountingFinalised:false,paymentSubmitted:false});}
+});
+
+// Persist independently retrieved PROCESSED transfer state only. Does not mark paid.
+app.post('/api/admin/modulr/transfers/:intentId/persist-processed',adminAuth,requirePlatformAdmin,async(req,res)=>{
+ if(MODULR_ENV!=='sandbox'||MODULR_ENABLED||process.env.PAYOUT_ACCOUNTING_FINALISATION_ENABLED==='true'||
+    process.env.AUTOCAB_ADJUSTMENTS_ENABLED==='true'||process.env.LIVE_TEST_AUTOCAB_WRITES_ENABLED==='true')
+  return res.status(403).json({error:'Safe sandbox configuration required.'});
+ if(!MODULR_API_KEY||!MODULR_ACCOUNT_ID)return res.status(503).json({error:'Provider sandbox credentials unavailable.'});
+ try{
+  const result=await persistAuthenticatedModulrProcessed({db,intentId:String(req.params.intentId||''),apiKey:MODULR_API_KEY,sourceAccountId:MODULR_ACCOUNT_ID});
+  return res.status(result.ok?200:409).json(result);
+ }catch(error){console.error('Modulr processed persistence stopped:',error.message);
+  return res.status(409).json({error:'Transfer reconciliation unavailable or changed.',accountingFinalised:false});}
 });
 
 // Administrator-only reconciliation of an EXISTING sandbox payment.
