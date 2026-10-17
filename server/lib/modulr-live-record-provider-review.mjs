@@ -37,6 +37,9 @@ export async function reviewStoredModulrTransfer({ db, intentId, apiKey, sourceA
   if (payment.status !== 'PROCESSED') problems.push('provider_not_processed');
   return {
     payoutId:payout.id, transferId:intent.id, runId:run.id,
+    providerTransferId:intent.provider_transfer_id, recipientId:intent.recipient_id,
+    amountMinor:intent.amount_minor, currency:intent.currency,
+    originalTransferStatus:intent.status,
     providerStatus:payment.status, localTransferStatus:intent.status,
     payoutStatus:payout.status, providerEvidenceMatches:problems.length===0,
     beneficiaryReceiptVerified:false, accountingFinalised:false,

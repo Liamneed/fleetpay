@@ -15,18 +15,23 @@ export async function persistAuthenticatedModulrProcessed({db,intentId,apiKey,so
     const payout=db.prepare('SELECT * FROM payouts WHERE id=? AND payout_run_id=?').get(intent.payout_id,intent.payout_run_id);
     const run=db.prepare('SELECT * FROM payout_runs WHERE id=?').get(intent.payout_run_id);
     if(!payout||!run||run.provider!=='modulr'||payout.id!==review.payoutId||run.id!==review.runId||
+       intent.provider_transfer_id!==review.providerTransferId||intent.recipient_id!==review.recipientId||
+       intent.amount_minor!==review.amountMinor||intent.currency!==review.currency||
+       intent.status!==review.originalTransferStatus||
        payout.status==='paid'||payout.paid_at||['returned','cancelled','failed'].includes(payout.status))
       throw Error('Payout changed; reconciliation stopped.');
     const amount=Number(payout.net_amount??payout.amount);
     const minor=Math.round(amount*100);
     if(!Number.isSafeInteger(minor)||minor<=0||Math.abs(amount*100-minor)>0.000001||minor!==intent.amount_minor||intent.currency!=='GBP')
       throw Error('Transfer amount changed; reconciliation stopped.');
+    // Provider GET is outside the transaction: compare every payout identity
+    // used to verify its response against a fresh, locked database snapshot.
     const ledger=inspectModulrPayoutLedger(db,payout);
     if(ledger.blockers.length)throw Error('Payout ledger changed; reconciliation stopped.');
     const now=new Date().toISOString();
     let changed=false;
-    if(intent.status!=='confirmed'||intent.provider_status!=='PROCESSED'){
-      const n=db.prepare("UPDATE payout_transfer_intents SET status='confirmed',provider_status='PROCESSED',updated_at=? WHERE id=? AND status=? AND provider_transfer_id=? AND provider='modulr' AND environment='sandbox'").run(now,intentId,intent.status,intent.provider_transfer_id);
+    if(intent.status!=='confirmed'||intent.provider_status!=='PROCESSED'||!intent.confirmed_at){
+      const n=db.prepare("UPDATE payout_transfer_intents SET status='confirmed',provider_status='PROCESSED',updated_at=?,confirmed_at=COALESCE(confirmed_at,?) WHERE id=? AND status=? AND provider_transfer_id=? AND provider='modulr' AND environment='sandbox'").run(now,now,intentId,intent.status,intent.provider_transfer_id);
       if(n.changes!==1)throw Error('Transfer changed during reconciliation.');
       changed=true;
     }
