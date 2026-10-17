@@ -14,6 +14,31 @@ INSERT INTO payout_transfer_intents VALUES('t1','p1','modulr','sandbox','provide
 INSERT INTO payouts VALUES('p1',7,'paid','2026-10-16',9,9,'weekly');
 INSERT INTO driver_ledger VALUES('sent1',7,'weekly_payout','credit',9,0,'Sent','p1','sent','2026-10-16');`);createModulrApplicationReturnReviewSchema(db);return db;}
 test('a return register alone is never sufficient to reverse money',()=>env(()=>{const db=fixture();try{assert.throws(()=>reverseModulrApplicationReturn(db,'ret1'),/evidence/);assert.equal(db.prepare("SELECT count(*) n FROM driver_ledger").get().n,1);}finally{db.close()}}));
-test('reviewed matching return produces one debit and cannot replay',()=>env(()=>{const db=fixture();try{db.prepare('INSERT INTO modulr_application_return_reviews VALUES(?,?,?,?,?,?,?)').run('ret1','t1','controller','2026-10-17','bank-ref-1',900,'bank_statement');const r=reverseModulrApplicationReturn(db,'ret1');assert.equal(r.amountMinor,900);assert.equal(r.automaticRetry,false);assert.equal(db.prepare("SELECT count(*) n FROM driver_ledger WHERE direction='debit'").get().n,1);assert.throws(()=>reverseModulrApplicationReturn(db,'ret1'),/already reversed/);}finally{db.close()}}));
+test('reviewed matching return produces one debit and cannot replay',()=>env(()=>{const db=fixture();try{db.prepare('INSERT INTO modulr_application_return_reviews VALUES(?,?,?,?,?,?,?)').run('ret1','t1','controller','2026-10-17','bank-ref-1',900,'bank_statement');const r=reverseModulrApplicationReturn(db,'ret1');assert.equal(r.amountMinor,900);assert.equal(r.automaticRetry,false);assert.equal(db.prepare("SELECT status FROM payouts WHERE id='p1'").get().status,'returned');assert.equal(db.prepare("SELECT count(*) n FROM driver_ledger WHERE direction='debit'").get().n,1);assert.throws(()=>reverseModulrApplicationReturn(db,'ret1'),/already reversed/);}finally{db.close()}}));
 test('wrong return amount leaves driver ledger untouched',()=>env(()=>{const db=fixture();try{db.prepare('INSERT INTO modulr_application_return_reviews VALUES(?,?,?,?,?,?,?)').run('ret1','t1','controller','2026-10-17','bank-ref-1',800,'bank_statement');assert.throws(()=>reverseModulrApplicationReturn(db,'ret1'),/inconsistent/);assert.equal(db.prepare('SELECT count(*) n FROM driver_ledger').get().n,1);}finally{db.close()}}));
 test('disabled accounting gate refuses return posting',()=>{const db=fixture();try{assert.throws(()=>reverseModulrApplicationReturn(db,'ret1'),/disabled/);}finally{db.close()}});
+
+test('independently reviewed RETURNED reverses a SENT, not paid, payout without inventing beneficiary credit',()=>env(()=>{
+ const db=fixture();try{
+  db.exec("UPDATE payouts SET status='sent',paid_at=NULL WHERE id='p1'");
+  db.prepare('INSERT INTO modulr_application_return_reviews VALUES(?,?,?,?,?,?,?)').run('ret1','t1','reviewer','2026-10-17','bank-ref-sent',900,'authenticated_provider_api');
+  const result=reverseModulrApplicationReturn(db,'ret1');
+  assert.equal(result.automaticRetry,false);
+  assert.equal(db.prepare("SELECT status,paid_at FROM payouts WHERE id='p1'").get().status,'returned');
+  assert.equal(db.prepare("SELECT paid_at FROM payouts WHERE id='p1'").get().paid_at,null);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM driver_ledger WHERE direction='debit'").get().n,1);
+  assert.throws(()=>reverseModulrApplicationReturn(db,'ret1'),/already reversed/);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM driver_ledger WHERE direction='debit'").get().n,1);
+ }finally{db.close()}
+}));
+test('reversal ledger insert failure leaves SENT payout and review unchanged',()=>env(()=>{
+ const db=fixture();try{
+  db.exec("UPDATE payouts SET status='sent',paid_at=NULL WHERE id='p1'");
+  db.prepare('INSERT INTO modulr_application_return_reviews VALUES(?,?,?,?,?,?,?)').run('ret1','t1','reviewer','2026-10-17','bank-ref-failure',900,'bank_statement');
+  db.exec("CREATE TRIGGER abort_return BEFORE INSERT ON driver_ledger WHEN NEW.entry_type='modulr_return_reversal' BEGIN SELECT RAISE(ABORT,'rollback simulated'); END;");
+  assert.throws(()=>reverseModulrApplicationReturn(db,'ret1'),/rollback simulated/);
+  assert.equal(db.prepare("SELECT status FROM payouts WHERE id='p1'").get().status,'sent');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM modulr_application_return_reversals').get().n,0);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM driver_ledger').get().n,1);
+ }finally{db.close()}
+}));

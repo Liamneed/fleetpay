@@ -39,17 +39,24 @@ export function reverseModulrApplicationReturn(db,returnPaymentId){
   if(!t||t.provider_transfer_id!==r.original_payment_id||t.amount_minor!==e.original_amount_minor)
    throw Error('Return does not match original transfer');
   const p=db.prepare('SELECT * FROM payouts WHERE id=?').get(t.payout_id);
-  if(!p||p.status!=='paid'||!p.paid_at||minor(p.net_amount??p.amount)!==t.amount_minor)throw Error('Original payout missing');
+  if(db.prepare('SELECT 1 FROM modulr_application_return_reversals WHERE return_payment_id=? OR payout_id=?').get(returnPaymentId,t.payout_id))throw Error('Return already reversed');
+  // A provider PROCESSED/SENT transfer is not evidence of beneficiary credit.
+  // Independently verified returns must be reversible without ever marking it PAID.
+  if(!p||!['sent','paid'].includes(p.status)||
+     (p.status==='sent' && p.paid_at)||
+     (p.status==='paid' && !p.paid_at)||
+     minor(p.net_amount??p.amount)!==t.amount_minor)throw Error('Original payout is not eligible for return reversal');
   const type=p.type==='weekly'?'weekly_payout':p.type==='early'?'early_payout':null;
   if(!type)throw Error('Unsupported payout type');
   const sent=db.prepare("SELECT * FROM driver_ledger WHERE reference_id=? AND entry_type=? AND direction='credit' AND status='sent'").all(p.id,type);
   if(sent.length!==1||sent[0].driver_id!==p.driver_id||minor(sent[0].amount)!==t.amount_minor)throw Error('Unique matching sent ledger entry required');
-  if(db.prepare('SELECT 1 FROM modulr_application_return_reversals WHERE return_payment_id=? OR payout_id=?').get(returnPaymentId,p.id))throw Error('Return already reversed');
   if(db.prepare("SELECT 1 FROM driver_ledger WHERE reference_id=? AND entry_type='modulr_return_reversal'").get(returnPaymentId))throw Error('Existing return ledger entry');
   const ledgerId=`modulr_return_${randomUUID()}`,now=new Date().toISOString();
   db.prepare(`INSERT INTO driver_ledger(id,driver_id,entry_type,direction,amount,fee_amount,description,reference_id,status,created_at)
     VALUES(?,?,?,?,?,?,?,?,?,?)`).run(ledgerId,p.driver_id,'modulr_return_reversal','debit',t.amount_minor/100,0,'Modulr returned SENT payout - investigation required',returnPaymentId,'review',now);
   db.prepare('INSERT INTO modulr_application_return_reversals VALUES(?,?,?,?)').run(returnPaymentId,p.id,ledgerId,now);
+  const updated=db.prepare("UPDATE payouts SET status='returned' WHERE id=? AND status=?").run(p.id,p.status);
+  if(updated.changes!==1)throw Error('Original payout changed during return reversal');
   db.exec('COMMIT');
   return {payoutId:p.id,returnPaymentId,amountMinor:t.amount_minor,manualReviewRequired:true,automaticRetry:false,autocabAdjusted:false};
  }catch(error){try{db.exec('ROLLBACK')}catch{}throw error;}
