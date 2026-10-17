@@ -33,7 +33,7 @@ export function postModulrApplicationSentRun(db,runId){
   for(const p of payouts){
    const amount=minor(p.net_amount??p.amount);sum+=amount;
    if(!Number.isSafeInteger(p.driver_id)||p.status!=='batched'||p.paid_at||
-      Number(p.weekly_fee||0)!==0||Number(p.fee||0)!==0||Number(p.carried_charges||0)!==0)
+      (p.type==='early'&&Number(p.fee||0)!==0))
     throw Error('Payout requires fee or status review');
    const t=db.prepare("SELECT * FROM payout_transfer_intents WHERE payout_id=? AND payout_run_id=? AND provider='modulr'").all(p.id,runId);
    if(t.length!==1||t[0].environment!=='sandbox'||t[0].status!=='confirmed'||t[0].provider_status!=='PROCESSED'||t[0].amount_minor!==amount)throw Error('Transfer is not authenticated SENT');

@@ -38,14 +38,20 @@ export function reviewModulrApplicationAccounting(db, runId) {
     if(fee>0 || carried>0) {
       const adjustmentEvidence=assessModulrAutocabSettlement(db,p);
       for(const blocker of adjustmentEvidence.blockers) deny(`autocab:${blocker}`);
-      deny('fee_or_carried_charges_need_atomic_autocab_reconciliation');
+      if (!adjustmentEvidence.verified) deny('fee_or_carried_charges_need_atomic_autocab_reconciliation');
+      if (p.type==='early' && fee>0) deny('early_fee_accounting_requires_independent_review');
+      if (p.type==='weekly' && fee>0) {
+        const existingFee=db.prepare("SELECT * FROM driver_ledger WHERE reference_id=? AND entry_type='weekly_fee' AND driver_id=?").all(p.run_id??p.payout_run_id,p.driver_id);
+        if(existingFee.length!==1 || cents(existingFee[0].amount)!==fee || existingFee[0].direction!=='debit' || existingFee[0].status!=='charged')
+          deny('weekly_fee_not_already_charged_exactly_once');
+      }
     }
     if(p.type!=='weekly' && p.type!=='early') deny('unsupported_payout_type');
     const matched=transfers.filter(t=>t.payout_id===p.id);
     if(matched.length!==1 || matched[0].amount_minor!==net) deny('transfer_payout_binding_invalid');
     if(db.prepare('SELECT 1 FROM payout_confirmations WHERE payout_id=? LIMIT 1').get(p.id)) deny('existing_payout_confirmation');
     if(db.prepare('SELECT 1 FROM driver_ledger WHERE reference_id=? LIMIT 1').get(p.id)) deny('existing_driver_ledger_posting');
-    if(db.prepare('SELECT 1 FROM autocab_adjustments WHERE event_key LIKE ? LIMIT 1').get(`payout:${p.id}:%`)) deny('existing_autocab_adjustment');
+    if(!(fee>0 || carried>0) && db.prepare('SELECT 1 FROM autocab_adjustments WHERE event_key LIKE ? LIMIT 1').get(`payout:${p.id}:%`)) deny('existing_autocab_adjustment');
   }
   if(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='modulr_sent_postings'").get()){
     for(const p of payouts){

@@ -96,3 +96,63 @@ test('carried deductions cannot silently post in application ledger',()=>withFla
   assert.equal(db.prepare("SELECT status FROM payouts WHERE id='p1'").get().status,'batched');
  }finally{db.close();}
 }));
+
+function verifiedCharges(db,{fee=0,carried=0}={}){
+ db.exec(`DROP TABLE autocab_adjustments;
+ CREATE TABLE autocab_adjustments(event_key TEXT UNIQUE,driver_id INTEGER,amount REAL,is_credit INTEGER,status TEXT,completed_at TEXT);`);
+ db.prepare('UPDATE payouts SET weekly_fee=?,carried_charges=? WHERE id=?').run(fee,carried,'p1');
+ const completed='2026-10-17T09:00:00Z';
+ for(const [type,amount] of [['fee',fee],['carried',carried],['payment',9]]){
+  if(amount>0)db.prepare('INSERT INTO autocab_adjustments VALUES(?,?,?,?,?,?)').run(`payout:p1:${type}`,1,amount,0,'completed',completed);
+ }
+ if(fee>0)db.prepare('INSERT INTO driver_ledger VALUES(?,?,?,?,?,?,?,?,?,?)').run('fee_1',1,'weekly_fee','debit',fee,fee,'Monday weekly fee','run937','charged',completed);
+}
+
+test('verified Monday fee and carried Autocab deductions permit one SENT posting, no second charge',()=>withFlags(()=>{
+ const db=fixture();try{
+  verifiedCharges(db,{fee:1,carried:2});
+  const posted=postModulrApplicationSentRun(db,'run937');
+  assert.equal(posted.accountingStatus,'sent_not_beneficiary_credited');
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM driver_ledger WHERE entry_type='weekly_fee'").get().n,1);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM driver_ledger WHERE entry_type='weekly_payout'").get().n,1);
+  assert.throws(()=>postModulrApplicationSentRun(db,'run937'));
+ }finally{db.close();}
+}));
+
+test('Autocab fee evidence without original Monday fee ledger cannot finalise',()=>withFlags(()=>{
+ const db=fixture();try{
+  verifiedCharges(db,{fee:1,carried:2});
+  db.prepare("DELETE FROM driver_ledger WHERE entry_type='weekly_fee'").run();
+  assert.throws(()=>postModulrApplicationSentRun(db,'run937'),/weekly_fee_not_already_charged|blocked/);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM driver_ledger').get().n,0);
+ }finally{db.close();}
+}));
+
+test('incomplete Autocab deductions prohibit financial posting with no partial payout status',()=>withFlags(()=>{
+ const db=fixture();try{
+  verifiedCharges(db,{fee:1,carried:2});
+  db.prepare("UPDATE autocab_adjustments SET status='pending' WHERE event_key='payout:p1:carried'").run();
+  assert.throws(()=>postModulrApplicationSentRun(db,'run937'),/blocked/);
+  assert.equal(db.prepare("SELECT status FROM payouts WHERE id='p1'").get().status,'batched');
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM driver_ledger WHERE entry_type='weekly_payout'").get().n,0);
+ }finally{db.close();}
+}));
+
+test('a waived weekly fee with verified carried charge does not invent a fee debit',()=>withFlags(()=>{
+ const db=fixture();try{
+  verifiedCharges(db,{fee:0,carried:2});
+  const result=postModulrApplicationSentRun(db,'run937');
+  assert.equal(result.payoutCount,1);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM driver_ledger WHERE entry_type='weekly_fee'").get().n,0);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM driver_ledger WHERE entry_type='weekly_payout'").get().n,1);
+ }finally{db.close();}
+}));
+
+test('wrong-driver Autocab fee evidence blocks payout posting',()=>withFlags(()=>{
+ const db=fixture();try{
+  verifiedCharges(db,{fee:1,carried:2});
+  db.prepare("UPDATE autocab_adjustments SET driver_id=99 WHERE event_key='payout:p1:fee'").run();
+  assert.throws(()=>postModulrApplicationSentRun(db,'run937'),/blocked/);
+  assert.equal(db.prepare("SELECT status FROM payouts WHERE id='p1'").get().status,'batched');
+ }finally{db.close();}
+}));
